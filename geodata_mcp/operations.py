@@ -1074,3 +1074,753 @@ def sources(session: Session, layer: str | None = None) -> str:
             if s.retrieved: out.append(f"   - Retrieved: {s.retrieved}")
         out.append("")
     return "\n".join(out)
+
+
+# ======================================================================
+# P1 additions: in-place field ops, annotate, list/drop/rename layers,
+#               batch iteration, spatial point lookup, notes, checkpoints.
+# ======================================================================
+
+
+# ---------- checkpoint / rollback infrastructure ----------
+
+def _active_ckpt(session: Session) -> dict | None:
+    """Return the active checkpoint dict, or None."""
+    if session.active_checkpoint is None:
+        return None
+    return session.checkpoints.get(session.active_checkpoint)
+
+
+def _snapshot_column(session: Session, layer: str, column: str) -> None:
+    """If a checkpoint is active and this (layer, column) hasn't been snapshotted
+    yet for it, copy the column's pre-image into a side table. Idempotent within
+    a checkpoint."""
+    ckpt = _active_ckpt(session)
+    if ckpt is None:
+        return
+    for s in ckpt["snapshots"]:
+        if s["layer"] == layer and s["column"] == column:
+            return  # already snapshotted for this checkpoint
+    cid = ckpt["id"]
+    snap_table = f"_snap_{cid}_{layer}_{column}"
+    # Check whether the column exists by probing DuckDB's info_schema.
+    meta = session.layers.get(layer)
+    exists = bool(meta and column in meta.attributes and not column.startswith("__"))
+    if exists:
+        session.conn.execute(
+            f"CREATE TABLE {_quote_ident(snap_table)} AS "
+            f"SELECT rowid AS __rowid, {_quote_ident(column)} FROM {_quote_ident(layer)}"
+        )
+    # If the column doesn't exist yet, we record the intent to drop on rollback
+    # without copying data (no rows to preserve).
+    ckpt["snapshots"].append({
+        "layer": layer, "column": column, "snap_table": snap_table,
+        "column_existed": exists, "whole_layer": False,
+    })
+
+
+def _snapshot_whole_layer(session: Session, layer: str) -> None:
+    """Snapshot an entire layer. Used for drop_layer and rename_layer."""
+    ckpt = _active_ckpt(session)
+    if ckpt is None:
+        return
+    # If already fully snapshotted in this checkpoint, skip.
+    for s in ckpt["snapshots"]:
+        if s["layer"] == layer and s.get("whole_layer"):
+            return
+    cid = ckpt["id"]
+    snap_table = f"_snap_{cid}_{layer}__full"
+    session.conn.execute(
+        f"CREATE TABLE {_quote_ident(snap_table)} AS SELECT * FROM {_quote_ident(layer)}"
+    )
+    ckpt["snapshots"].append({
+        "layer": layer, "column": None, "snap_table": snap_table,
+        "column_existed": True, "whole_layer": True,
+        # Store the meta so rollback can restore the LayerMeta exactly.
+        "meta_snapshot": session.layers.get(layer),
+    })
+
+
+def checkpoint(session: Session, name: str) -> dict:
+    """Create a named checkpoint. Subsequent in-place mutations will snapshot
+    their pre-image; rollback(name) restores exactly, commit(name) discards the
+    snapshots."""
+    if name in session.checkpoints:
+        raise OpError(f"checkpoint '{name}' already exists. Commit or rollback first.")
+    if session.active_checkpoint is not None:
+        raise OpError(
+            f"another checkpoint ('{session.active_checkpoint}') is active. "
+            f"Nested checkpoints are not supported — commit or rollback first."
+        )
+    session._next_checkpoint_id += 1
+    session.checkpoints[name] = {
+        "id": session._next_checkpoint_id,
+        "snapshots": [],
+        "created_at": datetime.utcnow().isoformat() + "Z",
+    }
+    session.active_checkpoint = name
+    session.log(Operation(
+        tool="checkpoint", args={"name": name},
+        result_layer=None, summary="checkpoint set",
+        at=datetime.utcnow(),
+    ))
+    return {"checkpoint": name, "status": "active"}
+
+
+def rollback(session: Session, name: str) -> dict:
+    """Restore all mutations since `checkpoint(name)`. Snapshots are dropped."""
+    ckpt = session.checkpoints.get(name)
+    if ckpt is None:
+        raise OpError(f"unknown checkpoint '{name}'. Active: {list(session.checkpoints)}")
+    # Replay in reverse order (latest snapshot first).
+    for s in reversed(ckpt["snapshots"]):
+        snap_table = s["snap_table"]
+        if s.get("whole_layer"):
+            # Layer was dropped or renamed-away under this checkpoint.
+            # Drop any current version, then re-create from snapshot + restore meta.
+            qlayer = _quote_ident(s["layer"])
+            try:
+                session.conn.execute(f"DROP TABLE IF EXISTS {qlayer}")
+            except Exception:
+                pass
+            session.conn.execute(
+                f"CREATE TABLE {qlayer} AS SELECT * FROM {_quote_ident(snap_table)}"
+            )
+            if s.get("meta_snapshot"):
+                session.layers[s["layer"]] = s["meta_snapshot"]
+        else:
+            qlayer = _quote_ident(s["layer"])
+            qcol = _quote_ident(s["column"])
+            qsnap = _quote_ident(snap_table)
+            if s["column_existed"]:
+                # Restore the pre-image values. Column may currently be of a
+                # different type; DuckDB's UPDATE will coerce if compatible.
+                session.conn.execute(
+                    f"UPDATE {qlayer} SET {qcol} = (SELECT {qcol} FROM {qsnap} "
+                    f"WHERE {qsnap}.__rowid = {qlayer}.rowid)"
+                )
+            else:
+                # Column did not exist before the checkpoint — drop it.
+                try:
+                    session.conn.execute(f"ALTER TABLE {qlayer} DROP COLUMN {qcol}")
+                except Exception:
+                    pass
+                meta = session.layers.get(s["layer"])
+                if meta and s["column"] in meta.attributes:
+                    meta.attributes.pop(s["column"])
+        try:
+            session.conn.execute(f"DROP TABLE IF EXISTS {_quote_ident(snap_table)}")
+        except Exception:
+            pass
+    snap_count = len(ckpt["snapshots"])
+    del session.checkpoints[name]
+    if session.active_checkpoint == name:
+        session.active_checkpoint = None
+    session.log(Operation(
+        tool="rollback", args={"name": name},
+        result_layer=None, summary=f"restored {snap_count} snapshots",
+        at=datetime.utcnow(),
+    ))
+    return {"checkpoint": name, "status": "rolled_back", "restored": snap_count}
+
+
+def commit(session: Session, name: str) -> dict:
+    """Discard the snapshots for a checkpoint (making the mutations permanent)."""
+    ckpt = session.checkpoints.get(name)
+    if ckpt is None:
+        raise OpError(f"unknown checkpoint '{name}'. Active: {list(session.checkpoints)}")
+    for s in ckpt["snapshots"]:
+        try:
+            session.conn.execute(f"DROP TABLE IF EXISTS {_quote_ident(s['snap_table'])}")
+        except Exception:
+            pass
+    snap_count = len(ckpt["snapshots"])
+    del session.checkpoints[name]
+    if session.active_checkpoint == name:
+        session.active_checkpoint = None
+    session.log(Operation(
+        tool="commit", args={"name": name},
+        result_layer=None, summary=f"committed, {snap_count} snapshots discarded",
+        at=datetime.utcnow(),
+    ))
+    return {"checkpoint": name, "status": "committed", "discarded_snapshots": snap_count}
+
+
+# ---------- add_field / update_field / drop_field ----------
+
+_FIELD_TYPES = {
+    "int": "BIGINT", "bigint": "BIGINT", "integer": "BIGINT",
+    "float": "DOUBLE", "double": "DOUBLE", "real": "DOUBLE",
+    "bool": "BOOLEAN", "boolean": "BOOLEAN",
+    "str": "VARCHAR", "string": "VARCHAR", "varchar": "VARCHAR", "text": "VARCHAR",
+    "date": "DATE", "timestamp": "TIMESTAMP",
+}
+
+
+def _normalize_field_type(t: str) -> str:
+    lt = (t or "").strip().lower()
+    return _FIELD_TYPES.get(lt, t.upper() if t else "VARCHAR")
+
+
+def _sanity_check_expr(expr: str) -> None:
+    """Expressions passed to add/update_field are inserted into CTAS/UPDATE
+    SQL. We run them through the same validator that gates execute_sql
+    (by embedding into a trivial SELECT) to catch file readers / URLs /
+    abs-paths / big literals. Semicolons are flat-rejected."""
+    if ";" in expr:
+        raise OpError("expression cannot contain ';'")
+    # Validate by embedding. Any issue the execute_sql validator would catch
+    # is caught here too.
+    _validate_sql(f"SELECT ({expr}) AS _x")
+
+
+def add_field(
+    session: Session, layer: str, name: str, expr: str,
+    field_type: str | None = None,
+) -> dict:
+    """Add a new column to `layer` whose values come from a SQL expression
+    evaluated per row. In-place (mutates the layer). If a checkpoint is active,
+    the change is reversible via rollback().
+
+    Args:
+        layer: target layer name.
+        name: new column name. Must not already exist.
+        expr: a SQL scalar expression valid in DuckDB's SELECT list. May
+              reference other columns of the same layer. May also reference
+              other session layers via scalar subqueries.
+        field_type: optional DuckDB type (VARCHAR, DOUBLE, BIGINT, BOOLEAN, ...).
+                    If omitted, the expression's type is inferred.
+    """
+    meta = _require_layer(session, layer)
+    if name.startswith("__"):
+        raise OpError(f"column name '{name}' reserved (starts with '__')")
+    if name in meta.attributes and not name.startswith("__"):
+        raise OpError(
+            f"column '{name}' already exists on '{layer}'. "
+            f"Use update_field() to overwrite or pick another name."
+        )
+    _sanity_check_expr(expr)
+
+    # Snapshot BEFORE mutating if a checkpoint is active.
+    _snapshot_column(session, layer, name)
+
+    qlayer = _quote_ident(layer)
+    qcol = _quote_ident(name)
+
+    if field_type:
+        dtype = _normalize_field_type(field_type)
+        try:
+            session.conn.execute(f"ALTER TABLE {qlayer} ADD COLUMN {qcol} {dtype}")
+            session.conn.execute(f"UPDATE {qlayer} SET {qcol} = ({expr})")
+        except Exception as e:
+            raise OpError(f"add_field failed: {type(e).__name__}: {e}")
+    else:
+        # Use DuckDB's ALTER TABLE ADD COLUMN with a default expression, which
+        # auto-infers the type. Doesn't work for all DuckDB versions; fall
+        # back to CTAS-then-swap if needed.
+        try:
+            session.conn.execute(
+                f"ALTER TABLE {qlayer} ADD COLUMN {qcol} AS ({expr})"
+            )
+        except Exception:
+            # Fallback: infer type by running the expr once, then add & update.
+            try:
+                probe = session.conn.execute(
+                    f"SELECT typeof(({expr})) FROM {qlayer} LIMIT 1"
+                ).fetchone()
+                inferred = (probe[0] if probe else "VARCHAR")
+                session.conn.execute(f"ALTER TABLE {qlayer} ADD COLUMN {qcol} {inferred}")
+                session.conn.execute(f"UPDATE {qlayer} SET {qcol} = ({expr})")
+            except Exception as e:
+                raise OpError(f"add_field failed: {type(e).__name__}: {e}")
+
+    # Refresh meta (schema + feature count unchanged).
+    schema = _column_schema(session.conn, layer)
+    # Preserve geometry-col marker.
+    geom_marker = meta.attributes.get("__geom_col__", "")
+    meta.attributes = schema
+    meta.attributes["__geom_col__"] = geom_marker
+    session.log(Operation(
+        tool="add_field",
+        args={"layer": layer, "name": name, "expr": expr, "field_type": field_type},
+        result_layer=layer, summary=f"added {name} to {layer}",
+        at=datetime.utcnow(),
+    ))
+    return {
+        "layer": layer,
+        "column": name,
+        "columns_now": [c for c in meta.attributes if not c.startswith("__")],
+        "reversible": session.active_checkpoint is not None,
+        "active_checkpoint": session.active_checkpoint,
+    }
+
+
+def update_field(
+    session: Session, layer: str, name: str, expr: str,
+    where: str | None = None,
+) -> dict:
+    """Overwrite an existing column with values from a SQL expression.
+    Optional WHERE restricts the rows updated.
+    """
+    meta = _require_layer(session, layer)
+    if name not in meta.attributes or name.startswith("__"):
+        raise OpError(f"column '{name}' not on '{layer}'. "
+                      f"Available: {[c for c in meta.attributes if not c.startswith('__')]}")
+    _sanity_check_expr(expr)
+    if where:
+        if ";" in where:
+            raise OpError("`where` cannot contain ';'")
+        _validate_sql(f"SELECT 1 FROM _t WHERE ({where})")
+
+    _snapshot_column(session, layer, name)
+
+    qlayer = _quote_ident(layer)
+    qcol = _quote_ident(name)
+    where_sql = f" WHERE {where}" if where else ""
+    try:
+        n_before = session.conn.execute(f"SELECT COUNT(*) FROM {qlayer}{where_sql}").fetchone()[0]
+        session.conn.execute(f"UPDATE {qlayer} SET {qcol} = ({expr}){where_sql}")
+    except Exception as e:
+        raise OpError(f"update_field failed: {type(e).__name__}: {e}")
+
+    session.log(Operation(
+        tool="update_field",
+        args={"layer": layer, "name": name, "expr": expr, "where": where},
+        result_layer=layer, summary=f"updated {name} on {int(n_before)} rows",
+        at=datetime.utcnow(),
+    ))
+    return {
+        "layer": layer, "column": name, "rows_updated": int(n_before),
+        "reversible": session.active_checkpoint is not None,
+        "active_checkpoint": session.active_checkpoint,
+    }
+
+
+def drop_field(session: Session, layer: str, name: str) -> dict:
+    """Drop a column from a layer. In-place."""
+    meta = _require_layer(session, layer)
+    if name not in meta.attributes or name.startswith("__"):
+        raise OpError(f"column '{name}' not on '{layer}'.")
+    geom_col = meta.attributes.get("__geom_col__") or ""
+    if name == geom_col:
+        raise OpError(f"cannot drop geometry column '{name}' (use drop_layer instead)")
+
+    _snapshot_column(session, layer, name)
+    qlayer = _quote_ident(layer)
+    qcol = _quote_ident(name)
+    try:
+        session.conn.execute(f"ALTER TABLE {qlayer} DROP COLUMN {qcol}")
+    except Exception as e:
+        raise OpError(f"drop_field failed: {type(e).__name__}: {e}")
+    meta.attributes.pop(name, None)
+    session.log(Operation(
+        tool="drop_field", args={"layer": layer, "name": name},
+        result_layer=layer, summary=f"dropped {name}",
+        at=datetime.utcnow(),
+    ))
+    return {"layer": layer, "dropped": name,
+            "columns_now": [c for c in meta.attributes if not c.startswith("__")]}
+
+
+# ---------- annotate (LLM-classified per-feature attributes) ----------
+
+ANNOTATE_CAP = 10_000
+
+
+def annotate(
+    session: Session, layer: str,
+    values: dict,
+    key_column: str = "rowid",
+) -> dict:
+    """Apply per-feature attribute values by key. Each `values` entry is
+    `{key_value: {attr_name: attr_value, ...}}`. Missing attributes are created
+    as new columns (VARCHAR by default). Keys not in the layer are reported.
+
+    This is the standard "LLM classifies features" pattern: `inspect` or
+    `batch_iterate` to see the feature IDs + attributes, reason, then one
+    call of annotate with the whole {id: {...}} map.
+
+    Args:
+        layer: target layer.
+        values: dict of {key_value: {col: val, ...}}. Up to ANNOTATE_CAP entries.
+        key_column: column to match on (default 'rowid' — DuckDB's implicit
+                    rowid pseudo-column). Use a declared column (e.g. 'id')
+                    when you have one; rowid is fine for ephemeral flows.
+    """
+    meta = _require_layer(session, layer)
+    if not values:
+        raise OpError("`values` must not be empty")
+    if len(values) > ANNOTATE_CAP:
+        raise OpError(f"too many annotations ({len(values)}); cap is {ANNOTATE_CAP}")
+
+    # Collect all attribute names across values.
+    all_attrs: dict[str, set] = {}
+    for k, row in values.items():
+        if not isinstance(row, dict):
+            raise OpError(f"values['{k}'] must be a dict, got {type(row).__name__}")
+        for col, v in row.items():
+            if col.startswith("__"):
+                raise OpError(f"attribute '{col}' reserved (starts with '__')")
+            all_attrs.setdefault(col, set()).add(type(v).__name__)
+
+    # Validate key column exists (rowid is fine — it's a pseudo-column in DuckDB).
+    declared_cols = [c for c in meta.attributes if not c.startswith("__")]
+    if key_column != "rowid" and key_column not in declared_cols:
+        raise OpError(
+            f"key_column '{key_column}' not on layer '{layer}'. "
+            f"Available: {declared_cols + ['rowid']}"
+        )
+
+    # Snapshot columns that will be written (new or existing).
+    for col in all_attrs:
+        _snapshot_column(session, layer, col)
+
+    qlayer = _quote_ident(layer)
+
+    # Ensure every target column exists. Create missing ones as VARCHAR
+    # (the LLM's natural output form; floats/ints round-trip fine).
+    for col, kinds in all_attrs.items():
+        if col in meta.attributes and not col.startswith("__"):
+            continue
+        # Pick a type: if all values are numeric → DOUBLE; bool → BOOLEAN; else VARCHAR.
+        kinds = {k for k in kinds if k != "NoneType"}
+        if kinds <= {"int"}:
+            dtype = "BIGINT"
+        elif kinds <= {"int", "float"}:
+            dtype = "DOUBLE"
+        elif kinds <= {"bool"}:
+            dtype = "BOOLEAN"
+        else:
+            dtype = "VARCHAR"
+        try:
+            session.conn.execute(f"ALTER TABLE {qlayer} ADD COLUMN {_quote_ident(col)} {dtype}")
+        except Exception as e:
+            raise OpError(f"annotate failed adding column '{col}': {type(e).__name__}: {e}")
+
+    # Build the update table and apply per-row UPDATEs in a single batch.
+    try:
+        import pyarrow as pa
+    except ImportError:
+        raise OpError("pyarrow is required for annotate")
+
+    rows = []
+    attr_order = list(all_attrs.keys())
+    for k, row in values.items():
+        rec = {"__key": k}
+        for col in attr_order:
+            rec[col] = row.get(col)
+        rows.append(rec)
+    table = pa.Table.from_pylist(rows)
+
+    tmp = "_annotate_tmp"
+    session.conn.register(tmp, table)
+    try:
+        # One UPDATE per attribute column (DuckDB-friendly) scoped by key match.
+        unmatched = 0
+        for col in attr_order:
+            qcol = _quote_ident(col)
+            sql = (
+                f"UPDATE {qlayer} SET {qcol} = t.{qcol} "
+                f"FROM {tmp} t WHERE {qlayer}.{_quote_ident(key_column)} = t.__key"
+            )
+            session.conn.execute(sql)
+        # Count unmatched keys.
+        unmatched_rows = session.conn.execute(
+            f"SELECT COUNT(*) FROM {tmp} t WHERE NOT EXISTS "
+            f"(SELECT 1 FROM {qlayer} WHERE {_quote_ident(key_column)} = t.__key)"
+        ).fetchone()
+        unmatched = int(unmatched_rows[0]) if unmatched_rows else 0
+    except Exception as e:
+        raise OpError(f"annotate failed: {type(e).__name__}: {e}")
+    finally:
+        session.conn.unregister(tmp)
+
+    schema = _column_schema(session.conn, layer)
+    geom_marker = meta.attributes.get("__geom_col__", "")
+    meta.attributes = schema
+    meta.attributes["__geom_col__"] = geom_marker
+
+    session.log(Operation(
+        tool="annotate",
+        args={"layer": layer, "n_keys": len(values),
+              "attributes": attr_order, "key_column": key_column},
+        result_layer=layer, summary=f"annotated {len(values)-unmatched}/{len(values)} keys",
+        at=datetime.utcnow(),
+    ))
+    return {
+        "layer": layer,
+        "attributes_written": attr_order,
+        "keys_matched": len(values) - unmatched,
+        "keys_unmatched": unmatched,
+        "reversible": session.active_checkpoint is not None,
+        "active_checkpoint": session.active_checkpoint,
+    }
+
+
+# ---------- drop_layer / rename_layer ----------
+
+def drop_layer(session: Session, name: str) -> dict:
+    _require_layer(session, name)
+    # If a checkpoint is active, snapshot the whole layer so rollback can restore.
+    _snapshot_whole_layer(session, name)
+    try:
+        session.conn.execute(f"DROP TABLE IF EXISTS {_quote_ident(name)}")
+    except Exception as e:
+        raise OpError(f"drop_layer failed: {type(e).__name__}: {e}")
+    session.layers.pop(name, None)
+    if name in session.visible_layers:
+        session.visible_layers.remove(name)
+    session.log(Operation(
+        tool="drop_layer", args={"name": name},
+        result_layer=None, summary=f"dropped {name}",
+        at=datetime.utcnow(),
+    ))
+    return {"dropped": name, "remaining_layers": list(session.layers)}
+
+
+def rename_layer(session: Session, old: str, new: str) -> dict:
+    _require_layer(session, old)
+    if new in session.layers:
+        raise OpError(f"target name '{new}' already exists")
+    if old == new:
+        raise OpError("old and new names are identical")
+    # Snapshot both sides: the old layer (so rollback can recreate under old name)
+    # and the new layer (as a fresh table — rollback will drop it).
+    _snapshot_whole_layer(session, old)
+
+    try:
+        session.conn.execute(
+            f"ALTER TABLE {_quote_ident(old)} RENAME TO {_quote_ident(new)}"
+        )
+    except Exception as e:
+        raise OpError(f"rename_layer failed: {type(e).__name__}: {e}")
+    meta = session.layers.pop(old)
+    meta.name = new
+    session.layers[new] = meta
+    session.visible_layers = [new if n == old else n for n in session.visible_layers]
+    session.log(Operation(
+        tool="rename_layer", args={"old": old, "new": new},
+        result_layer=new, summary=f"{old} → {new}",
+        at=datetime.utcnow(),
+    ))
+    return {"renamed": {"from": old, "to": new}}
+
+
+# ---------- list_layers + set_notes ----------
+
+def list_layers(session: Session) -> dict:
+    """Inventory of all session layers."""
+    items = []
+    for name, m in session.layers.items():
+        items.append({
+            "name": name,
+            "feature_count": m.feature_count,
+            "geometry_type": m.geometry_type,
+            "bbox_3011": list(m.bbox) if m.bbox else None,
+            "columns": [c for c in m.attributes if not c.startswith("__")],
+            "created_by": m.created_by,
+            "parent_layers": m.parent_layers,
+            "notes": m.notes,
+            "is_visible": name in session.visible_layers,
+        })
+    return {
+        "n_layers": len(items),
+        "layers": items,
+        "active_checkpoint": session.active_checkpoint,
+        "open_checkpoints": list(session.checkpoints.keys()),
+    }
+
+
+def set_notes(session: Session, layer: str, notes: str) -> dict:
+    """Attach a free-text note to a layer. Shown in list_layers and sources."""
+    meta = _require_layer(session, layer)
+    meta.notes = notes
+    session.log(Operation(
+        tool="set_notes", args={"layer": layer, "notes_len": len(notes)},
+        result_layer=layer, summary=f"notes updated ({len(notes)} chars)",
+        at=datetime.utcnow(),
+    ))
+    return {"layer": layer, "notes_chars": len(notes)}
+
+
+# ---------- batch_iterate ----------
+
+BATCH_ITERATE_MAX = 500
+BATCH_ITERATE_DEFAULT = 200
+
+
+def batch_iterate(
+    session: Session, layer: str,
+    columns: list[str] | None = None,
+    batch_size: int = BATCH_ITERATE_DEFAULT,
+    cursor: str | None = None,
+    where: str | None = None,
+) -> dict:
+    """Yield a batch of rows from `layer` with a resumable cursor. Use this to
+    iterate over layers too large for a single inspect call. The LLM typically
+    pairs it with `annotate` to classify every feature.
+
+    On first call: pass `layer` + `columns` (+ optional `where`, `batch_size`).
+    Response carries a `cursor` id. On subsequent calls, pass `cursor=...`
+    and the layer/columns/where args are ignored (retrieved from server state).
+
+    When the cursor is exhausted, `next_cursor` in the response is null.
+    """
+    batch_size = max(1, min(int(batch_size), BATCH_ITERATE_MAX))
+
+    if cursor:
+        state = session.cursors.get(cursor)
+        if state is None:
+            raise OpError(f"unknown cursor '{cursor}'. It may have expired or been consumed.")
+        layer = state["layer"]
+        columns = state["columns"]
+        where = state["where"]
+    else:
+        meta = _require_layer(session, layer)
+        declared = [c for c in meta.attributes if not c.startswith("__")]
+        if not columns:
+            # Default: all non-geometry columns.
+            geom_col = meta.attributes.get("__geom_col__") or ""
+            columns = [c for c in declared if c != geom_col]
+        for c in columns:
+            if c != "rowid" and c not in declared:
+                raise OpError(f"unknown column '{c}' in layer '{layer}'. Available: {declared + ['rowid']}")
+        if where:
+            if ";" in where:
+                raise OpError("`where` cannot contain ';'")
+            _validate_sql(f"SELECT 1 FROM _t WHERE ({where})")
+        import secrets as _secrets
+        cursor = _secrets.token_urlsafe(12)
+        state = {"layer": layer, "columns": columns, "where": where, "offset": 0}
+        session.cursors[cursor] = state
+
+    qlayer = _quote_ident(layer)
+    # Always include rowid so annotate by rowid is straightforward.
+    select_cols = ["rowid AS rowid"] + [_quote_ident(c) for c in columns if c != "rowid"]
+    where_sql = f" WHERE {where}" if where else ""
+    sql = (
+        f"SELECT {', '.join(select_cols)} FROM {qlayer}{where_sql} "
+        f"ORDER BY rowid LIMIT {batch_size} OFFSET {int(state['offset'])}"
+    )
+    try:
+        rows = session.conn.execute(sql).fetchall()
+        col_names = [d[0] for d in session.conn.description]
+    except Exception as e:
+        raise OpError(f"batch_iterate failed: {type(e).__name__}: {e}")
+
+    returned_count = int(session.conn.execute(
+        f"SELECT COUNT(*) FROM {qlayer}{where_sql}"
+    ).fetchone()[0])
+
+    # Advance offset.
+    state["offset"] += len(rows)
+    exhausted = len(rows) < batch_size
+    if exhausted:
+        # Free the cursor.
+        session.cursors.pop(cursor, None)
+        next_cursor = None
+    else:
+        next_cursor = cursor
+
+    return {
+        "layer": layer,
+        "columns": col_names,
+        "rows": [list(r) for r in rows],
+        "batch_size": batch_size,
+        "returned": len(rows),
+        "total_matching": returned_count,
+        "offset_after_batch": state["offset"],
+        "next_cursor": next_cursor,
+        "exhausted": exhausted,
+    }
+
+
+# ---------- inspect_location ----------
+
+def inspect_location(
+    session: Session,
+    x_3011: float,
+    y_3011: float,
+    radius_m: float = 100.0,
+    layers: list[str] | None = None,
+    per_layer_limit: int = 5,
+) -> dict:
+    """One-shot "what's here?" across multiple layers. For each layer that
+    has geometry, returns up to `per_layer_limit` features whose geometry
+    intersects a circle of `radius_m` around (x_3011, y_3011). Sorted by
+    distance from the point.
+
+    Args:
+        x_3011, y_3011: query point in EPSG:3011.
+        radius_m: search radius in metres (default 100).
+        layers: optional list of layer names; defaults to all layers in session
+                that have geometry.
+        per_layer_limit: max features returned per layer (default 5, cap 25).
+    """
+    per_layer_limit = max(1, min(int(per_layer_limit), 25))
+    radius_m = max(0.0, float(radius_m))
+    targets = layers or [
+        n for n, m in session.layers.items()
+        if m.attributes.get("__geom_col__")
+    ]
+    if not targets:
+        return {"query": {"x_3011": x_3011, "y_3011": y_3011, "radius_m": radius_m},
+                "results": [], "layers_considered": 0,
+                "hint": "no layers with geometry in this session"}
+
+    results = []
+    for lname in targets:
+        meta = session.layers.get(lname)
+        if meta is None:
+            continue
+        geom_col = meta.attributes.get("__geom_col__") or ""
+        if not geom_col:
+            continue
+        qlayer = _quote_ident(lname)
+        qgeom = _quote_ident(geom_col)
+        attr_cols = [c for c in meta.attributes
+                     if not c.startswith("__") and c != geom_col]
+        attr_select = ", ".join(_quote_ident(c) for c in attr_cols) or "NULL AS _"
+        # We use a distance threshold + ORDER BY distance. ST_DWithin is the
+        # index-friendly predicate.
+        sql = (
+            f"SELECT {attr_select}, "
+            f"  ST_Distance({qgeom}, ST_Point(?, ?)) AS _dist_m "
+            f"FROM {qlayer} "
+            f"WHERE ST_DWithin({qgeom}, ST_Point(?, ?), ?) "
+            f"ORDER BY _dist_m ASC "
+            f"LIMIT {per_layer_limit}"
+        )
+        try:
+            rows = session.conn.execute(
+                sql, [x_3011, y_3011, x_3011, y_3011, radius_m]
+            ).fetchall()
+            col_names = [d[0] for d in session.conn.description]
+        except Exception as e:
+            results.append({"layer": lname, "error": f"{type(e).__name__}: {e}"})
+            continue
+        if not rows:
+            continue
+        hits = [dict(zip(col_names, r)) for r in rows]
+        for h in hits:
+            if "_dist_m" in h and h["_dist_m"] is not None:
+                h["distance_m"] = round(float(h.pop("_dist_m")), 2)
+        results.append({
+            "layer": lname,
+            "geometry_type": meta.geometry_type,
+            "features": hits,
+        })
+
+    session.log(Operation(
+        tool="inspect_location",
+        args={"x_3011": x_3011, "y_3011": y_3011, "radius_m": radius_m,
+              "layers": targets},
+        result_layer=None,
+        summary=f"{sum(len(r.get('features', [])) for r in results)} features across {len(results)} layers",
+        at=datetime.utcnow(),
+    ))
+    return {
+        "query": {"x_3011": x_3011, "y_3011": y_3011, "radius_m": radius_m},
+        "layers_considered": len(targets),
+        "results": results,
+    }

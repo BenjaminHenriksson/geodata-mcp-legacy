@@ -52,6 +52,7 @@ class LayerMeta:
     created_at: datetime
     provenance: list[SourceRef]
     parent_layers: list[str] = field(default_factory=list)
+    notes: str = ""
 
 
 @dataclass
@@ -104,6 +105,15 @@ class Session:
         self.layers: dict[str, LayerMeta] = {}
         self.visible_layers: list[str] = []
         self.history: list[Operation] = []
+        # Cursors for batch_iterate — cursor_id → iteration state.
+        self.cursors: dict[str, dict] = {}
+        # Active checkpoint (one at a time). When set, in-place mutations
+        # snapshot the affected column(s) before writing.
+        self.active_checkpoint: str | None = None
+        # name → {"id": int, "snapshots": [{"layer": ..., "column": ..., "snap_table": ...,
+        #                                   "column_existed": bool, "whole_layer": bool}]}
+        self.checkpoints: dict[str, dict] = {}
+        self._next_checkpoint_id = 0
 
     def touch(self) -> None:
         self.last_active = datetime.utcnow()

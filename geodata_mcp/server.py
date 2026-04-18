@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastmcp import Context, FastMCP
+from mcp.types import ToolAnnotations
 
 from .catalog import Catalog, DatasetEntry
 from .geocoder import geocode as do_geocode
@@ -24,14 +25,27 @@ from .loader import LoadError, load_dataset
 from .operations import (
     OpError, SqlError,
     EXPORT_ROOT, EXPORT_TTL_S,
+    add_field as op_add_field,
+    annotate as op_annotate,
+    batch_iterate as op_batch_iterate,
+    checkpoint as op_checkpoint,
+    commit as op_commit,
     create_layer as op_create_layer,
+    drop_field as op_drop_field,
+    drop_layer as op_drop_layer,
     execute_sql as op_execute_sql,
     export_layer as op_export,
     filter_layer,
+    inspect_location as op_inspect_location,
+    list_layers as op_list_layers,
+    rename_layer as op_rename_layer,
+    rollback as op_rollback,
+    set_notes as op_set_notes,
     sources as op_sources,
     spatial_buffer, spatial_centroid, spatial_clip, spatial_convex_hull,
     spatial_dissolve, spatial_intersect, spatial_select_by_location,
     stats as op_stats,
+    update_field as op_update_field,
 )
 from .session import REGISTRY, Session, SessionExpired
 
@@ -40,7 +54,123 @@ ROOT = Path(__file__).resolve().parents[1]
 # One catalog instance for the lifetime of the server.
 CATALOG = Catalog.load()
 
-mcp = FastMCP("geodata-mcp")
+SERVER_INSTRUCTIONS = """\
+# Geodata MCP — Stockholm open geodata
+
+This server exposes Swedish open geodata (SCB DeSO + Stockholm SBK Stadskarta)
+to LLM clients via a session-scoped DuckDB spatial backend. Everything is
+pre-filtered to Stockholm kommun (kommunkod `0180`) in EPSG:3011.
+
+## Core workflow pattern
+
+1. `search_data(query)` — fuzzy-find catalog datasets (SV + EN). 65 datasets total.
+2. `load(dataset_id, ...)` or `load_many([ids])` — register as session layer(s).
+3. Analyse:
+   - `filter` / `spatial` / `stats` / `execute_sql` — derive new layers (immutable).
+   - `add_field` / `update_field` / `drop_field` — mutate a layer's attribute table in place (QGIS Field-Calculator style).
+   - `annotate(layer, {id: {...}})` — attach LLM-classified per-feature attributes in one call.
+   - `batch_iterate(layer, ...)` — paginate large layers with a cursor to feed `annotate`.
+   - `inspect_location(x, y, radius_m)` — "what's here?" across all layers in one call.
+4. Cite with `sources(layer)` then `export(layer, format)` for a download URL.
+
+## Reversible mutations via checkpoint / rollback
+
+In-place mutations (`add_field`, `update_field`, `drop_field`, `annotate`,
+`drop_layer`, `rename_layer`) are reversible if you wrap them in a checkpoint:
+
+    checkpoint("before_enrichment")
+    ... mutations ...
+    rollback("before_enrichment")    # undo everything
+    # or
+    commit("before_enrichment")      # make it permanent, discard snapshots
+
+Snapshots are column-scoped (O(changed columns × rows), not O(layer)). One
+checkpoint active at a time; nested checkpoints not supported.
+
+## Layer notes
+
+Attach narrative with `set_notes(layer, "text")`. Surfaces in `list_layers` and
+`sources`. Useful for recording *why* a layer exists ("filtered to pre-1940 stone
+buildings as a proxy for the historical core").
+
+## Coordinate reference system
+
+- **All session layers are in EPSG:3011** (SWEREF 99 18 00; Stockholm-local metres).
+- Bounding boxes, `x_3011`/`y_3011`, buffer distances: **metres in EPSG:3011**.
+- Geocode results return EPSG:3011 coordinates.
+- Exports to GeoJSON reproject to EPSG:4326; GPKG stays native EPSG:3011.
+
+## Footguns to watch for
+
+- **SCB privacy suppression**: small-population DeSOs have NULL values in
+  statistical tables. Always `WHERE value IS NOT NULL` when computing numeric
+  stats over SCB tables, or you'll get misleading averages.
+- **DeSO 2018 → 2025 codes changed** in some areas; use `deso_historical_changes`
+  or `deso_regso_mapping` to translate.
+- **Attributes are Swedish**: `byggar` = year built, `antal` = count,
+  `KATEGORI`/`GRUPP` = category/group. The catalog's per-attribute description
+  field lists bilingual names and sample values — consult it, don't guess.
+- **The geometry column is always `geom`** in every normalized layer. `ST_Read`
+  returns it under that name — no need to probe or special-case.
+- **`execute_sql` is read-only and sandboxed**: no INSERT/UPDATE/DELETE/DDL, no
+  file readers, no HTTP URLs, no abs paths. Numeric literals > 10 M are
+  rejected as DoS protection. For writes, use `add_field` / `update_field` /
+  `annotate` instead.
+
+## When the LLM is classifying features
+
+Classic "I need to categorize every building by era" pattern:
+
+    checkpoint("classify")
+    batch_iterate("buildings", columns=["id","name","byggar"], batch_size=200)
+    # → LLM reasons on the batch, returns {rowid: {"era": "functionalist", ...}, ...}
+    annotate("buildings", values={...})
+    # → repeat batch_iterate with cursor until exhausted
+    commit("classify")
+
+`annotate` creates columns on the fly if they don't exist.
+
+## If something goes wrong
+
+Every error response carries `error` + `detail`. Common codes:
+- `unknown_dataset` — check `search_data()` first
+- `sql_rejected` — validator blocked the SQL; see `detail` for which rule
+- `sql_failed` — DuckDB execution error; check column names / types
+- `op_failed` — generic op error; `detail` explains
+- `session_expired` — idle > 30 min; see `replay` for operation log
+"""
+
+
+mcp = FastMCP("geodata-mcp", instructions=SERVER_INSTRUCTIONS)
+
+
+# Common annotation shapes.
+_READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+_SAFE_MUTATION = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=False,
+    idempotentHint=False, openWorldHint=False,
+)
+_IDEMPOTENT_MUTATION = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=False,
+    idempotentHint=True, openWorldHint=False,
+)
+_DESTRUCTIVE_MUTATION = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=True,
+    idempotentHint=False, openWorldHint=False,
+)
+
+
+def _checkpoint_hint(sess: Session) -> str | None:
+    """Tip the LLM about checkpoint state after a reversible mutation."""
+    if sess.active_checkpoint:
+        return (
+            f"Mutation is reversible — call rollback('{sess.active_checkpoint}') "
+            f"to undo, commit('{sess.active_checkpoint}') to make permanent."
+        )
+    return (
+        "No checkpoint active — this mutation is not reversible. "
+        "Call checkpoint('name') first if you want undo capability."
+    )
 
 
 def _session(ctx: Context | None) -> Session:
@@ -113,7 +243,7 @@ def _layer_summary(sess: Session, name: str) -> dict:
 
 # ---------- tools ----------
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def search_data(query: str = "", limit: int = 20) -> dict:
     """Fuzzy-search the catalog of locally available datasets.
 
@@ -137,7 +267,7 @@ def search_data(query: str = "", limit: int = 20) -> dict:
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def geocode(
     name: str,
     limit: int = 5,
@@ -180,7 +310,7 @@ def geocode(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=_SAFE_MUTATION)
 def load(
     dataset_id: str,
     bbox_3011: list[float] | None = None,
@@ -221,7 +351,7 @@ def load(
     return _layer_summary(sess, meta.name)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_SAFE_MUTATION)
 def filter(
     layer: str, where: str,
     result_name: str | None = None,
@@ -263,7 +393,7 @@ SpatialOp = Literal[
 SpatialPredicate = Literal["intersects", "within", "contains", "dwithin"]
 
 
-@mcp.tool()
+@mcp.tool(annotations=_SAFE_MUTATION)
 def spatial(
     operation: SpatialOp,
     layer: str | None = None,
@@ -362,7 +492,7 @@ def spatial(
     return _layer_summary(sess, meta.name)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def stats(
     layer: str,
     columns: list[str] | None = None,
@@ -388,7 +518,7 @@ def stats(
         return f"error: {e}"
 
 
-@mcp.tool()
+@mcp.tool(annotations=_SAFE_MUTATION)
 def execute_sql(
     sql: str,
     description: str = "",
@@ -435,7 +565,7 @@ def execute_sql(
         return {"error": "sql_failed", "detail": str(e)}
 
 
-@mcp.tool()
+@mcp.tool(annotations=_SAFE_MUTATION)
 def create_layer(
     name: str,
     data: list[dict],
@@ -478,7 +608,7 @@ def create_layer(
     return _layer_summary(sess, meta.name)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_SAFE_MUTATION)
 def export(
     layer: str,
     format: str = "geojson",
@@ -501,7 +631,7 @@ def export(
         return _error_response(e)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def sources(layer: str | None = None, ctx: Context | None = None) -> str:
     """Return a structured provenance report (publisher, license, URL,
     retrieval date, operations applied) for a layer or all session layers.
@@ -511,10 +641,10 @@ def sources(layer: str | None = None, ctx: Context | None = None) -> str:
     return op_sources(_session(ctx), layer)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def inspect(
     layer: str,
-    n: int = 3,
+    n: int = 10,
     include_geometry: bool = False,
     offset: int = 0,
     where: str | None = None,
@@ -522,12 +652,14 @@ def inspect(
 ) -> str:
     """Show raw rows from a session layer as a markdown table.
 
-    Hard caps: 25 rows without geometry, 10 rows with geometry (WKT). Geometry
-    is verbose — only request it when you actually need to see coordinates.
+    Hard caps: 200 rows without geometry, 10 rows with geometry (WKT). Geometry
+    is verbose — only request it when you actually need to see coordinates. For
+    inspecting very large layers column-wise, use `batch_iterate` instead — it
+    returns a resumable cursor.
 
     Args:
         layer: Layer name from a previous load/filter/spatial result.
-        n: Rows to return (capped at 25 without geometry, 10 with).
+        n: Rows to return (default 10; capped at 200 without geometry, 10 with).
         include_geometry: If True, append a 'geom_wkt' column.
         offset: Row offset for pagination.
         where: Optional SQL WHERE expression (no semicolons).
@@ -540,7 +672,7 @@ def inspect(
     if meta is None:
         return f"error: unknown layer '{layer}'. Available: {list(sess.layers)}"
 
-    cap = 10 if include_geometry else 25
+    cap = 10 if include_geometry else 200
     n = max(1, min(int(n), cap))
 
     geom_col = meta.attributes.get("__geom_col__") or ""
@@ -581,7 +713,7 @@ def inspect(
     return f"Showing {len(rows)} of {meta.feature_count} rows in `{layer}`.\n\n" + "\n".join(md) + suffix
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEMPOTENT_MUTATION)
 def show(
     layers: list[str],
     title: str | None = None,
@@ -609,6 +741,314 @@ def show(
         "visible_layers": summaries,
         "unknown_layers": missing,
     }
+
+
+# ---------- P1 tool wrappers ----------
+
+
+@mcp.tool(annotations=_READ_ONLY)
+def list_layers(ctx: Context | None = None) -> dict:
+    """Inventory of every layer in the current session.
+
+    Returns: `n_layers`, per-layer `{name, feature_count, geometry_type,
+    bbox_3011, columns, created_by, parent_layers, notes, is_visible}`,
+    plus `active_checkpoint` and `open_checkpoints`. Call this when the LLM
+    needs to recall what it has or when it looks overwhelmed by prior state.
+    """
+    try:
+        return op_list_layers(_session(ctx))
+    except Exception as e:
+        return _error_response(e)
+
+
+@mcp.tool(annotations=_SAFE_MUTATION)
+def load_many(
+    dataset_ids: list[str],
+    bbox_3011: list[float] | None = None,
+    limit: int | None = None,
+    ctx: Context | None = None,
+) -> dict:
+    """Bulk-load several catalog datasets in one call. Identical semantics to
+    `load` but applied across a list. The same bbox/limit apply to every
+    dataset in the list — use single `load` calls if you need per-dataset
+    arguments.
+
+    Returns: a list of summaries, plus a list of `errors` (per-dataset).
+    """
+    results = []
+    errors = []
+    bbox_tuple = tuple(bbox_3011) if bbox_3011 and len(bbox_3011) == 4 else None
+    try:
+        sess = _session(ctx)
+    except SessionExpired as e:
+        return _error_response(e)
+    for did in dataset_ids:
+        entry = CATALOG.get(did)
+        if entry is None:
+            errors.append({"dataset_id": did, "error": "unknown_dataset"})
+            continue
+        try:
+            meta = load_dataset(sess, entry, bbox_3011=bbox_tuple, limit=limit)
+            results.append(_layer_summary(sess, meta.name))
+        except Exception as e:
+            errors.append({"dataset_id": did, "error": type(e).__name__, "detail": str(e)})
+    return {"loaded": results, "errors": errors, "n_loaded": len(results)}
+
+
+@mcp.tool(annotations=_SAFE_MUTATION)
+def add_field(
+    layer: str, name: str, expr: str,
+    field_type: str | None = None,
+    ctx: Context | None = None,
+) -> dict:
+    """Add a new column to a layer in place, computed from a SQL expression.
+
+    QGIS / ArcGIS Field Calculator pattern. The expression is evaluated per row
+    and may reference other columns of the same layer or scalar subqueries
+    against other session layers. Type is inferred unless `field_type` is set
+    (VARCHAR / DOUBLE / BIGINT / BOOLEAN / DATE / TIMESTAMP).
+
+    Reversible when inside an active `checkpoint(...)`. Use for:
+      - era classifications: `CASE WHEN byggar < 1900 THEN 'pre-modern' END`
+      - area/density: `ST_Area(geom)`, `population / ST_Area(geom)`
+      - joins as columns: `(SELECT val FROM my_lookup WHERE id = layer.id)`
+
+    Args:
+        layer: target layer.
+        name: new column name (must not already exist — see `update_field`).
+        expr: DuckDB SQL scalar expression.
+        field_type: optional type override. If None, inferred.
+    """
+    try:
+        sess = _session(ctx)
+        out = op_add_field(sess, layer, name, expr, field_type=field_type)
+        out["hint"] = _checkpoint_hint(sess)
+        return out
+    except Exception as e:
+        return _error_response(e)
+
+
+@mcp.tool(annotations=_SAFE_MUTATION)
+def update_field(
+    layer: str, name: str, expr: str,
+    where: str | None = None,
+    ctx: Context | None = None,
+) -> dict:
+    """Overwrite an existing column's values from a SQL expression, optionally
+    restricted by WHERE. In place. Reversible inside a checkpoint.
+
+    Args:
+        layer: target layer.
+        name: column to overwrite.
+        expr: DuckDB SQL scalar expression.
+        where: optional WHERE clause restricting which rows are updated.
+    """
+    try:
+        sess = _session(ctx)
+        out = op_update_field(sess, layer, name, expr, where=where)
+        out["hint"] = _checkpoint_hint(sess)
+        return out
+    except Exception as e:
+        return _error_response(e)
+
+
+@mcp.tool(annotations=_SAFE_MUTATION)
+def drop_field(layer: str, name: str, ctx: Context | None = None) -> dict:
+    """Remove a column from a layer. In place. Reversible inside a checkpoint.
+    Refuses to drop the geometry column — use drop_layer for that."""
+    try:
+        sess = _session(ctx)
+        out = op_drop_field(sess, layer, name)
+        out["hint"] = _checkpoint_hint(sess)
+        return out
+    except Exception as e:
+        return _error_response(e)
+
+
+@mcp.tool(annotations=_SAFE_MUTATION)
+def annotate(
+    layer: str,
+    values: dict,
+    key_column: str = "rowid",
+    ctx: Context | None = None,
+) -> dict:
+    """Attach LLM-classified per-feature attributes in one call.
+
+    Payload shape:
+        values = {
+            "<key>": {"era": "functionalist", "confidence": 0.9, "note": "..."},
+            "<key>": {"era": "art-nouveau",    "confidence": 0.7, ...},
+            ...
+        }
+
+    Columns are created on the fly if they don't exist (type inferred from the
+    values: all-int → BIGINT, int/float mix → DOUBLE, bool → BOOLEAN, else
+    VARCHAR). Up to 10,000 keys per call. Pair with `batch_iterate` for layers
+    larger than you can reason about in one pass.
+
+    Args:
+        layer: target layer.
+        values: {key_value: {attr_name: val, ...}} — many features per call.
+        key_column: column to match on. Default 'rowid' (DuckDB pseudo-column,
+                    stable within a session). Use a declared key column when
+                    one exists.
+
+    Reversible inside a checkpoint (pre-image snapshotted once per column).
+    """
+    try:
+        sess = _session(ctx)
+        out = op_annotate(sess, layer, values, key_column=key_column)
+        out["hint"] = _checkpoint_hint(sess)
+        return out
+    except Exception as e:
+        return _error_response(e)
+
+
+@mcp.tool(annotations=_READ_ONLY)
+def batch_iterate(
+    layer: str | None = None,
+    columns: list[str] | None = None,
+    batch_size: int = 200,
+    cursor: str | None = None,
+    where: str | None = None,
+    ctx: Context | None = None,
+) -> dict:
+    """Paginate through a layer with a resumable cursor. Use for layers too
+    large to fit in a single inspect/annotate call.
+
+    First call: pass `layer` (and optionally `columns`, `where`, `batch_size`).
+    The response carries `rows`, `next_cursor`, and `exhausted`.
+    Subsequent calls: pass `cursor=<next_cursor>` — all other args ignored.
+    Finish when `next_cursor` is None.
+
+    Every batch includes a `rowid` column (DuckDB pseudo-column) suitable for
+    `annotate(..., key_column='rowid')`.
+
+    Args:
+        layer: source layer name (first call only).
+        columns: column subset (first call only). Defaults to all non-geometry.
+        batch_size: 1 to 500 rows per batch (default 200).
+        cursor: opaque token from a previous batch.
+        where: SQL WHERE to restrict the iteration (first call only).
+    """
+    try:
+        sess = _session(ctx)
+        if cursor is None and not layer:
+            return {"error": "missing_arg",
+                    "detail": "first call requires `layer`; subsequent calls use `cursor`."}
+        return op_batch_iterate(
+            sess, layer or "",  # layer is required for the first call
+            columns=columns, batch_size=batch_size,
+            cursor=cursor, where=where,
+        )
+    except Exception as e:
+        return _error_response(e)
+
+
+@mcp.tool(annotations=_READ_ONLY)
+def inspect_location(
+    x_3011: float,
+    y_3011: float,
+    radius_m: float = 100.0,
+    layers: list[str] | None = None,
+    per_layer_limit: int = 5,
+    ctx: Context | None = None,
+) -> dict:
+    """What's here? One-shot spatial lookup near a point across many layers.
+
+    Returns, for each session layer with geometry (or the specified subset),
+    up to `per_layer_limit` features whose geometry is within `radius_m` of
+    (x_3011, y_3011), sorted by distance. Each feature carries its attributes
+    plus a `distance_m` float.
+
+    Args:
+        x_3011, y_3011: query point in EPSG:3011.
+        radius_m: search radius in metres (default 100).
+        layers: optional subset of layer names; defaults to all with geometry.
+        per_layer_limit: 1..25, default 5.
+    """
+    try:
+        sess = _session(ctx)
+        return op_inspect_location(
+            sess, x_3011, y_3011,
+            radius_m=radius_m, layers=layers,
+            per_layer_limit=per_layer_limit,
+        )
+    except Exception as e:
+        return _error_response(e)
+
+
+@mcp.tool(annotations=_SAFE_MUTATION)
+def drop_layer(name: str, ctx: Context | None = None) -> dict:
+    """Remove a layer from the session. Reversible inside an active checkpoint
+    (full layer snapshotted); not reversible otherwise.
+    """
+    try:
+        sess = _session(ctx)
+        out = op_drop_layer(sess, name)
+        out["hint"] = _checkpoint_hint(sess)
+        return out
+    except Exception as e:
+        return _error_response(e)
+
+
+@mcp.tool(annotations=_SAFE_MUTATION)
+def rename_layer(old: str, new: str, ctx: Context | None = None) -> dict:
+    """Rename a layer. Reversible inside an active checkpoint."""
+    try:
+        sess = _session(ctx)
+        out = op_rename_layer(sess, old, new)
+        out["hint"] = _checkpoint_hint(sess)
+        return out
+    except Exception as e:
+        return _error_response(e)
+
+
+@mcp.tool(annotations=_IDEMPOTENT_MUTATION)
+def set_notes(layer: str, notes: str, ctx: Context | None = None) -> dict:
+    """Attach free-text notes to a layer. Shown in list_layers and sources.
+    Useful for "why does this layer exist" narration that will help you (or a
+    colleague reading the export) later."""
+    try:
+        return op_set_notes(_session(ctx), layer, notes)
+    except Exception as e:
+        return _error_response(e)
+
+
+@mcp.tool(annotations=_SAFE_MUTATION)
+def checkpoint(name: str, ctx: Context | None = None) -> dict:
+    """Create a named checkpoint. Subsequent in-place mutations (`add_field`,
+    `update_field`, `drop_field`, `annotate`, `drop_layer`, `rename_layer`)
+    snapshot their pre-image; call `rollback(name)` to undo all mutations, or
+    `commit(name)` to make them permanent and discard snapshots.
+
+    One checkpoint may be active at a time. Snapshots are column-scoped,
+    so storage cost scales with the *diff*, not the full layer.
+    """
+    try:
+        return op_checkpoint(_session(ctx), name)
+    except Exception as e:
+        return _error_response(e)
+
+
+@mcp.tool(annotations=_SAFE_MUTATION)
+def rollback(name: str, ctx: Context | None = None) -> dict:
+    """Restore every in-place mutation made since `checkpoint(name)`. Discards
+    the checkpoint and its snapshots."""
+    try:
+        return op_rollback(_session(ctx), name)
+    except Exception as e:
+        return _error_response(e)
+
+
+@mcp.tool(annotations=_SAFE_MUTATION)
+def commit(name: str, ctx: Context | None = None) -> dict:
+    """Make all mutations since `checkpoint(name)` permanent. Discards
+    snapshots, reclaims storage."""
+    try:
+        return op_commit(_session(ctx), name)
+    except Exception as e:
+        return _error_response(e)
 
 
 # ---------- helpers ----------

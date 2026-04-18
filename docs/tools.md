@@ -1,10 +1,28 @@
 # MCP tool reference
 
-As of Phase 3. **Twelve tools**. Endpoint: `https://geo.benjaminhenriksson.com/mcp` (bearer auth).
+**26 tools** across two tiers. Endpoint: `https://geo.benjaminhenriksson.com/mcp`
+(bearer auth). Every tool carries MCP `toolAnnotations` (`readOnlyHint`,
+`destructiveHint=false`) so clients like Claude Code / Desktop can auto-approve
+the safe ones without per-call prompts.
 
 All spatial tools operate in **EPSG:3011** (SWEREF 99 18 00). Coordinates in tool
 arguments and return values use that CRS unless otherwise noted. The viewer
 reprojects to EPSG:4326 at the `/api/.../geojson` boundary.
+
+## Tool index
+
+**Discovery / read-only** (`readOnlyHint=true`): `search_data`, `geocode`,
+`inspect`, `stats`, `sources`, `list_layers`, `batch_iterate`, `inspect_location`.
+
+**Layer creation / session state** (`destructiveHint=false`): `load`,
+`load_many`, `filter`, `spatial`, `execute_sql`, `create_layer`, `export`,
+`show`, `set_notes`.
+
+**In-place layer mutation** (`destructiveHint=false`, reversible inside a
+checkpoint): `add_field`, `update_field`, `drop_field`, `annotate`,
+`drop_layer`, `rename_layer`.
+
+**Transaction control**: `checkpoint`, `rollback`, `commit`.
 
 ---
 
@@ -233,3 +251,160 @@ Never a Python traceback. Never implementation hints beyond the immediate cause.
 - **DeSO geom column**: renamed `sp_geometry` → `geom` at normalize time, so every spatial layer in the catalog uses `geom` consistently.
 - **SCB dedup**: normalize step collapses the shadow-NULL duplicate rows that SCB publishes.
 - **Audits**: `catalog_audit.py` + `cross_ref_audit.py` run post-normalize and fail the pipeline on real errors.
+
+---
+
+## What changed in Phase 4 — LLM-native workflow
+
+- **Tools**: +14 (total **26**). New categories: in-place field ops,
+  transaction control, AI-native iteration.
+- **MCP annotations** on every tool (`readOnlyHint` / `destructiveHint`) so
+  clients can auto-approve safe calls without per-action prompts.
+- **Server `instructions`** — multi-paragraph system prompt delivered with the
+  tool list at connection time. Covers workflow patterns, the CRS convention,
+  SCB privacy-suppression and DeSO-2018→2025 footguns, and the enrichment
+  loop (batch_iterate → annotate).
+- **`inspect` cap raised** from 25 → 200 (attributes only); the 10 cap with
+  geometry is unchanged.
+
+### 13. `list_layers()`
+
+Clean inventory: each layer's name, feature_count, geometry_type, bbox,
+columns, creator, parent_layers, notes, visibility flag. Plus
+`active_checkpoint` and `open_checkpoints`. Use this for orientation rather
+than `sources()` when you don't need provenance detail.
+
+### 14. `load_many(dataset_ids: list[str], bbox_3011?, limit?)`
+
+Bulk variant of `load`. Returns `{loaded: [summaries], errors: [per-dataset]}`.
+Single-call convenience when the LLM knows up front that it wants several
+related datasets — shared bbox/limit only. Use individual `load` calls when
+you need per-dataset arguments.
+
+### 15. `add_field(layer, name, expr, field_type?)`
+
+QGIS / ArcGIS Field Calculator. Add a column whose values are a DuckDB SQL
+scalar expression per row. Type auto-inferred unless `field_type` is supplied
+(`VARCHAR`, `DOUBLE`, `BIGINT`, `BOOLEAN`, `DATE`, `TIMESTAMP`). May reference
+other columns of the same layer or scalar subqueries against other session
+layers (useful for spatial-joined values).
+
+In-place. Reversible inside an active `checkpoint(...)`.
+
+### 16. `update_field(layer, name, expr, where?)`
+
+Overwrite an existing column. Optional WHERE restricts which rows are
+updated. In-place; reversible inside a checkpoint.
+
+### 17. `drop_field(layer, name)`
+
+Remove a column. Refuses to drop the geometry column (use `drop_layer` for
+that). In-place; reversible inside a checkpoint.
+
+### 18. `annotate(layer, values: dict, key_column="rowid")`
+
+Attach LLM-classified per-feature attributes in one call. Payload:
+
+```python
+values = {
+    rowid1: {"era": "functionalist", "confidence": 0.9, "note": "..."},
+    rowid2: {"era": "art-nouveau",    "confidence": 0.7},
+    ...
+}
+```
+
+New columns are created on the fly with type inferred from the values
+(`int`-only → BIGINT; mixed int/float → DOUBLE; bool → BOOLEAN; else
+VARCHAR). Cap: 10,000 keys per call. Pair with `batch_iterate` for larger
+layers. Reversible inside a checkpoint — snapshotted once per column
+regardless of how many rows are touched.
+
+### 19. `batch_iterate(layer, columns?, batch_size=200, cursor?, where?)`
+
+Cursor-paginated read for layers too large to inspect in one go. First call
+passes `layer` (and optionally `columns`, `where`, `batch_size`), response
+carries `rows`, `next_cursor`, `exhausted`. Subsequent calls pass
+`cursor=<next>`. Finish when `next_cursor` is null. Every batch includes a
+`rowid` column suitable for `annotate(..., key_column="rowid")`. Max 500
+rows per batch.
+
+### 20. `inspect_location(x_3011, y_3011, radius_m=100, layers?, per_layer_limit=5)`
+
+One-shot "what's here?" across many layers. For each session layer with
+geometry (or the subset named in `layers`), returns up to `per_layer_limit`
+features within `radius_m` of the point, sorted by distance, each annotated
+with `distance_m`.
+
+Natural conversational pattern: "what's at Sergels torg?" becomes one call
+instead of a chained geocode → spatial(select_by_location) → inspect per
+layer.
+
+### 21. `drop_layer(name)`
+
+Remove a layer from the session. Reversible inside a checkpoint (full layer
+snapshotted) — otherwise irreversible.
+
+### 22. `rename_layer(old, new)`
+
+Rename. Reversible inside a checkpoint.
+
+### 23. `set_notes(layer, notes)`
+
+Attach free-text notes to a layer. Surfaces in `list_layers` and `sources`.
+For narrating *why* a layer exists — "filtered to pre-1940 stone buildings
+as a proxy for the historical core" — so the reasoning is recoverable from
+the session state alone.
+
+### 24. `checkpoint(name)`
+
+Create a named checkpoint. Subsequent in-place mutations (`add_field`,
+`update_field`, `drop_field`, `annotate`, `drop_layer`, `rename_layer`)
+snapshot their pre-image column-scoped in a hidden side table. Storage cost
+scales with the *diff*, not the full layer. One checkpoint active at a time;
+nested checkpoints are not supported.
+
+### 25. `rollback(name)`
+
+Undo every in-place mutation made since `checkpoint(name)`. Snapshots are
+applied in reverse order then discarded.
+
+### 26. `commit(name)`
+
+Make all mutations since `checkpoint(name)` permanent. Discards the snapshot
+tables and frees the marker. The next mutation requires a fresh `checkpoint`
+to be reversible.
+
+---
+
+## Canonical AI-native workflow
+
+```python
+# Setup
+load_many(["sbk_buildings", "deso_2025"])
+checkpoint("classify_era")
+
+# Iteration loop
+out = batch_iterate("sbk_buildings", columns=["objectid", "byggar", "name"], batch_size=200)
+while True:
+    # LLM reasons about the batch → produces {rowid: {"era": ..., "confidence": ...}}
+    tags = classify_in_head(out["rows"])
+    annotate("sbk_buildings", values=tags)
+    if out["exhausted"]: break
+    out = batch_iterate(cursor=out["next_cursor"])
+
+# Verify, possibly iterate
+stats("sbk_buildings", columns=["era"], group_by=["era"])
+# if unhappy:
+#     rollback("classify_era")
+# else:
+set_notes("sbk_buildings", "era classified by LLM on 2026-04-19")
+commit("classify_era")
+export("sbk_buildings", format="gpkg")
+```
+
+## Response hints
+
+Most mutation tools include a `hint` field in their response flagging
+checkpoint state — e.g. *"Mutation is reversible — call rollback('classify')
+to undo."* or *"No checkpoint active — this mutation is not reversible."*.
+Intended as teaching moments for LLMs just connecting.

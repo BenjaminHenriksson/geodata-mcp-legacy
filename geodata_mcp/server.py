@@ -36,7 +36,9 @@ from .operations import (
     execute_sql as op_execute_sql,
     export_layer as op_export,
     filter_layer,
+    hide_layers as op_hide_layers,
     inspect_location as op_inspect_location,
+    inspect_locations as op_inspect_locations,
     list_layers as op_list_layers,
     rename_layer as op_rename_layer,
     rollback as op_rollback,
@@ -51,6 +53,19 @@ from .session import REGISTRY, Session, SessionExpired
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# Public URL prefix for viewer / export links. Empty → relative paths (dev).
+# Production: set GEODATA_PUBLIC_URL=https://geo.benjaminhenriksson.com.
+import os as _os
+PUBLIC_URL = _os.environ.get("GEODATA_PUBLIC_URL", "").rstrip("/")
+
+
+def _abs_url(path: str) -> str:
+    """Prepend PUBLIC_URL if set, else return as-is (relative)."""
+    if PUBLIC_URL and path.startswith("/"):
+        return f"{PUBLIC_URL}{path}"
+    return path
+
+
 # One catalog instance for the lifetime of the server.
 CATALOG = Catalog.load()
 
@@ -63,35 +78,69 @@ pre-filtered to Stockholm kommun (kommunkod `0180`) in EPSG:3011.
 
 ## Core workflow pattern
 
-1. `search_data(query)` — fuzzy-find catalog datasets (SV + EN). 65 datasets total.
-2. `load(dataset_id, ...)` or `load_many([ids])` — register as session layer(s).
+1. `search_data(query, verbose=False)` — fuzzy-find catalog datasets (SV+EN).
+   65 datasets total. `verbose=False` (default) returns compact summaries; call
+   `describe_dataset(id)` for the full attribute schema once you know what you want.
+2. **Prefer `load_many([ids])` over repeated `load(id)`** when you need more
+   than one dataset — one round-trip vs. N. Fall back to single `load` only
+   when per-dataset bbox/where are needed.
 3. Analyse:
    - `filter` / `spatial` / `stats` / `execute_sql` — derive new layers (immutable).
-   - `add_field` / `update_field` / `drop_field` — mutate a layer's attribute table in place (QGIS Field-Calculator style).
-   - `annotate(layer, {id: {...}})` — attach LLM-classified per-feature attributes in one call.
-   - `batch_iterate(layer, ...)` — paginate large layers with a cursor to feed `annotate`.
-   - `inspect_location(x, y, radius_m)` — "what's here?" across all layers in one call.
-4. Cite with `sources(layer)` then `export(layer, format)` for a download URL.
+   - `add_field` / `update_field` / `drop_field` — mutate a layer's attribute
+     table in place (QGIS Field-Calculator style).
+   - `annotate(layer, {id: {...}})` — attach LLM-classified per-feature
+     attributes in one call (up to 10,000 keys).
+   - `batch_iterate(layer, ...)` — paginate large layers with a cursor to feed
+     `annotate`.
+   - `inspect_location(x, y, radius_m)` — "what's here?" one point, all layers.
+   - `inspect_locations(points, radius_m)` — same but for many points at once.
+4. Visualize: `show(layers)` + open the returned viewer URL.
+5. Cite with `sources(layer)` then `export(layer, format)` for a download URL.
 
 ## Reversible mutations via checkpoint / rollback
 
 In-place mutations (`add_field`, `update_field`, `drop_field`, `annotate`,
 `drop_layer`, `rename_layer`) are reversible if you wrap them in a checkpoint:
 
-    checkpoint("before_enrichment")
-    ... mutations ...
-    rollback("before_enrichment")    # undo everything
+    checkpoint("before_enrichment")                     # snapshots whatever mutates
+    # ... mutations ...
+    rollback("before_enrichment")                        # undo everything
     # or
-    commit("before_enrichment")      # make it permanent, discard snapshots
+    commit("before_enrichment")                          # make permanent
 
-Snapshots are column-scoped (O(changed columns × rows), not O(layer)). One
-checkpoint active at a time; nested checkpoints not supported.
+**Scoped checkpoints** — pass `layers=[...]` to restrict the checkpoint to
+specific layers:
+
+    checkpoint("era_work", layers=["buildings"])         # only snapshots `buildings`
+    add_field("buildings", "era", "...")                 # covered
+    add_field("roads", "surface", "...")                 # NOT in this checkpoint's scope
+
+Multiple checkpoints can be active simultaneously (on non-overlapping or
+overlapping scopes — a mutation snapshots for every active checkpoint that
+covers that layer). Snapshots are column-scoped (O(changed columns × rows)).
+
+## Bulk enrichment pattern (the canonical AI-native loop)
+
+    load("sbk_buildings")
+    checkpoint("classify", layers=["sbk_buildings"])
+    out = batch_iterate("sbk_buildings", columns=["id","name","byggar"], batch_size=500)
+    while True:
+        tags = {rowid: {"era": ..., "confidence": ...} for rowid in out.rows}
+        annotate("sbk_buildings", values=tags)
+        if out.exhausted: break
+        out = batch_iterate(cursor=out.next_cursor)    # batch_size honored per call
+    commit("classify")
+
+`annotate` creates columns on the fly. For >10k features, drive it with
+`create_layer(payload)` as a side-table + `add_field` subquery join instead of
+inline JSON.
 
 ## Layer notes
 
-Attach narrative with `set_notes(layer, "text")`. Surfaces in `list_layers` and
-`sources`. Useful for recording *why* a layer exists ("filtered to pre-1940 stone
-buildings as a proxy for the historical core").
+Attach narrative with `set_notes(layer, "text")`. Surfaces in `list_layers`
+and `sources`. Useful for recording *why* a layer exists ("filtered to
+pre-1940 stone buildings as a proxy for the historical core") so the
+reasoning is recoverable from session state alone.
 
 ## Coordinate reference system
 
@@ -104,40 +153,45 @@ buildings as a proxy for the historical core").
 
 - **SCB privacy suppression**: small-population DeSOs have NULL values in
   statistical tables. Always `WHERE value IS NOT NULL` when computing numeric
-  stats over SCB tables, or you'll get misleading averages.
-- **DeSO 2018 → 2025 codes changed** in some areas; use `deso_historical_changes`
-  or `deso_regso_mapping` to translate.
+  stats, or you'll get misleading averages.
+- **SCB region column**: every normalized SCB parquet carries `region`,
+  `region_kind` ∈ {`deso`, `regso`, `kommun`, `country`}, `region_code`, and
+  `region_name` columns. Filter by `region_kind = 'deso'` before joining to
+  the DeSO polygon layer — don't use fragile `LIKE` hacks.
+- **DeSO 2018 → 2025 codes changed** in some areas; use
+  `deso_historical_changes` or `deso_regso_mapping` to translate.
 - **Attributes are Swedish**: `byggar` = year built, `antal` = count,
-  `KATEGORI`/`GRUPP` = category/group. The catalog's per-attribute description
-  field lists bilingual names and sample values — consult it, don't guess.
-- **The geometry column is always `geom`** in every normalized layer. `ST_Read`
-  returns it under that name — no need to probe or special-case.
-- **`execute_sql` is read-only and sandboxed**: no INSERT/UPDATE/DELETE/DDL, no
-  file readers, no HTTP URLs, no abs paths. Numeric literals > 10 M are
+  `KATEGORI`/`GRUPP` = category/group. Every SCB parquet's value column is
+  now called `value` (unified at normalize time) regardless of the SCB table
+  it came from.
+- **The geometry column is always `geom`** in every normalized layer.
+- **`execute_sql` is read-only and sandboxed**: no INSERT/UPDATE/DELETE/DDL,
+  no file readers, no HTTP URLs, no abs paths. Numeric literals > 10 M are
   rejected as DoS protection. For writes, use `add_field` / `update_field` /
-  `annotate` instead.
+  `annotate`.
 
-## When the LLM is classifying features
+## When the LLM should push back, not plough on
 
-Classic "I need to categorize every building by era" pattern:
-
-    checkpoint("classify")
-    batch_iterate("buildings", columns=["id","name","byggar"], batch_size=200)
-    # → LLM reasons on the batch, returns {rowid: {"era": "functionalist", ...}, ...}
-    annotate("buildings", values={...})
-    # → repeat batch_iterate with cursor until exhausted
-    commit("classify")
-
-`annotate` creates columns on the fly if they don't exist.
+- If the user's request needs data **not in the catalog** AND a web search
+  can't plausibly fill the gap, say so plainly. Name the missing data.
+  Don't fabricate values or silently substitute a proxy without flagging it.
+- If a tool response carries a `warning`, `hint`, `truncated`, or `capped_at`
+  field, **surface it to the user** rather than proceeding as if the result
+  were complete.
+- If `execute_sql` returns 50 rows and `truncated=True`, either narrow the
+  query or re-run with `result_name="..."` to materialize as a full layer.
+- If the user's bbox / radius / expression yields 0 rows, tell them; don't
+  silently proceed with an empty layer.
+- Small rule of thumb: when in doubt, ask before inventing.
 
 ## If something goes wrong
 
 Every error response carries `error` + `detail`. Common codes:
 - `unknown_dataset` — check `search_data()` first
-- `sql_rejected` — validator blocked the SQL; see `detail` for which rule
+- `sql_rejected` — validator blocked the SQL; `detail` names the rule
 - `sql_failed` — DuckDB execution error; check column names / types
 - `op_failed` — generic op error; `detail` explains
-- `session_expired` — idle > 30 min; see `replay` for operation log
+- `session_expired` — idle > 30 min; `replay` carries the operation log
 """
 
 
@@ -160,16 +214,19 @@ _DESTRUCTIVE_MUTATION = ToolAnnotations(
 )
 
 
-def _checkpoint_hint(sess: Session) -> str | None:
-    """Tip the LLM about checkpoint state after a reversible mutation."""
-    if sess.active_checkpoint:
+def _checkpoint_hint_for_layer(sess: Session, layer: str) -> str:
+    """Tip the LLM about checkpoint state for this specific layer."""
+    from .operations import _reversible_for_layer
+    covering = _reversible_for_layer(sess, layer)
+    if covering:
+        n = covering[0]
         return (
-            f"Mutation is reversible — call rollback('{sess.active_checkpoint}') "
-            f"to undo, commit('{sess.active_checkpoint}') to make permanent."
+            f"Mutation on '{layer}' is reversible via checkpoint(s) {covering} — "
+            f"call rollback('{n}') to undo, commit('{n}') to make permanent."
         )
     return (
-        "No checkpoint active — this mutation is not reversible. "
-        "Call checkpoint('name') first if you want undo capability."
+        f"No checkpoint covers '{layer}' — this mutation is not reversible. "
+        "Call checkpoint('name') or checkpoint('name', layers=['" + layer + "']) first."
     )
 
 
@@ -194,8 +251,12 @@ def _error_response(e: Exception) -> dict:
 
 # ---------- helpers ----------
 
-def _dataset_summary(d: DatasetEntry) -> dict:
-    return {
+def _dataset_summary(d: DatasetEntry, verbose: bool = True) -> dict:
+    """Dataset metadata. `verbose=True` includes the full attribute schema
+    (name/type/description/sample values). `verbose=False` strips attributes —
+    call describe_dataset(id) for the full picture once you know what you
+    want to load."""
+    base = {
         "id": d.id,
         "name": d.name_sv,
         "name_en": d.name_en,
@@ -209,7 +270,9 @@ def _dataset_summary(d: DatasetEntry) -> dict:
         "crs_epsg": d.crs_epsg,
         "publisher": d.publisher,
         "license": d.license,
-        "attributes": [
+    }
+    if verbose:
+        base["attributes"] = [
             {
                 "name": a.name, "type": a.type,
                 "description": a.description_sv,
@@ -217,8 +280,10 @@ def _dataset_summary(d: DatasetEntry) -> dict:
                 "sample_values": a.sample_values,
             }
             for a in d.attributes
-        ],
-    }
+        ]
+    else:
+        base["n_attributes"] = len(d.attributes)
+    return base
 
 
 def _layer_summary(sess: Session, name: str) -> dict:
@@ -244,27 +309,56 @@ def _layer_summary(sess: Session, name: str) -> dict:
 # ---------- tools ----------
 
 @mcp.tool(annotations=_READ_ONLY)
-def search_data(query: str = "", limit: int = 20) -> dict:
+def search_data(query: str = "", limit: int = 20, verbose: bool = False) -> dict:
     """Fuzzy-search the catalog of locally available datasets.
 
-    Args:
-        query: Free-text search (Swedish or English). Empty string returns all datasets
-               up to `limit`.
-        limit: Max matches to return (default 20). Pass a larger value for exhaustive listing.
+    Default is compact output (id, name, description, coverage, temporal, license)
+    to avoid flooding context. Call `describe_dataset(id)` for the full attribute
+    schema of a specific dataset, or pass `verbose=True` here to get everything
+    for every match (can be 20–50 KB).
 
-    Returns: structured metadata per matching dataset (name, description, coverage,
-    temporal range, attribute schema with sample values, license, publisher).
-    No suggestions or recommendations — facts only.
+    Args:
+        query: Free-text search (Swedish or English). Empty string returns all
+               datasets up to `limit`.
+        limit: Max matches to return (default 20).
+        verbose: If True, include full attribute schema (name/type/description/
+                 sample values) per dataset. Default False for brevity.
+
+    Returns: list of dataset summaries + total catalog size.
     """
     hits = CATALOG.search(query, limit=max(1, min(int(limit), 200)))
     return {
         "query": query,
         "total_in_catalog": len(CATALOG.all()),
+        "verbose": verbose,
         "results": [
-            {**_dataset_summary(d), "match_score": round(score, 1)}
+            {**_dataset_summary(d, verbose=verbose), "match_score": round(score, 1)}
             for d, score in hits
         ],
+        "hint": (None if verbose else
+                 "compact mode — call describe_dataset(id) for attribute schema "
+                 "of the one you want to load"),
     }
+
+
+@mcp.tool(annotations=_READ_ONLY)
+def describe_dataset(dataset_id: str) -> dict:
+    """Full metadata for a single catalog dataset — id, descriptions, coverage,
+    temporal range, geometry type, feature count, CRS, publisher, license, and
+    the complete attribute schema (column name, type, bilingual description,
+    sample values).
+
+    Use this after `search_data` when you need to understand a dataset's
+    columns before loading it.
+    """
+    entry = CATALOG.get(dataset_id)
+    if entry is None:
+        return {
+            "error": "unknown_dataset",
+            "dataset_id": dataset_id,
+            "hint": "call search_data() to list datasets — id spelling matters",
+        }
+    return _dataset_summary(entry, verbose=True)
 
 
 @mcp.tool(annotations=_READ_ONLY)
@@ -622,11 +716,14 @@ def export(
       - **csv**: attribute columns + geometry as WKT
       - **parquet**: columnar, zstd-compressed, geometry as WKB
 
-    The returned URL lives under /exports/<random-token>/<filename> on the same
-    host as the MCP endpoint. Links auto-expire after 24 h.
+    The returned URL is absolute when PUBLIC_URL is configured, otherwise
+    relative (`/exports/<token>/<filename>`). Links auto-expire after 24 h.
     """
     try:
-        return op_export(_session(ctx), layer, fmt=format)
+        out = op_export(_session(ctx), layer, fmt=format)
+        if "url" in out:
+            out["url"] = _abs_url(out["url"])
+        return out
     except Exception as e:
         return _error_response(e)
 
@@ -735,9 +832,10 @@ def show(
         else:
             missing.append(n)
     sess.visible_layers = [n for n in layers if n in sess.layers]
+    sess.bump_version()
     return {
         "title": title,
-        "viewer_url": f"/view/{sess.id}",
+        "viewer_url": _abs_url(f"/view/{sess.id}"),
         "visible_layers": summaries,
         "unknown_layers": missing,
     }
@@ -822,7 +920,7 @@ def add_field(
     try:
         sess = _session(ctx)
         out = op_add_field(sess, layer, name, expr, field_type=field_type)
-        out["hint"] = _checkpoint_hint(sess)
+        out["hint"] = _checkpoint_hint_for_layer(sess, layer)
         return out
     except Exception as e:
         return _error_response(e)
@@ -846,7 +944,7 @@ def update_field(
     try:
         sess = _session(ctx)
         out = op_update_field(sess, layer, name, expr, where=where)
-        out["hint"] = _checkpoint_hint(sess)
+        out["hint"] = _checkpoint_hint_for_layer(sess, layer)
         return out
     except Exception as e:
         return _error_response(e)
@@ -859,7 +957,7 @@ def drop_field(layer: str, name: str, ctx: Context | None = None) -> dict:
     try:
         sess = _session(ctx)
         out = op_drop_field(sess, layer, name)
-        out["hint"] = _checkpoint_hint(sess)
+        out["hint"] = _checkpoint_hint_for_layer(sess, layer)
         return out
     except Exception as e:
         return _error_response(e)
@@ -898,7 +996,7 @@ def annotate(
     try:
         sess = _session(ctx)
         out = op_annotate(sess, layer, values, key_column=key_column)
-        out["hint"] = _checkpoint_hint(sess)
+        out["hint"] = _checkpoint_hint_for_layer(sess, layer)
         return out
     except Exception as e:
         return _error_response(e)
@@ -951,7 +1049,8 @@ def inspect_location(
     y_3011: float,
     radius_m: float = 100.0,
     layers: list[str] | None = None,
-    per_layer_limit: int = 5,
+    columns: list[str] | None = None,
+    per_layer_limit: int = 3,
     ctx: Context | None = None,
 ) -> dict:
     """What's here? One-shot spatial lookup near a point across many layers.
@@ -965,14 +1064,55 @@ def inspect_location(
         x_3011, y_3011: query point in EPSG:3011.
         radius_m: search radius in metres (default 100).
         layers: optional subset of layer names; defaults to all with geometry.
-        per_layer_limit: 1..25, default 5.
+                Unknown names are reported in `unknown_layers`.
+        columns: optional attribute subset to return per feature (keeps output
+                 small when you only need a name/id).
+        per_layer_limit: 1..25, default 3 (kept small to limit context bloat —
+                         raise explicitly if you need more).
     """
     try:
         sess = _session(ctx)
         return op_inspect_location(
             sess, x_3011, y_3011,
             radius_m=radius_m, layers=layers,
+            columns=columns,
             per_layer_limit=per_layer_limit,
+        )
+    except Exception as e:
+        return _error_response(e)
+
+
+@mcp.tool(annotations=_READ_ONLY)
+def inspect_locations(
+    points: list[dict],
+    radius_m: float = 100.0,
+    layers: list[str] | None = None,
+    columns: list[str] | None = None,
+    per_layer_limit: int = 3,
+    ctx: Context | None = None,
+) -> dict:
+    """Batch variant of `inspect_location`: "what's near each of these points?"
+    in one call.
+
+    Args:
+        points: list of `{"id": str|int, "x_3011": float, "y_3011": float}` dicts.
+                If `id` is omitted, the list index is used.
+        radius_m, layers, columns, per_layer_limit: same as inspect_location.
+
+    Cap: 500 points per call.
+
+    Returns: `{points: [{id, x_3011, y_3011, results: [{layer, features}, ...]}, ...],
+               unknown_layers: [...], layers_considered: N}`.
+    """
+    try:
+        sess = _session(ctx)
+        if len(points) > 500:
+            return {"error": "too_many_points",
+                    "detail": f"got {len(points)}, cap is 500. Batch into smaller calls."}
+        return op_inspect_locations(
+            sess, points,
+            radius_m=radius_m, layers=layers,
+            columns=columns, per_layer_limit=per_layer_limit,
         )
     except Exception as e:
         return _error_response(e)
@@ -986,7 +1126,7 @@ def drop_layer(name: str, ctx: Context | None = None) -> dict:
     try:
         sess = _session(ctx)
         out = op_drop_layer(sess, name)
-        out["hint"] = _checkpoint_hint(sess)
+        out["hint"] = _checkpoint_hint_for_layer(sess, name)
         return out
     except Exception as e:
         return _error_response(e)
@@ -998,7 +1138,26 @@ def rename_layer(old: str, new: str, ctx: Context | None = None) -> dict:
     try:
         sess = _session(ctx)
         out = op_rename_layer(sess, old, new)
-        out["hint"] = _checkpoint_hint(sess)
+        out["hint"] = _checkpoint_hint_for_layer(sess, new)
+        return out
+    except Exception as e:
+        return _error_response(e)
+
+
+@mcp.tool(annotations=_IDEMPOTENT_MUTATION)
+def hide(
+    layers: list[str] | None = None,
+    ctx: Context | None = None,
+) -> dict:
+    """Hide layers in the viewer. Inverse of `show`. With no args, hides all.
+
+    Args:
+        layers: layer names to hide. None/empty → hide all.
+    """
+    try:
+        sess = _session(ctx)
+        out = op_hide_layers(sess, layers)
+        out["viewer_url"] = _abs_url(f"/view/{sess.id}")
         return out
     except Exception as e:
         return _error_response(e)
@@ -1016,17 +1175,29 @@ def set_notes(layer: str, notes: str, ctx: Context | None = None) -> dict:
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
-def checkpoint(name: str, ctx: Context | None = None) -> dict:
+def checkpoint(
+    name: str,
+    layers: list[str] | None = None,
+    ctx: Context | None = None,
+) -> dict:
     """Create a named checkpoint. Subsequent in-place mutations (`add_field`,
     `update_field`, `drop_field`, `annotate`, `drop_layer`, `rename_layer`)
-    snapshot their pre-image; call `rollback(name)` to undo all mutations, or
-    `commit(name)` to make them permanent and discard snapshots.
+    are snapshotted so that `rollback(name)` can undo them. `commit(name)`
+    discards the snapshots and makes the mutations permanent.
 
-    One checkpoint may be active at a time. Snapshots are column-scoped,
-    so storage cost scales with the *diff*, not the full layer.
+    Scope:
+        layers=None (default): covers **every** layer in the session. Any
+            in-place mutation is tracked.
+        layers=["a", "b"]: covers only those layers. Mutations to other
+            layers are NOT snapshotted and can't be rolled back via this
+            checkpoint — use a separate scoped checkpoint for them.
+
+    Multiple checkpoints can be active simultaneously. A mutation covered by
+    more than one active checkpoint is snapshotted for each. Storage cost is
+    column-scoped (O(changed columns × rows)), not layer-wide.
     """
     try:
-        return op_checkpoint(_session(ctx), name)
+        return op_checkpoint(_session(ctx), name, layers=layers)
     except Exception as e:
         return _error_response(e)
 
@@ -1137,8 +1308,23 @@ def build_http_app() -> object:
             )
         return JSONResponse({
             "session_id": s.id,
+            "version": s.version,
             "visible_layers": s.visible_layers,
             "layers": {n: _layer_summary(s, n) for n in s.visible_layers},
+        })
+
+    async def api_version(request):
+        """Tiny endpoint for viewer to poll — just the session's version
+        counter. The viewer diffs on it to decide whether to re-fetch."""
+        sid = request.path_params["session_id"]
+        s = REGISTRY.get(sid)
+        if s is None:
+            return JSONResponse({"error": "unknown_or_expired_session"},
+                                status_code=404)
+        return JSONResponse({
+            "session_id": s.id,
+            "version": s.version,
+            "visible_layers": s.visible_layers,
         })
 
     async def serve_export(request):
@@ -1208,6 +1394,7 @@ def build_http_app() -> object:
         *mcp_app.routes,
         Route("/view/{session_id}", view_index),
         Route("/api/{session_id}/visible_layers", api_visible),
+        Route("/api/{session_id}/version", api_version),
         Route("/api/{session_id}/layer/{layer}/geojson", api_layer_geojson),
         Route("/exports/{token}/{filename}", serve_export),
         Mount("/static", StaticFiles(directory=str(viewer_dir)), name="static"),

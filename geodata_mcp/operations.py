@@ -767,6 +767,14 @@ def execute_sql(
         "description": description,
         "markdown": "\n".join(md),
     }
+    if len(result) >= EXECUTE_SQL_MARKDOWN_ROW_CAP:
+        payload["truncated"] = True
+        payload["warning"] = (
+            f"result capped at {EXECUTE_SQL_MARKDOWN_ROW_CAP} rows — the full "
+            "result set may be larger. To get all rows, either narrow the "
+            "query, or re-run with `result_name='...'` to materialize as a "
+            "full layer (then iterate via `batch_iterate` or export)."
+        )
     if blob_geom_candidate:
         payload["geometry_hint"] = (
             f"Column '{blob_geom_candidate}' looks like geometry but was stored "
@@ -1084,87 +1092,114 @@ def sources(session: Session, layer: str | None = None) -> str:
 
 # ---------- checkpoint / rollback infrastructure ----------
 
-def _active_ckpt(session: Session) -> dict | None:
-    """Return the active checkpoint dict, or None."""
-    if session.active_checkpoint is None:
-        return None
-    return session.checkpoints.get(session.active_checkpoint)
+def _active_checkpoints_for(session: Session, layer: str) -> list[dict]:
+    """Return every active checkpoint whose scope covers `layer`. A checkpoint
+    with `layers=None` covers every layer; a scoped one covers only its listed
+    layers. Empty list means this mutation is not being tracked by any
+    checkpoint."""
+    out = []
+    for ckpt in session.checkpoints.values():
+        scope = ckpt.get("layers")
+        if scope is None or layer in scope:
+            out.append(ckpt)
+    return out
+
+
+def _reversible_for_layer(session: Session, layer: str) -> list[str]:
+    """List of checkpoint names that would roll back a mutation on `layer`."""
+    return [name for name, ckpt in session.checkpoints.items()
+            if ckpt.get("layers") is None or layer in ckpt["layers"]]
 
 
 def _snapshot_column(session: Session, layer: str, column: str) -> None:
-    """If a checkpoint is active and this (layer, column) hasn't been snapshotted
-    yet for it, copy the column's pre-image into a side table. Idempotent within
-    a checkpoint."""
-    ckpt = _active_ckpt(session)
-    if ckpt is None:
+    """For every active checkpoint that covers `layer`, snapshot the (layer,
+    column) pre-image (idempotent per-checkpoint). Called before in-place
+    column mutations."""
+    covering = _active_checkpoints_for(session, layer)
+    if not covering:
         return
-    for s in ckpt["snapshots"]:
-        if s["layer"] == layer and s["column"] == column:
-            return  # already snapshotted for this checkpoint
-    cid = ckpt["id"]
-    snap_table = f"_snap_{cid}_{layer}_{column}"
-    # Check whether the column exists by probing DuckDB's info_schema.
     meta = session.layers.get(layer)
-    exists = bool(meta and column in meta.attributes and not column.startswith("__"))
-    if exists:
-        session.conn.execute(
-            f"CREATE TABLE {_quote_ident(snap_table)} AS "
-            f"SELECT rowid AS __rowid, {_quote_ident(column)} FROM {_quote_ident(layer)}"
-        )
-    # If the column doesn't exist yet, we record the intent to drop on rollback
-    # without copying data (no rows to preserve).
-    ckpt["snapshots"].append({
-        "layer": layer, "column": column, "snap_table": snap_table,
-        "column_existed": exists, "whole_layer": False,
-    })
+    col_exists = bool(meta and column in meta.attributes and not column.startswith("__"))
+    for ckpt in covering:
+        # idempotent per checkpoint
+        if any(s["layer"] == layer and s["column"] == column
+               for s in ckpt["snapshots"]):
+            continue
+        cid = ckpt["id"]
+        snap_table = f"_snap_{cid}_{layer}_{column}"
+        if col_exists:
+            session.conn.execute(
+                f"CREATE TABLE {_quote_ident(snap_table)} AS "
+                f"SELECT rowid AS __rowid, {_quote_ident(column)} "
+                f"FROM {_quote_ident(layer)}"
+            )
+        ckpt["snapshots"].append({
+            "layer": layer, "column": column, "snap_table": snap_table,
+            "column_existed": col_exists, "whole_layer": False,
+        })
 
 
 def _snapshot_whole_layer(session: Session, layer: str) -> None:
-    """Snapshot an entire layer. Used for drop_layer and rename_layer."""
-    ckpt = _active_ckpt(session)
-    if ckpt is None:
+    """Snapshot an entire layer across every covering active checkpoint."""
+    covering = _active_checkpoints_for(session, layer)
+    if not covering:
         return
-    # If already fully snapshotted in this checkpoint, skip.
-    for s in ckpt["snapshots"]:
-        if s["layer"] == layer and s.get("whole_layer"):
-            return
-    cid = ckpt["id"]
-    snap_table = f"_snap_{cid}_{layer}__full"
-    session.conn.execute(
-        f"CREATE TABLE {_quote_ident(snap_table)} AS SELECT * FROM {_quote_ident(layer)}"
-    )
-    ckpt["snapshots"].append({
-        "layer": layer, "column": None, "snap_table": snap_table,
-        "column_existed": True, "whole_layer": True,
-        # Store the meta so rollback can restore the LayerMeta exactly.
-        "meta_snapshot": session.layers.get(layer),
-    })
+    for ckpt in covering:
+        if any(s["layer"] == layer and s.get("whole_layer")
+               for s in ckpt["snapshots"]):
+            continue
+        cid = ckpt["id"]
+        snap_table = f"_snap_{cid}_{layer}__full"
+        session.conn.execute(
+            f"CREATE TABLE {_quote_ident(snap_table)} AS "
+            f"SELECT * FROM {_quote_ident(layer)}"
+        )
+        ckpt["snapshots"].append({
+            "layer": layer, "column": None, "snap_table": snap_table,
+            "column_existed": True, "whole_layer": True,
+            "meta_snapshot": session.layers.get(layer),
+        })
 
 
-def checkpoint(session: Session, name: str) -> dict:
-    """Create a named checkpoint. Subsequent in-place mutations will snapshot
-    their pre-image; rollback(name) restores exactly, commit(name) discards the
-    snapshots."""
+def checkpoint(
+    session: Session, name: str,
+    layers: list[str] | None = None,
+) -> dict:
+    """Create a named checkpoint. With `layers=None` the checkpoint covers
+    every layer in the session; passing a list scopes it to those layers.
+    Multiple checkpoints can be active at once — mutations are snapshotted
+    for every covering checkpoint."""
     if name in session.checkpoints:
         raise OpError(f"checkpoint '{name}' already exists. Commit or rollback first.")
-    if session.active_checkpoint is not None:
-        raise OpError(
-            f"another checkpoint ('{session.active_checkpoint}') is active. "
-            f"Nested checkpoints are not supported — commit or rollback first."
-        )
+    if layers is not None:
+        # Validate the scope layers exist now (not required later; mutations
+        # on layers not yet created at checkpoint time are simply not covered).
+        missing = [l for l in layers if l not in session.layers]
+        if missing:
+            raise OpError(
+                f"checkpoint scope references unknown layers: {missing}. "
+                f"Available: {list(session.layers)}"
+            )
     session._next_checkpoint_id += 1
     session.checkpoints[name] = {
         "id": session._next_checkpoint_id,
         "snapshots": [],
         "created_at": datetime.utcnow().isoformat() + "Z",
+        "layers": set(layers) if layers else None,
     }
-    session.active_checkpoint = name
+    session.active_checkpoint = name  # "most recent" for hint compat
     session.log(Operation(
-        tool="checkpoint", args={"name": name},
-        result_layer=None, summary="checkpoint set",
+        tool="checkpoint", args={"name": name, "layers": layers},
+        result_layer=None,
+        summary=(f"checkpoint set (scope: {layers})" if layers else "checkpoint set (all layers)"),
         at=datetime.utcnow(),
     ))
-    return {"checkpoint": name, "status": "active"}
+    return {
+        "checkpoint": name,
+        "status": "active",
+        "scope": "all_layers" if layers is None else list(layers),
+        "other_active": [n for n in session.checkpoints if n != name],
+    }
 
 
 def rollback(session: Session, name: str) -> dict:
@@ -1215,13 +1250,14 @@ def rollback(session: Session, name: str) -> dict:
     snap_count = len(ckpt["snapshots"])
     del session.checkpoints[name]
     if session.active_checkpoint == name:
-        session.active_checkpoint = None
+        session.active_checkpoint = next(iter(session.checkpoints), None)
     session.log(Operation(
         tool="rollback", args={"name": name},
         result_layer=None, summary=f"restored {snap_count} snapshots",
         at=datetime.utcnow(),
     ))
-    return {"checkpoint": name, "status": "rolled_back", "restored": snap_count}
+    return {"checkpoint": name, "status": "rolled_back", "restored": snap_count,
+            "other_active": list(session.checkpoints)}
 
 
 def commit(session: Session, name: str) -> dict:
@@ -1237,13 +1273,15 @@ def commit(session: Session, name: str) -> dict:
     snap_count = len(ckpt["snapshots"])
     del session.checkpoints[name]
     if session.active_checkpoint == name:
-        session.active_checkpoint = None
+        session.active_checkpoint = next(iter(session.checkpoints), None)
     session.log(Operation(
         tool="commit", args={"name": name},
         result_layer=None, summary=f"committed, {snap_count} snapshots discarded",
         at=datetime.utcnow(),
     ))
-    return {"checkpoint": name, "status": "committed", "discarded_snapshots": snap_count}
+    return {"checkpoint": name, "status": "committed",
+            "discarded_snapshots": snap_count,
+            "other_active": list(session.checkpoints)}
 
 
 # ---------- add_field / update_field / drop_field ----------
@@ -1346,12 +1384,13 @@ def add_field(
         result_layer=layer, summary=f"added {name} to {layer}",
         at=datetime.utcnow(),
     ))
+    covering = _reversible_for_layer(session, layer)
     return {
         "layer": layer,
         "column": name,
         "columns_now": [c for c in meta.attributes if not c.startswith("__")],
-        "reversible": session.active_checkpoint is not None,
-        "active_checkpoint": session.active_checkpoint,
+        "reversible": bool(covering),
+        "covering_checkpoints": covering,
     }
 
 
@@ -1389,10 +1428,11 @@ def update_field(
         result_layer=layer, summary=f"updated {name} on {int(n_before)} rows",
         at=datetime.utcnow(),
     ))
+    covering = _reversible_for_layer(session, layer)
     return {
         "layer": layer, "column": name, "rows_updated": int(n_before),
-        "reversible": session.active_checkpoint is not None,
-        "active_checkpoint": session.active_checkpoint,
+        "reversible": bool(covering),
+        "covering_checkpoints": covering,
     }
 
 
@@ -1547,14 +1587,30 @@ def annotate(
         result_layer=layer, summary=f"annotated {len(values)-unmatched}/{len(values)} keys",
         at=datetime.utcnow(),
     ))
-    return {
+    covering = _reversible_for_layer(session, layer)
+    out = {
         "layer": layer,
         "attributes_written": attr_order,
+        "keys_submitted": len(values),
         "keys_matched": len(values) - unmatched,
         "keys_unmatched": unmatched,
-        "reversible": session.active_checkpoint is not None,
-        "active_checkpoint": session.active_checkpoint,
+        "keys_cap": ANNOTATE_CAP,
+        "reversible": bool(covering),
+        "covering_checkpoints": covering,
     }
+    if unmatched:
+        out["warning"] = (
+            f"{unmatched} of {len(values)} keys did not match any row in "
+            f"'{layer}' on column '{key_column}' — they were skipped. Check "
+            "key_column spelling and value types."
+        )
+    if len(values) >= ANNOTATE_CAP:
+        out["hint"] = (
+            f"Used {len(values)} / {ANNOTATE_CAP} cap. For larger payloads, use "
+            "create_layer(rows=...) as a side-table + add_field() with a subquery "
+            "join, which has no inline-JSON size pressure."
+        )
+    return out
 
 
 # ---------- drop_layer / rename_layer ----------
@@ -1622,12 +1678,21 @@ def list_layers(session: Session) -> dict:
             "parent_layers": m.parent_layers,
             "notes": m.notes,
             "is_visible": name in session.visible_layers,
+            "covering_checkpoints": _reversible_for_layer(session, name),
+        })
+    ckpts = []
+    for cname, ckpt in session.checkpoints.items():
+        scope = ckpt.get("layers")
+        ckpts.append({
+            "name": cname,
+            "scope": "all_layers" if scope is None else sorted(scope),
+            "n_snapshots": len(ckpt["snapshots"]),
         })
     return {
         "n_layers": len(items),
         "layers": items,
-        "active_checkpoint": session.active_checkpoint,
-        "open_checkpoints": list(session.checkpoints.keys()),
+        "checkpoints": ckpts,
+        "most_recent_checkpoint": session.active_checkpoint,
     }
 
 
@@ -1652,7 +1717,7 @@ BATCH_ITERATE_DEFAULT = 200
 def batch_iterate(
     session: Session, layer: str,
     columns: list[str] | None = None,
-    batch_size: int = BATCH_ITERATE_DEFAULT,
+    batch_size: int | None = None,
     cursor: str | None = None,
     where: str | None = None,
 ) -> dict:
@@ -1661,13 +1726,13 @@ def batch_iterate(
     pairs it with `annotate` to classify every feature.
 
     On first call: pass `layer` + `columns` (+ optional `where`, `batch_size`).
-    Response carries a `cursor` id. On subsequent calls, pass `cursor=...`
-    and the layer/columns/where args are ignored (retrieved from server state).
+    Response carries a `cursor` id. On subsequent calls, pass `cursor=...`.
+    The batch_size you set on the first call is **remembered across continuation
+    calls** (200 if unset). You can override it per-call by passing an explicit
+    `batch_size` on the cursor call.
 
     When the cursor is exhausted, `next_cursor` in the response is null.
     """
-    batch_size = max(1, min(int(batch_size), BATCH_ITERATE_MAX))
-
     if cursor:
         state = session.cursors.get(cursor)
         if state is None:
@@ -1675,7 +1740,13 @@ def batch_iterate(
         layer = state["layer"]
         columns = state["columns"]
         where = state["where"]
+        # Honor explicit override, otherwise reuse the initial size.
+        effective_batch_size = int(batch_size) if batch_size is not None else state["batch_size"]
+        state["batch_size"] = effective_batch_size
+        batch_size = max(1, min(effective_batch_size, BATCH_ITERATE_MAX))
     else:
+        effective_batch_size = int(batch_size) if batch_size is not None else BATCH_ITERATE_DEFAULT
+        batch_size = max(1, min(effective_batch_size, BATCH_ITERATE_MAX))
         meta = _require_layer(session, layer)
         declared = [c for c in meta.attributes if not c.startswith("__")]
         if not columns:
@@ -1691,7 +1762,8 @@ def batch_iterate(
             _validate_sql(f"SELECT 1 FROM _t WHERE ({where})")
         import secrets as _secrets
         cursor = _secrets.token_urlsafe(12)
-        state = {"layer": layer, "columns": columns, "where": where, "offset": 0}
+        state = {"layer": layer, "columns": columns, "where": where,
+                 "offset": 0, "batch_size": batch_size}
         session.cursors[cursor] = state
 
     qlayer = _quote_ident(layer)
@@ -1735,54 +1807,34 @@ def batch_iterate(
     }
 
 
-# ---------- inspect_location ----------
+# ---------- inspect_location / inspect_locations / hide_layers ----------
 
-def inspect_location(
-    session: Session,
-    x_3011: float,
-    y_3011: float,
-    radius_m: float = 100.0,
-    layers: list[str] | None = None,
-    per_layer_limit: int = 5,
-) -> dict:
-    """One-shot "what's here?" across multiple layers. For each layer that
-    has geometry, returns up to `per_layer_limit` features whose geometry
-    intersects a circle of `radius_m` around (x_3011, y_3011). Sorted by
-    distance from the point.
-
-    Args:
-        x_3011, y_3011: query point in EPSG:3011.
-        radius_m: search radius in metres (default 100).
-        layers: optional list of layer names; defaults to all layers in session
-                that have geometry.
-        per_layer_limit: max features returned per layer (default 5, cap 25).
-    """
-    per_layer_limit = max(1, min(int(per_layer_limit), 25))
-    radius_m = max(0.0, float(radius_m))
-    targets = layers or [
-        n for n, m in session.layers.items()
-        if m.attributes.get("__geom_col__")
-    ]
-    if not targets:
-        return {"query": {"x_3011": x_3011, "y_3011": y_3011, "radius_m": radius_m},
-                "results": [], "layers_considered": 0,
-                "hint": "no layers with geometry in this session"}
-
+def _inspect_one_point(
+    session: Session, x: float, y: float, radius_m: float,
+    targets: list[str], columns: list[str] | None, per_layer_limit: int,
+) -> tuple[list[dict], list[str]]:
+    """Run the per-layer ST_DWithin query for a single point. Returns
+    (results, unknown_layers)."""
     results = []
+    unknown = []
     for lname in targets:
         meta = session.layers.get(lname)
         if meta is None:
+            unknown.append(lname)
             continue
         geom_col = meta.attributes.get("__geom_col__") or ""
         if not geom_col:
             continue
         qlayer = _quote_ident(lname)
         qgeom = _quote_ident(geom_col)
-        attr_cols = [c for c in meta.attributes
-                     if not c.startswith("__") and c != geom_col]
+        declared = [c for c in meta.attributes
+                    if not c.startswith("__") and c != geom_col]
+        if columns:
+            # Intersect requested cols with declared; silently drop unknown.
+            attr_cols = [c for c in columns if c in declared]
+        else:
+            attr_cols = declared
         attr_select = ", ".join(_quote_ident(c) for c in attr_cols) or "NULL AS _"
-        # We use a distance threshold + ORDER BY distance. ST_DWithin is the
-        # index-friendly predicate.
         sql = (
             f"SELECT {attr_select}, "
             f"  ST_Distance({qgeom}, ST_Point(?, ?)) AS _dist_m "
@@ -1793,7 +1845,7 @@ def inspect_location(
         )
         try:
             rows = session.conn.execute(
-                sql, [x_3011, y_3011, x_3011, y_3011, radius_m]
+                sql, [x, y, x, y, radius_m]
             ).fetchall()
             col_names = [d[0] for d in session.conn.description]
         except Exception as e:
@@ -1805,12 +1857,56 @@ def inspect_location(
         for h in hits:
             if "_dist_m" in h and h["_dist_m"] is not None:
                 h["distance_m"] = round(float(h.pop("_dist_m")), 2)
+            # Drop NULL attributes to keep payload small.
+            for k in list(h.keys()):
+                if h[k] is None:
+                    h.pop(k)
         results.append({
             "layer": lname,
             "geometry_type": meta.geometry_type,
             "features": hits,
         })
+    return results, unknown
 
+
+def inspect_location(
+    session: Session,
+    x_3011: float,
+    y_3011: float,
+    radius_m: float = 100.0,
+    layers: list[str] | None = None,
+    columns: list[str] | None = None,
+    per_layer_limit: int = 3,
+) -> dict:
+    """One-shot "what's here?" across multiple layers. See the tool wrapper
+    for full description."""
+    per_layer_limit = max(1, min(int(per_layer_limit), 25))
+    radius_m = max(0.0, float(radius_m))
+
+    geom_layers = [n for n, m in session.layers.items()
+                   if m.attributes.get("__geom_col__")]
+    if layers:
+        targets = layers
+    else:
+        targets = geom_layers
+
+    payload = {
+        "query": {"x_3011": x_3011, "y_3011": y_3011, "radius_m": radius_m},
+        "layers_considered": len(targets),
+    }
+    if not session.layers:
+        payload.update({"results": [],
+                        "hint": "no layers loaded in this session; call load() or load_many() first"})
+        return payload
+    if not geom_layers:
+        payload.update({"results": [],
+                        "hint": "no layers with geometry in this session"})
+        return payload
+
+    results, unknown = _inspect_one_point(
+        session, x_3011, y_3011, radius_m,
+        targets, columns, per_layer_limit,
+    )
     session.log(Operation(
         tool="inspect_location",
         args={"x_3011": x_3011, "y_3011": y_3011, "radius_m": radius_m,
@@ -1819,8 +1915,97 @@ def inspect_location(
         summary=f"{sum(len(r.get('features', [])) for r in results)} features across {len(results)} layers",
         at=datetime.utcnow(),
     ))
-    return {
-        "query": {"x_3011": x_3011, "y_3011": y_3011, "radius_m": radius_m},
+    payload["results"] = results
+    if unknown:
+        payload["unknown_layers"] = unknown
+        payload["warning"] = (
+            f"layers {unknown} not loaded in this session — they were skipped. "
+            "Call load() / load_many() first."
+        )
+    if all(not r.get("features") for r in results) and not unknown:
+        payload["hint"] = (
+            f"no features within {radius_m} m of ({x_3011}, {y_3011}) across "
+            f"{len(results)} loaded layers. Try a larger radius, a different "
+            "point, or load more layers."
+        )
+    return payload
+
+
+def inspect_locations(
+    session: Session,
+    points: list[dict],
+    radius_m: float = 100.0,
+    layers: list[str] | None = None,
+    columns: list[str] | None = None,
+    per_layer_limit: int = 3,
+) -> dict:
+    """Batch spatial lookup: for each point in `points`, return the same
+    per-layer nearest-feature hits as `inspect_location`."""
+    per_layer_limit = max(1, min(int(per_layer_limit), 25))
+    radius_m = max(0.0, float(radius_m))
+
+    geom_layers = [n for n, m in session.layers.items()
+                   if m.attributes.get("__geom_col__")]
+    targets = layers if layers else geom_layers
+
+    overall_unknown: set[str] = set()
+    out_points = []
+    for i, p in enumerate(points):
+        x = p.get("x_3011")
+        y = p.get("y_3011")
+        pid = p.get("id", i)
+        if x is None or y is None:
+            out_points.append({"id": pid, "error": "missing x_3011/y_3011"})
+            continue
+        results, unknown = _inspect_one_point(
+            session, float(x), float(y), radius_m,
+            targets, columns, per_layer_limit,
+        )
+        overall_unknown.update(unknown)
+        out_points.append({
+            "id": pid,
+            "x_3011": x, "y_3011": y,
+            "results": results,
+        })
+    session.log(Operation(
+        tool="inspect_locations",
+        args={"n_points": len(points), "radius_m": radius_m,
+              "layers": targets},
+        result_layer=None,
+        summary=f"{len(points)} points × {len(targets)} layers",
+        at=datetime.utcnow(),
+    ))
+    payload = {
+        "n_points": len(points),
         "layers_considered": len(targets),
-        "results": results,
+        "points": out_points,
+    }
+    if overall_unknown:
+        payload["unknown_layers"] = sorted(overall_unknown)
+        payload["warning"] = (
+            f"layers {sorted(overall_unknown)} not loaded — skipped for every point."
+        )
+    if not geom_layers:
+        payload["hint"] = "no layers with geometry in this session"
+    return payload
+
+
+def hide_layers(session: Session, layers: list[str] | None = None) -> dict:
+    """Remove layers from the viewer's visible list. With `layers=None` hides
+    all."""
+    if not layers:
+        hidden = list(session.visible_layers)
+        session.visible_layers = []
+    else:
+        hidden = [n for n in layers if n in session.visible_layers]
+        session.visible_layers = [n for n in session.visible_layers if n not in layers]
+    session.bump_version()
+    session.log(Operation(
+        tool="hide", args={"layers": layers},
+        result_layer=None, summary=f"hid {len(hidden)} layers",
+        at=datetime.utcnow(),
+    ))
+    return {
+        "hidden": hidden,
+        "still_visible": list(session.visible_layers),
     }

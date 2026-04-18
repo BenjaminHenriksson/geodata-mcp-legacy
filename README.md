@@ -28,18 +28,20 @@ statistical tables — with a companion viewer.
 
 ## What it does
 
-26 tools across four categories. All carry MCP `toolAnnotations`
+29 tools across four categories. All carry MCP `toolAnnotations`
 (`readOnlyHint` / `destructiveHint=false`) so clients like Claude Code /
 Desktop can auto-approve safe calls.
 
 **Discovery & read-only**
 | Tool | What it does |
 |---|---|
-| `search_data` | Fuzzy-search the 65-dataset catalog (SV/EN names, descriptions, keywords) |
+| `search_data` | Fuzzy-search the 65-dataset catalog (compact output by default) |
+| `describe_dataset` | Full attribute schema for a single dataset |
 | `geocode` | Place-name + composite street-number lookup against SBK labels + polygons |
-| `list_layers` | Inventory of all session layers + notes + checkpoint state |
+| `list_layers` | Inventory of all session layers + notes + checkpoint coverage |
 | `inspect` | Sample rows from any layer (200 attribute cap / 10 with geometry) |
-| `inspect_location` | "What's here?" — features within N m of a point across many layers in one call |
+| `inspect_location` | "What's here?" — features near a point across many layers in one call |
+| `inspect_locations` | Batch variant — up to 500 points per call |
 | `batch_iterate` | Cursor-paginated read for layers too large to inspect in one shot |
 | `stats` | Aggregation tables (min/avg/max/count, grouped) |
 | `sources` | Walks the provenance chain → markdown citations |
@@ -53,29 +55,30 @@ Desktop can auto-approve safe calls.
 | `spatial` | `select_by_location` / `clip` / `intersect` / `buffer` / `centroid` / `dissolve` / `convex_hull` |
 | `execute_sql` | Read-only DuckDB SQL escape hatch, sqlglot-validated, 30 s timeout |
 | `create_layer` | Inject LLM-provided data as a layer (1 k row cap, WKT geom, `llm_sourced=True`) |
-| `export` | Write to GeoJSON/GPKG/CSV/Parquet, 24 h download URL |
-| `show` | Mark layers visible in the viewer |
+| `export` | Write to GeoJSON/GPKG/CSV/Parquet, 24 h download URL (absolute when `PUBLIC_URL` is set) |
+| `show` | Mark layers visible in the viewer (viewer auto-refreshes on change) |
+| `hide` | Inverse of `show` — remove layers from the viewer |
 | `set_notes` | Attach free-text narration to a layer (surfaces in `list_layers`/`sources`) |
 
-**In-place layer mutation** (QGIS Field-Calculator pattern; reversible in a checkpoint)
+**In-place layer mutation** (QGIS Field-Calculator pattern; reversible in a covering checkpoint)
 | Tool | What it does |
 |---|---|
 | `add_field` | Add a new column computed by a SQL expression |
 | `update_field` | Overwrite an existing column; optional WHERE |
 | `drop_field` | Remove a column (not the geometry column) |
-| `annotate` | Bulk per-feature LLM-classified attributes: `{id: {attr: val, ...}}` |
+| `annotate` | Bulk per-feature LLM-classified attributes (10 k-key cap, `keys_cap` echoed on every call) |
 | `drop_layer` | Remove a layer from the session |
 | `rename_layer` | Rename a layer |
 
-**Transaction control**
+**Transaction control** — scoped, concurrent
 | Tool | What it does |
 |---|---|
-| `checkpoint` | Create a named checkpoint — subsequent mutations become reversible |
-| `rollback` | Undo every mutation since `checkpoint(name)` |
+| `checkpoint` | Create a named checkpoint (optional `layers=[...]` scope). Multiple can be active at once |
+| `rollback` | Undo every mutation covered by this checkpoint |
 | `commit` | Make mutations permanent, discard snapshots |
 
 Full tool reference: **[`docs/tools.md`](docs/tools.md)**. The server also
-publishes top-level `instructions` at connection time — a ~4 KB workflow
+publishes top-level `instructions` at connection time — a ~5 KB workflow
 primer Claude (and other MCP clients) read before the first tool call.
 
 ---

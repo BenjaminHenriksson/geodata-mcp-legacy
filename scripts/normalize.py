@@ -153,9 +153,60 @@ def normalize_scb() -> dict:
             pieces.append(chunk[mask])
         df = pd.concat(pieces, ignore_index=True)
 
-        # Cast the last (value) column to numeric; '..' already became NaN via na_values.
-        value_col = df.columns[-1]
-        df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
+        # Cast the last SCB column to numeric — it's the "value" column but
+        # its name varies per table (SCB uses the first variable's label,
+        # e.g. "Andel av befolkningen i inkomstklass"). '..' → NaN via na_values.
+        raw_value_col = df.columns[-1]
+        df[raw_value_col] = pd.to_numeric(df[raw_value_col], errors="coerce")
+
+        # Rename to a stable `value` column across every SCB parquet. The
+        # meaning of the row still lives in `tabellinnehåll`/similar columns.
+        if raw_value_col != "value":
+            df = df.rename(columns={raw_value_col: "value"})
+        value_col = "value"
+
+        # Add a region_kind / region_code / region_name discriminator derived
+        # from the overloaded `region` column. SCB mixes DeSO codes (9 chars,
+        # start with kommunkod), RegSO labels ("Stockholm (foo)"),
+        # kommun codes (4 digits), and the national aggregate ("00 Riket").
+        import re as _re
+        region = df["region"].astype(str)
+        # DeSO: <4-digit kommunkod><A-Z><4 digits>  (e.g. "0180A1010")
+        deso_re = _re.compile(r"^\d{4}[A-Z]\d{4}$")
+        is_deso = region.apply(lambda r: bool(deso_re.match(r)))
+        is_country = region == "00 Riket"
+        is_regso = region.str.startswith("Stockholm (")
+        is_kommun = (~is_deso) & region.str.match(r"^\d{4}( .*)?$", na=False)
+
+        def _kind(r: str) -> str:
+            if deso_re.match(r): return "deso"
+            if r == "00 Riket": return "country"
+            if r.startswith("Stockholm ("): return "regso"
+            if _re.match(r"^\d{4}( .*)?$", r): return "kommun"
+            return "other"
+
+        def _code(r: str) -> str:
+            m = deso_re.match(r)
+            if m: return r
+            if r == "00 Riket": return "00"
+            if r.startswith("Stockholm ("):
+                # Stockholm (foo) — no numeric code; derive a stable key
+                inner = r[len("Stockholm ("):].rstrip(")")
+                return f"sthlm:{inner}"
+            m = _re.match(r"^(\d{4})", r)
+            if m: return m.group(1)
+            return r
+
+        def _name(r: str) -> str:
+            if r.startswith("Stockholm ("):
+                return r[len("Stockholm ("):].rstrip(")")
+            if r == "00 Riket":
+                return "Riket"
+            return r
+
+        df["region_kind"] = region.apply(_kind)
+        df["region_code"] = region.apply(_code)
+        df["region_name"] = region.apply(_name)
 
         # Some SCB tables publish duplicate rows for the same dimension keys
         # (one with a suppressed/NaN value, one with the real value). Collapse

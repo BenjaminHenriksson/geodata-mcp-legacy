@@ -3293,13 +3293,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod (9 tecken), RegSO-namn ('Stockholm (Kungsholm)'), '0180 Stockholm' (kommun), eller '00 Riket'",
-          "description_en": "DeSO code (9 chars), RegSO name, '0180 Stockholm', or '00 Riket'",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
-            "0180C4220",
-            "Stockholm (Kungsholm)",
-            "0180 Stockholm",
-            "00 Riket"
+            "0180C1101",
+            "0180C1102",
+            "0180C1241",
+            "0180C1242",
+            "0180C1591"
           ]
         },
         {
@@ -3308,14 +3309,11 @@
           "description_sv": "Inkomstkomponent (normaliserad — leading/trailing whitespace strippad i preprocess)",
           "description_en": "Income component (normalized — leading/trailing whitespace stripped during preprocess)",
           "sample_values": [
-            "nettoinkomst",
             "löneinkomst",
-            "inkomst av kapital",
-            "pensioner",
             "näringsinkomst med mera",
-            "barnbidrag",
-            "bostadsbidrag",
-            "ekonomiskt bistånd"
+            "sjuk- och aktivitetsersättning",
+            "arbetsmarknadsstöd",
+            "övriga skattepliktiga transfereringar"
           ]
         },
         {
@@ -3335,9 +3333,11 @@
           "description_sv": "Mätår (2011–2024)",
           "description_en": "Year (2011–2024)",
           "sample_values": [
+            "2013",
+            "2022",
             "2011",
-            "2023",
-            "2024"
+            "2020",
+            "2016"
           ]
         },
         {
@@ -3346,20 +3346,60 @@
           "description_sv": "Mått — EJ 'Medianvärde'. Endast dessa tre finns i tabellen.",
           "description_en": "Measure — there is NO median in this table. Only these three values.",
           "sample_values": [
+            "Antal personer totalt",
             "Medelvärde för samtliga, tkr",
-            "Andel med inkomstslag, procent",
-            "Antal personer totalt"
+            "Andel med inkomstslag, procent"
           ]
         },
         {
-          "name": "Inkomststruktur nettoinkomst",
+          "name": "value",
           "type": "DOUBLE",
-          "description_sv": "Värde (tkr, procent, eller personer beroende på tabellinnehåll). NULL om SCB sekretessmaskat.",
-          "description_en": "Value (thousand SEK, %, or persons depending on tabellinnehåll). NULL when SCB-suppressed for small populations.",
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
           "sample_values": [
-            "571.5 (tkr)",
-            "87.3 (%)",
-            "150 (antal)"
+            "458.1",
+            "458.2",
+            "458.4",
+            "458.8",
+            "458.9"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "kommun",
+            "country",
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C1960",
+            "Liseberg",
+            "0180C3410",
+            "0180C5920",
+            "0180C3570"
           ]
         }
       ],
@@ -3401,14 +3441,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod (9 tecken), RegSO-namn ('Stockholm (X)'), '0180 Stockholm', eller '00 Riket'. OBS: RegSO-namn är 'Kungsholm' (ej 'Kungsholmen'), 'Aspudden', etc. — stämmer inte alltid med Stadsdel-namn.",
-          "description_en": "DeSO code (9 chars), RegSO name ('Stockholm (X)'), '0180 Stockholm', or '00 Riket'. Note: RegSO names can differ from Stadsdel names (e.g. 'Kungsholm' not 'Kungsholmen').",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
-            "0180C4220",
-            "Stockholm (Akalla)",
-            "Stockholm (Kungsholm)",
-            "0180 Stockholm",
-            "00 Riket"
+            "0180C5432",
+            "0180C5262",
+            "0180C5653",
+            "0180C5691",
+            "0180C5752"
           ]
         },
         {
@@ -3417,9 +3457,11 @@
           "description_sv": "Åldersgrupp eller 'totalt'",
           "description_en": "Age group or 'totalt'",
           "sample_values": [
-            "totalt",
-            "0-4 år",
-            "65-69 år"
+            "35-39 år",
+            "45-49 år",
+            "60-64 år",
+            "5-9 år",
+            "0-4 år"
           ]
         },
         {
@@ -3439,16 +3481,63 @@
           "description_sv": "Mätår",
           "description_en": "Year",
           "sample_values": [
-            "2010",
-            "2024"
+            "2021",
+            "2012",
+            "2015",
+            "2019",
+            "2020"
           ]
         },
         {
-          "name": "Folkmängden per region",
+          "name": "value",
           "type": "BIGINT",
-          "description_sv": "Antal personer",
-          "description_en": "Number of persons",
-          "sample_values": []
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
+          "sample_values": [
+            "0",
+            "2",
+            "5",
+            "9",
+            "10"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "kommun",
+            "country",
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C5432",
+            "0180C5262",
+            "0180C5653",
+            "0180C5691",
+            "0180C5752"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C5432",
+            "0180C5262",
+            "0180C5653",
+            "0180C5691",
+            "0180C5752"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -3485,17 +3574,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C2390",
             "0180C3030",
             "0180C5070",
             "0180C5060",
-            "0180C6260",
-            "0180C6250",
-            "0180C2370",
-            "0180C2350"
+            "0180C6260"
           ]
         },
         {
@@ -3508,10 +3594,7 @@
             "K finans- och försäkringsverksamhet",
             "I hotell- och restaurangverksamhet",
             "B+C tillverkning och utvinning",
-            "Q vård och omsorg; sociala tjänster",
-            "M+N företagstjänster",
-            "TOTAL totalt näringsgren",
-            "D+E energiförsörjning; miljöverksamhet"
+            "Q vård och omsorg; sociala tjänster"
           ]
         },
         {
@@ -3521,17 +3604,56 @@
           "description_en": "Year",
           "sample_values": [
             "2019",
-            "2021"
+            "2021",
+            "2020"
           ]
         },
         {
-          "name": "Förvärvsarbetande 16-74 år",
+          "name": "value",
           "type": "BIGINT",
-          "description_sv": "Förvärvsarbetande 16-74 år (TAB5842)",
-          "description_en": "Förvärvsarbetande 16-74 år (TAB5842)",
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
           "sample_values": [
             "0",
-            "2870"
+            "5",
+            "9",
+            "10",
+            "11"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "deso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C2390",
+            "0180C3030",
+            "0180C5070",
+            "0180C5060",
+            "0180C6260"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C2390",
+            "0180C3030",
+            "0180C5070",
+            "0180C5060",
+            "0180C6260"
           ]
         }
       ],
@@ -3569,17 +3691,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C4390",
             "0180C3720",
             "0180C4430",
             "0180C4810",
-            "0180C4830",
-            "0180C4690",
-            "0180C1680",
-            "0180C4890"
+            "0180C4830"
           ]
         },
         {
@@ -3611,17 +3730,56 @@
           "description_en": "Year",
           "sample_values": [
             "2019",
-            "2021"
+            "2021",
+            "2020"
           ]
         },
         {
-          "name": "Förvärvsarbetande 16-74 år",
+          "name": "value",
           "type": "BIGINT",
-          "description_sv": "Förvärvsarbetande 16-74 år (TAB5843)",
-          "description_en": "Förvärvsarbetande 16-74 år (TAB5843)",
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
           "sample_values": [
             "12",
-            "2870"
+            "14",
+            "17",
+            "21",
+            "22"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "deso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C4390",
+            "0180C3720",
+            "0180C4430",
+            "0180C4810",
+            "0180C4830"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C4390",
+            "0180C3720",
+            "0180C4430",
+            "0180C4810",
+            "0180C4830"
           ]
         }
       ],
@@ -3659,17 +3817,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
-            "0180C5560",
-            "0180C5400",
-            "0180C5480",
-            "0180C5640",
-            "0180C1810",
-            "0180C3780",
-            "0180C1430",
-            "0180C1960"
+            "0180C5740",
+            "0180C1420",
+            "0180C2100",
+            "0180C5460",
+            "0180C1620"
           ]
         },
         {
@@ -3701,17 +3856,56 @@
           "description_en": "Year",
           "sample_values": [
             "2019",
-            "2021"
+            "2021",
+            "2020"
           ]
         },
         {
-          "name": "Befolkningen 20-64 år",
+          "name": "value",
           "type": "BIGINT",
-          "description_sv": "Befolkningen 20-64 år (TAB5880)",
-          "description_en": "Befolkningen 20-64 år (TAB5880)",
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
           "sample_values": [
             "23",
-            "3138"
+            "25",
+            "28",
+            "32",
+            "33"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "deso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C5560",
+            "0180C5400",
+            "0180C5480",
+            "0180C5640",
+            "0180C1810"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C5560",
+            "0180C5400",
+            "0180C5480",
+            "0180C5640",
+            "0180C1810"
           ]
         }
       ],
@@ -3749,17 +3943,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C1990",
             "0180C1810",
             "Stockholm (Bällsta)",
             "0180C3610",
-            "0180C2980",
-            "0180C5560",
-            "0180C5150",
-            "0180C4510"
+            "0180C2980"
           ]
         },
         {
@@ -3782,17 +3973,61 @@
           "description_en": "Year",
           "sample_values": [
             "2015",
-            "2023"
+            "2020",
+            "2017",
+            "2016",
+            "2018"
           ]
         },
         {
-          "name": "Befolkning 25-64 år",
+          "name": "value",
           "type": "BIGINT",
-          "description_sv": "Befolkning 25-64 år (TAB5956)",
-          "description_en": "Befolkning 25-64 år (TAB5956)",
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
           "sample_values": [
             "0",
-            "2255050"
+            "2",
+            "5",
+            "9",
+            "10"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "kommun",
+            "country",
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C1990",
+            "0180C1810",
+            "0180C3610",
+            "0180C2980",
+            "0180C5560"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C1990",
+            "0180C1810",
+            "0180C3610",
+            "Enskedefältet",
+            "0180C2980"
           ]
         }
       ],
@@ -3830,17 +4065,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C1010",
             "0180C1020",
             "0180C1030",
             "0180C1070",
-            "0180C1080",
-            "0180C1100",
-            "0180C1110",
-            "0180C1160"
+            "0180C1080"
           ]
         },
         {
@@ -3853,8 +4085,7 @@
             "småhus",
             "uppgift saknas",
             "specialbostäder",
-            "flerbostadshus",
-            "totalt"
+            "flerbostadshus"
           ]
         },
         {
@@ -3863,16 +4094,63 @@
           "description_sv": "Mätår",
           "description_en": "Year",
           "sample_values": [
-            "2012",
-            "2025"
+            "2025",
+            "2024",
+            "2013",
+            "2015",
+            "2016"
           ]
         },
         {
-          "name": "Antal personer",
+          "name": "value",
           "type": "DOUBLE",
-          "description_sv": "Antal personer (TAB6065)",
-          "description_en": "Antal personer (TAB6065)",
-          "sample_values": []
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
+          "sample_values": [
+            "0.0",
+            "4.0",
+            "10.0",
+            "13.0",
+            "14.0"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "kommun",
+            "country",
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C1040",
+            "0180C1060",
+            "0180C1090",
+            "0180C1101",
+            "0180C1102"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C1010",
+            "0180C1020",
+            "0180C1030",
+            "0180C1070",
+            "0180C1080"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -3909,17 +4187,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C5900",
             "0180C6330",
             "0180C2980",
             "0180C5520",
-            "0180C2660",
-            "0180C4520",
-            "0180C3660",
-            "0180C1960"
+            "0180C2660"
           ]
         },
         {
@@ -3940,17 +4215,61 @@
           "description_en": "Year",
           "sample_values": [
             "2015",
-            "2023"
+            "2017",
+            "2020",
+            "2023",
+            "2016"
           ]
         },
         {
-          "name": "Personbilar i trafik registrerade på folkbokförda personer 31 december, antal",
+          "name": "value",
           "type": "BIGINT",
-          "description_sv": "Personbilar i trafik registrerade på folkbokförda personer 31 december, antal (TAB6091)",
-          "description_en": "Personbilar i trafik registrerade på folkbokförda personer 31 december, antal (TAB6091)",
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
           "sample_values": [
             "2",
-            "5497615"
+            "12",
+            "13",
+            "16",
+            "17"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "kommun",
+            "country",
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C5900",
+            "0180C6330",
+            "0180C2980",
+            "0180C5520",
+            "0180C2660"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C5900",
+            "0180C6330",
+            "0180C2980",
+            "0180C5520",
+            "0180C2660"
           ]
         }
       ],
@@ -3988,17 +4307,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
-            "0180C1020",
-            "0180C1070",
-            "0180C1080",
-            "0180C1100",
-            "0180C1160",
-            "0180C1180",
-            "0180C1260",
-            "0180C1280"
+            "0180C1040",
+            "0180C1060",
+            "0180C1090",
+            "0180C1101",
+            "0180C1102"
           ]
         },
         {
@@ -4020,16 +4336,63 @@
           "description_sv": "Mätår",
           "description_en": "Year",
           "sample_values": [
-            "2012",
-            "2025"
+            "2025",
+            "2024",
+            "2013",
+            "2015",
+            "2016"
           ]
         },
         {
-          "name": "Antal personer",
+          "name": "value",
           "type": "DOUBLE",
-          "description_sv": "Antal personer (TAB6253)",
-          "description_en": "Antal personer (TAB6253)",
-          "sample_values": []
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
+          "sample_values": [
+            "0.0",
+            "4.0",
+            "10.0",
+            "13.0",
+            "14.0"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "kommun",
+            "country",
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C1020",
+            "0180C1070",
+            "0180C1080",
+            "0180C1100",
+            "0180C1160"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C1020",
+            "0180C1070",
+            "0180C1080",
+            "0180C1100",
+            "0180C1160"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -4066,17 +4429,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C5490",
             "0180C5520",
             "0180C5480",
             "0180C3210",
-            "0180C3220",
-            "0180C5450",
-            "0180C3320",
-            "0180C3100"
+            "0180C3220"
           ]
         },
         {
@@ -4098,17 +4458,59 @@
           "description_en": "Year",
           "sample_values": [
             "2015",
-            "2023"
+            "2017",
+            "2020",
+            "2021",
+            "2022"
           ]
         },
         {
-          "name": "Antal lägenheter",
+          "name": "value",
           "type": "BIGINT",
-          "description_sv": "Antal lägenheter (TAB6258)",
-          "description_en": "Antal lägenheter (TAB6258)",
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
           "sample_values": [
             "0",
-            "9484"
+            "2",
+            "5",
+            "9",
+            "10"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C5490",
+            "0180C5520",
+            "0180C5480",
+            "0180C3210",
+            "0180C3220"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C5490",
+            "0180C5520",
+            "0180C5480",
+            "0180C3210",
+            "0180C3220"
           ]
         }
       ],
@@ -4146,17 +4548,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C3410",
             "0180C3420",
             "0180C3450",
             "0180C3390",
-            "0180C3380",
-            "0180C5751",
-            "0180C3480",
-            "0180C3520"
+            "0180C3380"
           ]
         },
         {
@@ -4193,11 +4592,55 @@
           ]
         },
         {
-          "name": "Land- och vattenareal per den 1 januari",
+          "name": "value",
           "type": "DOUBLE",
-          "description_sv": "Land- och vattenareal per den 1 januari (TAB6420)",
-          "description_en": "Land- och vattenareal per den 1 januari (TAB6420)",
-          "sample_values": []
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
+          "sample_values": [
+            "0.0",
+            "0.01",
+            "0.02",
+            "0.07",
+            "0.1"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "kommun",
+            "country",
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C3410",
+            "0180C3420",
+            "0180C3450",
+            "0180C3390",
+            "0180C3380"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C3410",
+            "0180C3420",
+            "0180C3450",
+            "0180C3390",
+            "0180C3380"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -4234,17 +4677,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "Stockholm (Bällsta)",
             "0180C1810",
             "0180C4510",
             "0180C5150",
-            "0180C5070",
-            "0180C3202",
-            "0180C5751",
-            "0180C3610"
+            "0180C5070"
           ]
         },
         {
@@ -4266,18 +4706,58 @@
           "description_sv": "Mätår",
           "description_en": "Year",
           "sample_values": [
-            "2024",
             "2024"
           ]
         },
         {
-          "name": "Befolkning 25-65 år",
+          "name": "value",
           "type": "BIGINT",
-          "description_sv": "Befolkning 25-65 år (TAB6534)",
-          "description_en": "Befolkning 25-65 år (TAB6534)",
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
           "sample_values": [
-            "2",
-            "2206014"
+            "3",
+            "5",
+            "6",
+            "8",
+            "9"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "kommun",
+            "country",
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C1810",
+            "0180C4510",
+            "0180C5150",
+            "0180C5070",
+            "0180C3202"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C1810",
+            "0180C4510",
+            "0180C5150",
+            "0180C5070",
+            "0180C3202"
           ]
         }
       ],
@@ -4315,17 +4795,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C1010",
             "0180C1020",
             "0180C1030",
             "0180C1050",
-            "0180C1070",
-            "0180C1080",
-            "0180C1110",
-            "0180C1160"
+            "0180C1070"
           ]
         },
         {
@@ -4338,10 +4815,7 @@
             "1921-1930",
             "1961-1970",
             "1971-1980",
-            "1991-2000",
-            "Totalt",
-            "1951-1960",
-            "2001-2010"
+            "1991-2000"
           ]
         },
         {
@@ -4351,7 +4825,10 @@
           "description_en": "Year",
           "sample_values": [
             "2010",
-            "2024"
+            "2015",
+            "2019",
+            "2020",
+            "2021"
           ]
         },
         {
@@ -4365,11 +4842,55 @@
           ]
         },
         {
-          "name": "Bostadsbebyggelsens ålder",
+          "name": "value",
           "type": "DOUBLE",
-          "description_sv": "Bostadsbebyggelsens ålder (TAB6540)",
-          "description_en": "Bostadsbebyggelsens ålder (TAB6540)",
-          "sample_values": []
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
+          "sample_values": [
+            "0.0",
+            "0.1",
+            "0.9",
+            "1.5",
+            "1.6"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "country",
+            "kommun",
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C1010",
+            "0180C1020",
+            "0180C1030",
+            "0180C1050",
+            "0180C1070"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C1010",
+            "0180C1020",
+            "0180C1030",
+            "0180C1050",
+            "0180C1070"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -4406,17 +4927,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C5653",
             "0180C5691",
             "0180C5752",
             "0180C5751",
-            "0180C5432",
-            "0180C5690",
-            "0180C5262",
-            "0180C5420"
+            "0180C5432"
           ]
         },
         {
@@ -4425,12 +4943,11 @@
           "description_sv": "hushållstyp (TAB6568)",
           "description_en": "hushållstyp (TAB6568)",
           "sample_values": [
+            "totalt antal hushåll",
+            "sammanboende utan barn",
             "övriga hushåll",
             "ensamstående utan barn",
-            "ensamstående med barn",
-            "sammanboende med barn",
-            "totalt antal hushåll",
-            "sammanboende utan barn"
+            "ensamstående med barn"
           ]
         },
         {
@@ -4439,18 +4956,62 @@
           "description_sv": "Mätår",
           "description_en": "Year",
           "sample_values": [
+            "2020",
+            "2021",
+            "2022",
             "2011",
-            "2025"
+            "2013"
           ]
         },
         {
-          "name": "Antal hushåll",
+          "name": "value",
           "type": "BIGINT",
-          "description_sv": "Antal hushåll (TAB6568)",
-          "description_en": "Antal hushåll (TAB6568)",
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
           "sample_values": [
             "0",
-            "5002559"
+            "2",
+            "5",
+            "9",
+            "10"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "kommun",
+            "country",
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C5653",
+            "0180C5691",
+            "0180C5752",
+            "0180C5751",
+            "0180C5432"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C5653",
+            "0180C5691",
+            "0180C5752",
+            "0180C5751",
+            "0180C5432"
           ]
         }
       ],
@@ -4488,17 +5049,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C5653",
             "0180C5751",
             "0180C5752",
             "0180C5691",
-            "0180C5432",
-            "0180C4810",
-            "0180C5420",
-            "0180C5262"
+            "0180C5432"
           ]
         },
         {
@@ -4531,17 +5089,61 @@
           "description_en": "Year",
           "sample_values": [
             "2010",
-            "2025"
+            "2019",
+            "2020",
+            "2021",
+            "2015"
           ]
         },
         {
-          "name": "Folkmängden per region",
+          "name": "value",
           "type": "BIGINT",
-          "description_sv": "Folkmängden per region (TAB6569)",
-          "description_en": "Folkmängden per region (TAB6569)",
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
           "sample_values": [
             "0",
-            "10605529"
+            "2",
+            "5",
+            "9",
+            "10"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "kommun",
+            "country",
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C5653",
+            "0180C5751",
+            "0180C5752",
+            "0180C5691",
+            "0180C5432"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C5653",
+            "0180C5751",
+            "0180C5752",
+            "0180C5691",
+            "0180C5432"
           ]
         }
       ],
@@ -4579,17 +5181,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C5653",
             "0180C5691",
             "0180C5752",
             "0180C5751",
-            "0180C5432",
-            "0180C5370",
-            "0180C5750",
-            "0180C5690"
+            "0180C5432"
           ]
         },
         {
@@ -4622,18 +5221,62 @@
           "description_sv": "Mätår",
           "description_en": "Year",
           "sample_values": [
+            "2021",
             "2010",
-            "2025"
+            "2012",
+            "2015",
+            "2020"
           ]
         },
         {
-          "name": "Folkmängden per region",
+          "name": "value",
           "type": "BIGINT",
-          "description_sv": "Folkmängden per region (TAB6570)",
-          "description_en": "Folkmängden per region (TAB6570)",
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
           "sample_values": [
             "0",
-            "10605529"
+            "2",
+            "5",
+            "9",
+            "10"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "kommun",
+            "country",
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C5653",
+            "0180C5691",
+            "0180C5752",
+            "0180C5751",
+            "0180C5432"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C5653",
+            "0180C5691",
+            "0180C5752",
+            "0180C5751",
+            "0180C5432"
           ]
         }
       ],
@@ -4671,17 +5314,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C5691",
             "0180C5653",
             "0180C5752",
             "0180C5751",
-            "0180C5690",
-            "0180C5432",
-            "0180C5420",
-            "0180C5262"
+            "0180C5690"
           ]
         },
         {
@@ -4712,18 +5352,62 @@
           "description_sv": "Mätår",
           "description_en": "Year",
           "sample_values": [
-            "2010",
-            "2025"
+            "2021",
+            "2020",
+            "2019",
+            "2012",
+            "2010"
           ]
         },
         {
-          "name": "Folkmängden per region",
+          "name": "value",
           "type": "BIGINT",
-          "description_sv": "Folkmängden per region (TAB6571)",
-          "description_en": "Folkmängden per region (TAB6571)",
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
           "sample_values": [
             "0",
-            "10605529"
+            "2",
+            "5",
+            "11",
+            "14"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "kommun",
+            "country",
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C5691",
+            "0180C5653",
+            "0180C5752",
+            "0180C5751",
+            "0180C5690"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C5691",
+            "0180C5653",
+            "0180C5752",
+            "0180C5751",
+            "0180C5690"
           ]
         }
       ],
@@ -4761,17 +5445,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C5691",
             "0180C5653",
             "0180C5752",
             "0180C5751",
-            "0180C5432",
-            "0180C5420",
-            "0180C5860",
-            "0180C5262"
+            "0180C5432"
           ]
         },
         {
@@ -4803,18 +5484,62 @@
           "description_sv": "Mätår",
           "description_en": "Year",
           "sample_values": [
-            "2010",
-            "2025"
+            "2019",
+            "2015",
+            "2012",
+            "2020",
+            "2021"
           ]
         },
         {
-          "name": "Folkmängden per region",
+          "name": "value",
           "type": "BIGINT",
-          "description_sv": "Folkmängden per region (TAB6572)",
-          "description_en": "Folkmängden per region (TAB6572)",
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
           "sample_values": [
             "0",
-            "10605529"
+            "2",
+            "5",
+            "9",
+            "10"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "kommun",
+            "country",
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C5691",
+            "0180C5653",
+            "0180C5752",
+            "0180C5751",
+            "0180C5432"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C5691",
+            "0180C5653",
+            "0180C5752",
+            "0180C5751",
+            "0180C5432"
           ]
         }
       ],
@@ -4852,17 +5577,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C5751",
             "0180C5900",
             "0180C5262",
             "0180C2951",
-            "0180C2782",
-            "0180C3202",
-            "0180C2660",
-            "0180C5520"
+            "0180C2782"
           ]
         },
         {
@@ -4887,13 +5609,54 @@
           ]
         },
         {
-          "name": "Personbilar i trafik registrerade på folkbokförda personer 31 december, antal",
+          "name": "value",
           "type": "BIGINT",
-          "description_sv": "Personbilar i trafik registrerade på folkbokförda personer 31 december, antal (TAB6589)",
-          "description_en": "Personbilar i trafik registrerade på folkbokförda personer 31 december, antal (TAB6589)",
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
           "sample_values": [
             "4",
-            "5465667"
+            "9",
+            "13",
+            "14",
+            "18"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "kommun",
+            "country",
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C5751",
+            "0180C5900",
+            "0180C5262",
+            "0180C2951",
+            "0180C2782"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C5751",
+            "0180C5900",
+            "0180C5262",
+            "0180C2951",
+            "0180C2782"
           ]
         }
       ],
@@ -4931,17 +5694,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C4970",
             "0180C4250",
             "0180C4280",
             "0180C1330",
-            "0180C2120",
-            "0180C4320",
-            "0180C6290",
-            "0180C4940"
+            "0180C2120"
           ]
         },
         {
@@ -4954,10 +5714,7 @@
             "K finans- och försäkringsverksamhet",
             "B+C tillverkning och utvinning",
             "I hotell- och restaurangverksamhet",
-            "Q vård och omsorg; sociala tjänster",
-            "M+N företagstjänster",
-            "TOTAL totalt näringsgren",
-            "00 okänd verksamhet"
+            "Q vård och omsorg; sociala tjänster"
           ]
         },
         {
@@ -4966,18 +5723,55 @@
           "description_sv": "Mätår",
           "description_en": "Year",
           "sample_values": [
-            "2018",
             "2018"
           ]
         },
         {
-          "name": "Förvärvsarbetande 16+ år",
+          "name": "value",
           "type": "BIGINT",
-          "description_sv": "Förvärvsarbetande 16+ år (TAB660)",
-          "description_en": "Förvärvsarbetande 16+ år (TAB660)",
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
           "sample_values": [
             "0",
-            "2119"
+            "5",
+            "9",
+            "10",
+            "11"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "deso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C4970",
+            "0180C4250",
+            "0180C4280",
+            "0180C1330",
+            "0180C2120"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C4970",
+            "0180C4250",
+            "0180C4280",
+            "0180C1330",
+            "0180C2120"
           ]
         }
       ],
@@ -5015,17 +5809,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C1010",
             "0180C1020",
             "0180C1030",
             "0180C1050",
-            "0180C1070",
-            "0180C1080",
-            "0180C1110",
-            "0180C1160"
+            "0180C1070"
           ]
         },
         {
@@ -5038,9 +5829,7 @@
             "småhus radhus",
             "småhus friliggande",
             "småhus flera lägenheter",
-            "ospecificerat",
-            "flerbostadshus",
-            "totalt"
+            "ospecificerat"
           ]
         },
         {
@@ -5050,7 +5839,10 @@
           "description_en": "Year",
           "sample_values": [
             "2010",
-            "2024"
+            "2012",
+            "2015",
+            "2019",
+            "2020"
           ]
         },
         {
@@ -5064,11 +5856,55 @@
           ]
         },
         {
-          "name": "Bostadsbyggnader",
+          "name": "value",
           "type": "DOUBLE",
-          "description_sv": "Bostadsbyggnader (TAB6620)",
-          "description_en": "Bostadsbyggnader (TAB6620)",
-          "sample_values": []
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
+          "sample_values": [
+            "0.0",
+            "0.1",
+            "0.9",
+            "1.5",
+            "1.6"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "kommun",
+            "country",
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C1010",
+            "0180C1020",
+            "0180C1030",
+            "0180C1050",
+            "0180C1070"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C1010",
+            "0180C1020",
+            "0180C1030",
+            "0180C1050",
+            "0180C1070"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -5105,17 +5941,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C1010",
             "0180C1020",
             "0180C1030",
             "0180C1050",
-            "0180C1070",
-            "0180C1080",
-            "0180C1110",
-            "0180C1160"
+            "0180C1070"
           ]
         },
         {
@@ -5128,10 +5961,7 @@
             "okänt ändamål",
             "komplementbyggnad",
             "samhällsfunktion",
-            "övrig byggnad",
-            "ekonomibyggnad",
-            "industri",
-            "bostad"
+            "övrig byggnad"
           ]
         },
         {
@@ -5141,7 +5971,10 @@
           "description_en": "Year",
           "sample_values": [
             "2010",
-            "2024"
+            "2012",
+            "2015",
+            "2019",
+            "2021"
           ]
         },
         {
@@ -5155,11 +5988,55 @@
           ]
         },
         {
-          "name": "Byggnader, antal och markyta",
+          "name": "value",
           "type": "DOUBLE",
-          "description_sv": "Byggnader, antal och markyta (TAB6621)",
-          "description_en": "Byggnader, antal och markyta (TAB6621)",
-          "sample_values": []
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
+          "sample_values": [
+            "0.0",
+            "4.0",
+            "10.0",
+            "13.0",
+            "14.0"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "country",
+            "kommun",
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C1010",
+            "0180C1020",
+            "0180C1030",
+            "0180C1050",
+            "0180C1070"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C1040",
+            "0180C1060",
+            "0180C1090",
+            "0180C1101",
+            "0180C1102"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -5196,17 +6073,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C4970",
             "0180C4940",
             "0180C2920",
             "0180C2930",
-            "0180C2910",
-            "0180C2951",
-            "0180C2940",
-            "0180C2980"
+            "0180C2910"
           ]
         },
         {
@@ -5232,13 +6106,52 @@
           ]
         },
         {
-          "name": "Antal lägenheter",
+          "name": "value",
           "type": "BIGINT",
-          "description_sv": "Antal lägenheter (TAB6638)",
-          "description_en": "Antal lägenheter (TAB6638)",
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
           "sample_values": [
             "0",
-            "9572"
+            "2",
+            "5",
+            "9",
+            "10"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C4970",
+            "0180C4940",
+            "0180C2920",
+            "0180C2930",
+            "0180C2910"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C4970",
+            "0180C4940",
+            "0180C2920",
+            "0180C2930",
+            "0180C2910"
           ]
         }
       ],
@@ -5276,17 +6189,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C2111",
             "0180C2781",
             "0180C2782",
             "0180C2951",
-            "0180C3201",
-            "0180C3202",
-            "0180C5262",
-            "0180C5432"
+            "0180C3201"
           ]
         },
         {
@@ -5317,7 +6227,10 @@
           "description_en": "Year",
           "sample_values": [
             "2011",
-            "2024"
+            "2013",
+            "2016",
+            "2020",
+            "2021"
           ]
         },
         {
@@ -5330,17 +6243,59 @@
             "Kvartil 2, andel personer, procent",
             "Kvartil 3, andel personer, procent",
             "Antal personer totalt",
-            "Kvartil 4, andel personer, procent",
-            "Medianvärde, tkr",
-            "Medelvärde, tkr"
+            "Kvartil 4, andel personer, procent"
           ]
         },
         {
-          "name": "Andel av befolkningen i inkomstklass",
+          "name": "value",
           "type": "DOUBLE",
-          "description_sv": "Andel av befolkningen i inkomstklass (TAB6679)",
-          "description_en": "Andel av befolkningen i inkomstklass (TAB6679)",
-          "sample_values": []
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
+          "sample_values": [
+            "2.3",
+            "2.4",
+            "4.0",
+            "10.0",
+            "13.0"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "kommun",
+            "country",
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -5377,17 +6332,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C2111",
             "0180C2781",
             "0180C2782",
             "0180C2951",
-            "0180C3201",
-            "0180C3202",
-            "0180C5262",
-            "0180C5432"
+            "0180C3201"
           ]
         },
         {
@@ -5411,9 +6363,7 @@
             "16-65 år",
             "16-66 år",
             "20-64 år",
-            "20-65 år",
-            "15-74 år",
-            "20-66 år"
+            "20-65 år"
           ]
         },
         {
@@ -5423,6 +6373,9 @@
           "description_en": "Year",
           "sample_values": [
             "2020",
+            "2022",
+            "2021",
+            "2023",
             "2024"
           ]
         },
@@ -5440,11 +6393,53 @@
           ]
         },
         {
-          "name": "Arbetsmarknadsstatus. Årligt register",
+          "name": "value",
           "type": "DOUBLE",
-          "description_sv": "Arbetsmarknadsstatus. Årligt register (TAB6680)",
-          "description_en": "Arbetsmarknadsstatus. Årligt register (TAB6680)",
-          "sample_values": []
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
+          "sample_values": [
+            "0.0",
+            "4.0",
+            "10.0",
+            "13.0",
+            "14.0"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -5481,17 +6476,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C2111",
             "0180C2781",
             "0180C2782",
             "0180C2951",
-            "0180C3201",
-            "0180C3202",
-            "0180C5262",
-            "0180C5432"
+            "0180C3201"
           ]
         },
         {
@@ -5504,10 +6496,7 @@
             "I hotell och restauranger",
             "J informations- och kommunikationsföretag",
             "K kreditinstitut och försäkringsbolag m.m.",
-            "M+N företag inom juridik, ekonomi, vetenskap och teknik; företag inom uthyrning, fastighetsservice, resetjänster och andra stödtjänster",
-            "Q enheter för vård och omsorg, socialtjänst",
-            "US uppgift saknas",
-            "A-U+US Total"
+            "M+N företag inom juridik, ekonomi, vetenskap och teknik; företag inom uthyrning, fastighetsservice, resetjänster och andra stödtjänster"
           ]
         },
         {
@@ -5528,15 +6517,60 @@
           "description_en": "Year",
           "sample_values": [
             "2020",
+            "2022",
+            "2021",
+            "2023",
             "2024"
           ]
         },
         {
-          "name": "Sysselsatta 15-74 år. Årligt register",
+          "name": "value",
           "type": "DOUBLE",
-          "description_sv": "Sysselsatta 15-74 år. Årligt register (TAB6681)",
-          "description_en": "Sysselsatta 15-74 år. Årligt register (TAB6681)",
-          "sample_values": []
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
+          "sample_values": [
+            "0.0",
+            "4.0",
+            "10.0",
+            "13.0",
+            "14.0"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C1101",
+            "0180C1102",
+            "0180C1241",
+            "0180C1242",
+            "0180C1591"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -5573,17 +6607,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C2111",
             "0180C2781",
             "0180C2782",
             "0180C2951",
-            "0180C3201",
-            "0180C3202",
-            "0180C5262",
-            "0180C5432"
+            "0180C3201"
           ]
         },
         {
@@ -5615,15 +6646,60 @@
           "description_en": "Year",
           "sample_values": [
             "2020",
+            "2022",
+            "2021",
+            "2023",
             "2024"
           ]
         },
         {
-          "name": "Sysselsatta15-74 år. Årligt register",
+          "name": "value",
           "type": "DOUBLE",
-          "description_sv": "Sysselsatta15-74 år. Årligt register (TAB6682)",
-          "description_en": "Sysselsatta15-74 år. Årligt register (TAB6682)",
-          "sample_values": []
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
+          "sample_values": [
+            "13.0",
+            "14.0",
+            "15.0",
+            "22.0",
+            "24.0"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -5660,17 +6736,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C2111",
             "0180C2781",
             "0180C2782",
             "0180C2951",
-            "0180C3201",
-            "0180C3202",
-            "0180C5262",
-            "0180C5432"
+            "0180C3201"
           ]
         },
         {
@@ -5680,7 +6753,10 @@
           "description_en": "Year",
           "sample_values": [
             "2011",
-            "2024"
+            "2013",
+            "2016",
+            "2020",
+            "2021"
           ]
         },
         {
@@ -5693,17 +6769,59 @@
             "Kvartil 2, andel personer, procent",
             "Kvartil 3, andel personer, procent",
             "Antal personer totalt",
-            "Kvartil 4, andel personer, procent",
-            "Medianvärde, tkr",
-            "Medelvärde, tkr"
+            "Kvartil 4, andel personer, procent"
           ]
         },
         {
-          "name": "Ekonomisk standard, andel av befolkningen per inkomstklass",
+          "name": "value",
           "type": "DOUBLE",
-          "description_sv": "Ekonomisk standard, andel av befolkningen per inkomstklass (TAB6684)",
-          "description_en": "Ekonomisk standard, andel av befolkningen per inkomstklass (TAB6684)",
-          "sample_values": []
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
+          "sample_values": [
+            "4.0",
+            "10.0",
+            "13.0",
+            "14.0",
+            "15.0"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "kommun",
+            "country",
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -5740,17 +6858,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C2111",
             "0180C2781",
             "0180C2782",
             "0180C2951",
-            "0180C3201",
-            "0180C3202",
-            "0180C5262",
-            "0180C5432"
+            "0180C3201"
           ]
         },
         {
@@ -5763,8 +6878,7 @@
             "20-65 år",
             "65+ år",
             "66+ år",
-            "totalt ålder",
-            "0-19 år"
+            "totalt ålder"
           ]
         },
         {
@@ -5774,7 +6888,10 @@
           "description_en": "Year",
           "sample_values": [
             "2011",
-            "2024"
+            "2013",
+            "2016",
+            "2020",
+            "2021"
           ]
         },
         {
@@ -5789,11 +6906,55 @@
           ]
         },
         {
-          "name": "Låg resp. hög ekonomisk standard",
+          "name": "value",
           "type": "DOUBLE",
-          "description_sv": "Låg resp. hög ekonomisk standard (TAB6685)",
-          "description_en": "Låg resp. hög ekonomisk standard (TAB6685)",
-          "sample_values": []
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
+          "sample_values": [
+            "0.0",
+            "4.0",
+            "10.0",
+            "13.0",
+            "14.0"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "country",
+            "kommun",
+            "deso",
+            "regso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -5830,17 +6991,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C4390",
             "0180C3720",
             "0180C4430",
             "0180C4810",
-            "0180C4890",
-            "0180C4830",
-            "0180C5640",
-            "0180C6260"
+            "0180C4890"
           ]
         },
         {
@@ -5871,18 +7029,55 @@
           "description_sv": "Mätår",
           "description_en": "Year",
           "sample_values": [
-            "2018",
             "2018"
           ]
         },
         {
-          "name": "Förvärvsarbetande 16+ år",
+          "name": "value",
           "type": "BIGINT",
-          "description_sv": "Förvärvsarbetande 16+ år (TAB682)",
-          "description_en": "Förvärvsarbetande 16+ år (TAB682)",
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
           "sample_values": [
             "11",
-            "2119"
+            "20",
+            "21",
+            "22",
+            "25"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "deso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C4390",
+            "0180C3720",
+            "0180C4430",
+            "0180C4810",
+            "0180C4890"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C4390",
+            "0180C3720",
+            "0180C4430",
+            "0180C4810",
+            "0180C4890"
           ]
         }
       ],
@@ -5920,17 +7115,14 @@
         {
           "name": "region",
           "type": "VARCHAR",
-          "description_sv": "DeSO-kod / RegSO-namn / '0180 Stockholm' / '00 Riket' — se scb_population_age_sex.",
-          "description_en": "DeSO code / RegSO name / kommun / country — see scb_population_age_sex.",
+          "description_sv": "SCB regionskod eller regionnamn (rå kolumn; använd region_kind för att filtrera).",
+          "description_en": "SCB region code or name (raw column; filter via region_kind)",
           "sample_values": [
             "0180C5560",
             "0180C2660",
             "0180C5150",
             "0180C1810",
-            "0180C5640",
-            "0180C2980",
-            "0180C3780",
-            "0180C4570"
+            "0180C5640"
           ]
         },
         {
@@ -5961,18 +7153,55 @@
           "description_sv": "Mätår",
           "description_en": "Year",
           "sample_values": [
-            "2018",
             "2018"
           ]
         },
         {
-          "name": "Befolkningen 20-64 år",
+          "name": "value",
           "type": "BIGINT",
-          "description_sv": "Befolkningen 20-64 år (TAB683)",
-          "description_en": "Befolkningen 20-64 år (TAB683)",
+          "description_sv": "Det numeriska värdet för raden. Meningen ges av `tabellinnehåll`/liknande dimensionskolumner. NULL = sekretessdämpad.",
+          "description_en": "Numeric value. Meaning is given by tabellinnehåll / similar dimension columns. NULL = privacy-suppressed.",
           "sample_values": [
             "17",
-            "2354"
+            "31",
+            "32",
+            "33",
+            "34"
+          ]
+        },
+        {
+          "name": "region_kind",
+          "type": "VARCHAR",
+          "description_sv": "Typ av region: 'deso' | 'regso' | 'kommun' | 'country' | 'other'.",
+          "description_en": "Region kind discriminator.",
+          "sample_values": [
+            "deso"
+          ]
+        },
+        {
+          "name": "region_code",
+          "type": "VARCHAR",
+          "description_sv": "Normaliserad regionskod (DeSO-kod, kommunkod, 'sthlm:<RegSO-namn>' eller '00').",
+          "description_en": "Normalized region code.",
+          "sample_values": [
+            "0180C5560",
+            "0180C2660",
+            "0180C5150",
+            "0180C1810",
+            "0180C5640"
+          ]
+        },
+        {
+          "name": "region_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsvänligt regionnamn (identiskt med DeSO-kod när region_kind='deso').",
+          "description_en": "Human-readable region name.",
+          "sample_values": [
+            "0180C5560",
+            "0180C2660",
+            "0180C5150",
+            "0180C1810",
+            "0180C5640"
           ]
         }
       ],

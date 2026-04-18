@@ -1,28 +1,35 @@
 # MCP tool reference
 
-**26 tools** across two tiers. Endpoint: `https://geo.benjaminhenriksson.com/mcp`
-(bearer auth). Every tool carries MCP `toolAnnotations` (`readOnlyHint`,
-`destructiveHint=false`) so clients like Claude Code / Desktop can auto-approve
-the safe ones without per-call prompts.
+**29 tools** across four categories. Endpoint:
+`https://geo.benjaminhenriksson.com/mcp` (bearer auth). Every tool carries
+MCP `toolAnnotations` (`readOnlyHint`, `destructiveHint=false`) so clients
+like Claude Code / Desktop can auto-approve the safe ones without per-call
+prompts.
 
-All spatial tools operate in **EPSG:3011** (SWEREF 99 18 00). Coordinates in tool
-arguments and return values use that CRS unless otherwise noted. The viewer
-reprojects to EPSG:4326 at the `/api/.../geojson` boundary.
+All spatial tools operate in **EPSG:3011** (SWEREF 99 18 00). Coordinates in
+tool arguments and return values use that CRS unless otherwise noted. The
+viewer reprojects to EPSG:4326 at the `/api/.../geojson` boundary. The
+server's `instructions` string (a ~5 KB workflow primer) is delivered to the
+MCP client at connection time — it covers CRS conventions, SCB footguns,
+the enrichment loop, and when the LLM should push back instead of ploughing on.
 
 ## Tool index
 
-**Discovery / read-only** (`readOnlyHint=true`): `search_data`, `geocode`,
-`inspect`, `stats`, `sources`, `list_layers`, `batch_iterate`, `inspect_location`.
+**Discovery / read-only** (`readOnlyHint=true`): `search_data`,
+`describe_dataset`, `geocode`, `inspect`, `stats`, `sources`, `list_layers`,
+`batch_iterate`, `inspect_location`, `inspect_locations`.
 
 **Layer creation / session state** (`destructiveHint=false`): `load`,
 `load_many`, `filter`, `spatial`, `execute_sql`, `create_layer`, `export`,
-`show`, `set_notes`.
+`show`, `hide`, `set_notes`.
 
 **In-place layer mutation** (`destructiveHint=false`, reversible inside a
 checkpoint): `add_field`, `update_field`, `drop_field`, `annotate`,
 `drop_layer`, `rename_layer`.
 
-**Transaction control**: `checkpoint`, `rollback`, `commit`.
+**Transaction control**: `checkpoint`, `rollback`, `commit`. Checkpoints
+accept an optional `layers=[...]` scope, and multiple can be active
+simultaneously on overlapping or disjoint scopes.
 
 ---
 
@@ -408,3 +415,74 @@ Most mutation tools include a `hint` field in their response flagging
 checkpoint state — e.g. *"Mutation is reversible — call rollback('classify')
 to undo."* or *"No checkpoint active — this mutation is not reversible."*.
 Intended as teaching moments for LLMs just connecting.
+
+---
+
+## What changed in the post-feedback pass
+
+Structured response to the user-testing session friction points:
+
+**Tools added (+3 → 29 total):**
+- `describe_dataset(id)` — full attribute schema for a single dataset. Paired
+  with a `verbose=False` default on `search_data` to keep context small.
+- `inspect_locations(points, ...)` — batch variant of `inspect_location`. Up
+  to 500 points per call.
+- `hide(layers)` — inverse of `show`. `layers=None` hides all.
+
+**Response shape changes:**
+- `execute_sql` now returns `truncated: true` + a `warning` when the result
+  hits the 50-row cap, with a pointer to the `result_name=...` pagination path.
+- `annotate` echoes `keys_cap` every time, and includes a `hint` about
+  `create_layer` + `add_field` for >10 k workflows.
+- `inspect_location` reports `unknown_layers` and emits a `hint` when the
+  search radius turns up nothing or when the session has no geometric layers.
+  `columns` parameter filters returned attributes. NULL attributes are
+  elided to keep payload small.
+- Mutation responses now report `covering_checkpoints: [...]` (list of
+  checkpoints that would roll this mutation back), not just a single
+  `active_checkpoint`.
+- `batch_iterate` remembers the first-call `batch_size` across cursor calls,
+  so continuation calls default to the intended size. Explicit `batch_size`
+  on a cursor call still overrides.
+
+**Scoped, concurrent checkpoints:**
+- `checkpoint(name, layers=[...])` — scope to named layers. `layers=None`
+  (default) covers every layer, keeping back-compat.
+- Multiple checkpoints may be active at once. A mutation snapshots against
+  every covering active checkpoint, so nested or parallel workflows don't
+  couple.
+- `rollback` / `commit` now surface `other_active` in their response.
+
+**Public URL in responses:**
+- `show` and `export` return absolute URLs when the server is deployed
+  behind `GEODATA_PUBLIC_URL` (e.g.
+  `https://geo.benjaminhenriksson.com/view/<id>` rather than `/view/<id>`).
+
+**Viewer UX:**
+- Auto-refresh: viewer polls `/api/<sid>/version` every 2 s and re-syncs on
+  change — new layers appear, removed layers disappear, mutated layer data
+  refreshes in-place, no manual reload.
+- Popup precedence: click returns the feature from the *smallest-bbox*
+  layer, not the topmost. Other layers at the same point are listed
+  ("Also at this point: …") so you can drill into them if you want.
+- Layers re-ordered on draw: small-bbox layers drawn on top of large ones,
+  improving click-through and visual legibility.
+- Layer notes shown in the legend row.
+
+**SCB data fixes (re-normalized):**
+- Every SCB parquet now has a unified `value` numeric column. The SCB
+  convention of naming the value column after the first variable
+  (e.g. "Andel av befolkningen i inkomstklass") is gone.
+- Every SCB parquet carries `region_kind` ∈ {`deso`, `regso`, `kommun`,
+  `country`, `other`}, plus `region_code` and `region_name`. Filter with
+  `WHERE region_kind = 'deso'` instead of `LIKE '0180%'` hacks.
+- Catalog entries regenerated for all 31 SCB tables. Audits clean.
+
+**Instructions upgrade:**
+- New "When the LLM should push back, not plough on" section — explicit
+  guidance to surface warnings / hints / truncation and to name missing
+  data rather than fabricate.
+- "Bulk enrichment pattern" example showing the canonical batch_iterate →
+  annotate loop.
+- Stronger preference for `load_many` over repeated `load` calls.
+- Pointer to `describe_dataset(id)` for attribute schemas.

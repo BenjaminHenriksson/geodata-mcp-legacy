@@ -1,10 +1,12 @@
 // Phase 4 viewer. Pulls visible layers for the session, adds them to MapLibre,
 // supports custom basemap (MapTiler/Mapbox key in localStorage), per-layer
-// visibility toggles, and click-to-inspect popups.
+// visibility toggles, click-to-inspect popups, and auto-refresh on session
+// state changes (polls /api/<sid>/version every 2 s and re-syncs on diff).
 const sessionId = location.pathname.split('/').pop();
 const statusEl = document.getElementById('status');
 const layersEl = document.getElementById('layers');
 const LS_BASEMAP = 'geodata_basemap_style_url';
+const POLL_MS = 2000;
 
 const COLORS = ['#ff6b6b', '#4ecdc4', '#ffe66d', '#95e1d3', '#c7ceea',
                 '#fcb1a6', '#a3d2ca', '#f6bd60', '#f28482', '#84a59d'];
@@ -32,7 +34,6 @@ function defaultStyle() {
   };
 }
 
-// Instantiate map with saved style if the user has one, else Carto dark.
 const customStyle = localStorage.getItem(LS_BASEMAP);
 const map = new maplibregl.Map({
   container: 'map',
@@ -44,10 +45,12 @@ const map = new maplibregl.Map({
 map.addControl(new maplibregl.NavigationControl(), 'top-right');
 map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-right');
 
-map.on('load', loadSession);
+map.on('load', async () => {
+  await syncSession(true);
+  setInterval(pollForChanges, POLL_MS);
+});
 map.on('error', (e) => console.warn('maplibre error', e.error?.message || e));
 
-// Settings panel controls
 const basemapInput = document.getElementById('basemap-input');
 const basemapApply = document.getElementById('basemap-apply');
 const basemapReset = document.getElementById('basemap-reset');
@@ -66,9 +69,23 @@ basemapReset.addEventListener('click', () => {
 
 // -- session → layers --
 
-const dataLayers = {};   // name → { color, meta, layerIds: [...] }
+// name → { color, meta, layerIds: [...], data: FeatureCollection, areaEst: number }
+const dataLayers = {};
+let lastVersion = -1;
+let autoFit = true;    // fit bounds on first sync; subsequent refreshes preserve view
 
-async function loadSession() {
+async function pollForChanges() {
+  try {
+    const res = await fetch(`/api/${sessionId}/version`);
+    if (!res.ok) return;
+    const payload = await res.json();
+    if (payload.version !== lastVersion) await syncSession(false);
+  } catch (e) {
+    // Silent — viewer stays showing last-good state on transient network errors.
+  }
+}
+
+async function syncSession(isFirstLoad) {
   let payload;
   try {
     const res = await fetch(`/api/${sessionId}/visible_layers`);
@@ -78,22 +95,42 @@ async function loadSession() {
     statusEl.textContent = `Failed to load session: ${e.message}`;
     return;
   }
-  if (!payload.visible_layers?.length) {
+  lastVersion = payload.version ?? 0;
+
+  // Diff: remove layers that are no longer visible.
+  const visible = new Set(payload.visible_layers || []);
+  for (const name of Object.keys(dataLayers)) {
+    if (!visible.has(name)) removeLayer(name);
+  }
+  if (!visible.size) {
     statusEl.textContent = 'No layers marked visible. Call show([...]) from the MCP tool.';
+    layersEl.innerHTML = '';
     return;
   }
-  statusEl.textContent = `Session ${payload.session_id.slice(0,10)}… — ${payload.visible_layers.length} layer(s)`;
+
+  statusEl.textContent =
+    `Session ${payload.session_id.slice(0,10)}… — ${payload.visible_layers.length} layer(s) · v${payload.version}`;
   layersEl.innerHTML = '';
 
   let tightest = null;
   let i = 0;
   for (const name of payload.visible_layers) {
     const meta = payload.layers[name];
-    const color = COLORS[i++ % COLORS.length];
+    const color = dataLayers[name]?.color || COLORS[i++ % COLORS.length];
     try {
       const fc = await (await fetch(`/api/${sessionId}/layer/${encodeURIComponent(name)}/geojson`)).json();
-      const layerIds = addLayer(name, fc, color);
-      dataLayers[name] = { color, meta, layerIds, data: fc };
+      // If we already had this layer, swap in new data; else add.
+      if (dataLayers[name]) {
+        map.getSource(`src-${name}`).setData(fc);
+        dataLayers[name].data = fc;
+        dataLayers[name].meta = meta;
+      } else {
+        const layerIds = addLayer(name, fc, color);
+        dataLayers[name] = { color, meta, layerIds, data: fc,
+                             areaEst: estimateAreaPriority(fc) };
+      }
+      // Re-sort layer draw order: smallest-area on top so they receive clicks.
+      reorderLayers();
       const b = featureCollectionBounds(fc);
       if (b) {
         const area = (b[1][0] - b[0][0]) * (b[1][1] - b[0][1]);
@@ -104,9 +141,20 @@ async function loadSession() {
     }
     renderLayerRow(name, color, meta);
   }
-  if (tightest) map.fitBounds(tightest.b, { padding: 60, duration: 600 });
-  // Click anywhere — inspect topmost feature.
-  map.on('click', onMapClick);
+  if (isFirstLoad && tightest) {
+    map.fitBounds(tightest.b, { padding: 60, duration: 600 });
+  }
+  if (isFirstLoad) map.on('click', onMapClick);
+}
+
+function removeLayer(name) {
+  const info = dataLayers[name];
+  if (!info) return;
+  for (const id of info.layerIds) {
+    if (map.getLayer(id)) map.removeLayer(id);
+  }
+  if (map.getSource(`src-${name}`)) map.removeSource(`src-${name}`);
+  delete dataLayers[name];
 }
 
 function addLayer(name, fc, color) {
@@ -133,14 +181,34 @@ function addLayer(name, fc, color) {
   return ids;
 }
 
+// Sort drawn data-layers: largest (background polygons) at the bottom,
+// smallest (points / buildings) on top. Uses rough bbox area as proxy.
+function reorderLayers() {
+  const names = Object.keys(dataLayers);
+  names.sort((a, b) => (dataLayers[b].areaEst ?? 0) - (dataLayers[a].areaEst ?? 0));
+  // MapLibre draws layers in the order they're added; moveLayer to bring to top.
+  for (const n of names) {
+    for (const id of dataLayers[n].layerIds) {
+      if (map.getLayer(id)) map.moveLayer(id);
+    }
+  }
+}
+
+function estimateAreaPriority(fc) {
+  // Rough bbox-area estimate. Polygons covering big areas sort "bigger".
+  const b = featureCollectionBounds(fc);
+  if (!b) return 0;
+  return (b[1][0] - b[0][0]) * (b[1][1] - b[0][1]);
+}
+
 function renderLayerRow(name, color, meta) {
   const el = document.createElement('div');
   el.className = 'layer-row';
   el.innerHTML = `
     <input type="checkbox" id="cb-${name}" checked data-layer="${name}"/>
     <label for="cb-${name}">
-      <div><strong style="color:${color}">${name}</strong></div>
-      <div class="meta">${meta.geometry_type ?? '(no geometry)'} · ${meta.feature_count} features</div>
+      <div><strong style="color:${color}">${escapeHtml(name)}</strong></div>
+      <div class="meta">${meta.geometry_type ?? '(no geometry)'} · ${meta.feature_count} features${meta.notes ? ` · <em>${escapeHtml(meta.notes.slice(0,60))}${meta.notes.length>60?'…':''}</em>` : ''}</div>
     </label>`;
   const cb = el.querySelector('input');
   cb.addEventListener('change', (e) => toggleLayer(name, e.target.checked));
@@ -160,26 +228,42 @@ function toggleLayer(name, visible) {
 let currentPopup = null;
 
 function onMapClick(e) {
-  // Query all data-layer sublayers at click point, prefer the topmost
   const allIds = [];
   for (const info of Object.values(dataLayers)) allIds.push(...info.layerIds);
   const feats = map.queryRenderedFeatures(e.point, { layers: allIds });
   if (!feats.length) return;
-  const f = feats[0];
-  // Which data-layer does this belong to? The source id is 'src-<name>'.
-  const srcId = f.source;
-  const layerName = srcId.startsWith('src-') ? srcId.slice(4) : srcId;
-  const color = dataLayers[layerName]?.color || '#6cf';
-  const props = f.properties || {};
+
+  // Pick the feature from the "smallest" layer at this point — reduces the
+  // classic polygon-masks-building case where a borough polygon wins over a
+  // specific building. "Smallest" means the layer whose estimated bbox
+  // priority is lowest (buildings < districts < boroughs).
+  const byLayer = new Map();  // layerName → feature (first hit per layer)
+  for (const f of feats) {
+    const srcId = f.source;
+    const layerName = srcId.startsWith('src-') ? srcId.slice(4) : srcId;
+    if (!byLayer.has(layerName)) byLayer.set(layerName, f);
+  }
+  const ranked = [...byLayer.entries()].sort(
+    (a, b) => (dataLayers[a[0]]?.areaEst ?? 0) - (dataLayers[b[0]]?.areaEst ?? 0)
+  );
+  const [topName, topFeat] = ranked[0];
+  const other = ranked.slice(1).map(([n]) => n);
+
+  const color = dataLayers[topName]?.color || '#6cf';
+  const props = topFeat.properties || {};
   const rows = Object.entries(props)
     .filter(([k, v]) => v !== null && v !== undefined && v !== '')
     .slice(0, 12)
     .map(([k, v]) => `<div class="row"><span class="k">${escapeHtml(k)}</span><span class="v">${escapeHtml(String(v))}</span></div>`)
     .join('');
+  const otherHtml = other.length
+    ? `<div class="meta" style="margin-top:6px;opacity:0.7">Also at this point: ${escapeHtml(other.join(', '))}</div>`
+    : '';
   const html = `
     <div class="feature-popup">
-      <div style="color:${color};font-weight:600;margin-bottom:4px">${escapeHtml(layerName)}</div>
+      <div style="color:${color};font-weight:600;margin-bottom:4px">${escapeHtml(topName)}</div>
       ${rows || '<div class="meta">(no non-empty properties)</div>'}
+      ${otherHtml}
     </div>`;
   if (currentPopup) currentPopup.remove();
   currentPopup = new maplibregl.Popup({ closeOnClick: true, maxWidth: '320px' })

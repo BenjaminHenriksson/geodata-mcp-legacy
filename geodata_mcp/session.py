@@ -107,23 +107,38 @@ class Session:
         self.history: list[Operation] = []
         # Cursors for batch_iterate — cursor_id → iteration state.
         self.cursors: dict[str, dict] = {}
-        # Active checkpoint (one at a time). When set, in-place mutations
-        # snapshot the affected column(s) before writing.
+        # Most recently created checkpoint name (for hint text). Multiple may
+        # be active concurrently — see `checkpoints`.
         self.active_checkpoint: str | None = None
-        # name → {"id": int, "snapshots": [{"layer": ..., "column": ..., "snap_table": ...,
-        #                                   "column_existed": bool, "whole_layer": bool}]}
+        # name → {"id": int, "snapshots": [...], "layers": set[str]|None}
+        # `layers=None` means the checkpoint covers every layer. A mutation
+        # snapshots against every active checkpoint whose scope covers its
+        # layer.
         self.checkpoints: dict[str, dict] = {}
         self._next_checkpoint_id = 0
+        # Monotonic counter bumped on any change that matters to the viewer —
+        # load/filter/spatial/execute_sql creating layers, show/hide, mutations.
+        # The viewer polls /api/<sid>/visible_layers and diffs on this to know
+        # when to re-fetch GeoJSON.
+        self.version = 0
+
+    def bump_version(self) -> None:
+        self.version += 1
 
     def touch(self) -> None:
         self.last_active = datetime.utcnow()
 
     def register(self, meta: LayerMeta) -> None:
         self.layers[meta.name] = meta
+        self.version += 1
 
     def log(self, op: Operation) -> None:
         self.history.append(op)
         self.touch()
+        # Any logged operation is by definition something the viewer might
+        # want to reflect. Bumping here catches mutations that don't go
+        # through register().
+        self.version += 1
 
     def unique_layer_name(self, base: str) -> str:
         if base not in self.layers:

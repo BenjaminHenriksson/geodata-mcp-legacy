@@ -57,6 +57,7 @@ SupplementaryGroups=
 UMask=0002
 WorkingDirectory=/home/ben/geodata-mcp
 Environment=HOME=/home/ben/geodata-mcp
+Environment=GEODATA_PUBLIC_URL=https://geo.benjaminhenriksson.com
 Environment=PATH=/home/ben/geodata-mcp/.venv/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/home/ben/geodata-mcp/.venv/bin/python -m geodata_mcp --http --host 127.0.0.1 --port 8765
 Restart=on-failure

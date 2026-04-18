@@ -1,0 +1,35 @@
+# Virtualenv
+.venv/
+
+# Project data (raw + normalized). Rebuild via scripts/normalize.py.
+data/
+
+# DuckDB extension cache
+.duckdb/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Env
+.env
+.env.*
+
+# Claude Code project config
+.claude/
+
+# Session dumps (live under /tmp/geodata_sessions in prod)
+/tmp/

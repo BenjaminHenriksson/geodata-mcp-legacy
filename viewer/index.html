@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Geodata MCP — viewer</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #111; color: #ddd;
+               font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  #map { position: absolute; top: 0; bottom: 0; left: 0; right: 0; }
+  .panel { position: absolute; z-index: 10;
+           background: rgba(20,20,20,0.88); padding: 10px 14px; border-radius: 6px;
+           font-size: 13px; max-width: 320px; }
+  #panel-layers { top: 12px; left: 12px; }
+  #panel-settings { bottom: 30px; left: 12px; }
+  .panel h1 { font-size: 14px; margin: 0 0 8px 0; font-weight: 600; }
+  .panel .layer-row { margin: 6px 0; padding: 4px 0; border-bottom: 1px solid #333;
+                      display: flex; align-items: flex-start; gap: 8px; }
+  .panel .layer-row:last-child { border-bottom: none; }
+  .panel .layer-row label { flex: 1; cursor: pointer; }
+  .meta { color: #999; font-size: 11px; }
+  a { color: #6cf; }
+  input[type=text] { width: 100%; padding: 4px 6px; background: #222; color: #ddd;
+                     border: 1px solid #444; border-radius: 3px; font-size: 12px; }
+  button { background: #333; color: #ddd; border: 1px solid #555; border-radius: 3px;
+           padding: 4px 10px; cursor: pointer; font-size: 12px; margin-top: 6px; }
+  button:hover { background: #444; }
+  #popup-container { position: absolute; z-index: 20; pointer-events: none; }
+  .feature-popup { background: #222; color: #ddd; padding: 8px 10px; border-radius: 4px;
+                   font-size: 12px; max-width: 300px; box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+                   pointer-events: auto; }
+  .feature-popup .row { display: flex; gap: 6px; margin: 2px 0; }
+  .feature-popup .k { color: #6cf; min-width: 70px; font-size: 11px; }
+  .feature-popup .v { word-break: break-word; }
+  details summary { cursor: pointer; color: #6cf; font-size: 11px; margin-top: 4px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel-layers" class="panel">
+  <h1>Geodata viewer</h1>
+  <div id="status">Loading session…</div>
+  <div id="layers"></div>
+</div>
+<div id="panel-settings" class="panel">
+  <details>
+    <summary>Basemap settings</summary>
+    <div class="meta" style="margin-top:8px">
+      Paste a MapTiler or Mapbox tile URL with your key.<br>
+      e.g. <code style="font-size:10px">https://api.maptiler.com/maps/streets-v2/style.json?key=YOUR</code>
+    </div>
+    <input id="basemap-input" type="text" placeholder="Leave blank for default Carto dark"/>
+    <button id="basemap-apply">Apply</button>
+    <button id="basemap-reset">Reset</button>
+  </details>
+</div>
+<div id="popup-container"></div>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="/static/app.js?v={APP_JS_HASH}"></script>
+</body>
+</html>

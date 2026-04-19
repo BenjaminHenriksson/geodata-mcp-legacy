@@ -116,21 +116,28 @@ are retained as one-shots that informed the filtering decisions.
 
 ## Quick start for MCP clients
 
-### 1. Get the bearer token
+Two connection paths:
+
+### 1a. claude.ai custom connector (preferred)
+
+Settings → Connectors → Add custom connector → paste
+`https://geo.benjaminhenriksson.com/mcp` → Connect. You'll be redirected
+to a consent form that shows the callback host and asks for an invite
+code. Type the code (shared out-of-band) and you're in.
+
+Get the invite code from the host operator; it lives in
+`/etc/credstore/geodata-mcp.invite` (root-readable only).
+
+### 1b. Claude Code CLI (legacy shared bearer)
 
 ```bash
-ssh geo-vps 'sudo grep GEODATA_MCP_TOKEN /etc/geodata-mcp.env'
-```
-
-### 2. Claude Code
-
-```bash
+TOKEN=$(ssh geo-vps 'sudo cat /etc/credstore/geodata-mcp.token')
 claude mcp add --transport http geodata \
   https://geo.benjaminhenriksson.com/mcp \
   --header "Authorization: Bearer $TOKEN"
 ```
 
-Restart Claude Code. The 12 tools appear automatically.
+Restart Claude Code. The 35 tools appear automatically.
 
 ### 3. Claude Desktop (via the `mcp-remote` shim)
 

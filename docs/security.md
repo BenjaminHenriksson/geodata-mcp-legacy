@@ -5,6 +5,15 @@ This document captures the security work done after an adversarial review of
 fixed, what was deliberately not fixed (and why), and how to verify the state
 after any unit edit.
 
+**Update 2026-04-19:** a post-OAuth audit surfaced one HIGH-severity
+finding — a SQL injection via `create_layer`'s `crs` parameter that
+bypassed the `_validate_sql` sandbox. Fixed in `36bf3cb` with a strict
+`EPSG:<digits>` regex whitelist. The same audit pass drove a follow-on
+hardening: secrets moved from `EnvironmentFile=` to `LoadCredential=`
+(commit `72fe3bf`), so `/proc/self/environ` no longer contains the
+bearer or invite code. See [Post-OAuth security pass](#post-oauth-security-pass)
+below.
+
 If you re-enable the service later, run through [Verification](#verification)
 first and rotate the bearer token.
 
@@ -143,9 +152,11 @@ permissions.
 - `ProtectSystem=strict` — `/` is read-only except explicit `ReadWritePaths`
   (`data/exports`, `.duckdb`).
 - `InaccessiblePaths=/etc/ssh /etc/ssl/private /etc/shadow /etc/gshadow
-  /etc/sudoers /etc/sudoers.d /etc/caddy /etc/geodata-mcp.env /etc/systemd
-  /root /var/log` — admin config, service logs, and the MCP bearer env file
-  itself are blocked.
+  /etc/sudoers /etc/sudoers.d /etc/credstore /etc/caddy /etc/systemd
+  /root /var/log` — admin config, service logs, and the on-disk secret
+  source (`/etc/credstore/`) are blocked. Secrets reach the service via
+  systemd `LoadCredential=` on a separate tmpfs mount point inside the
+  sandbox, readable only by the service user via file ACL.
 - `PrivateTmp=true`, `PrivateDevices=true`, `ProtectKernelTunables`,
   `ProtectKernelModules`, `ProtectKernelLogs`, `ProtectControlGroups`,
   `ProtectClock`, `ProtectHostname`.
@@ -249,14 +260,24 @@ Anthropic's console (console.anthropic.com) has explicit session / API key
 revocation — worth doing so the old token is server-side-invalid, not just
 superseded locally.
 
-For the MCP bearer itself (`/etc/geodata-mcp.env`):
+For the MCP secrets (as of 2026-04-19 they live in `/etc/credstore/` and
+are delivered via `LoadCredential=`, not `EnvironmentFile=`):
 
 ```bash
-NEW=$(python3 -c "import secrets; print(secrets.token_urlsafe(48))")
-echo "GEODATA_MCP_TOKEN=$NEW" | sudo tee /etc/geodata-mcp.env >/dev/null
-sudo chown root:caddy /etc/geodata-mcp.env && sudo chmod 0640 /etc/geodata-mcp.env
-sudo systemctl restart caddy
-# Update every MCP client's config to carry the new token.
+# Legacy bearer (Claude Code CLI path)
+python3 -c "import secrets,sys; sys.stdout.write(secrets.token_urlsafe(48))" \
+  | sudo tee /etc/credstore/geodata-mcp.token >/dev/null
+
+# OAuth invite code (claude.ai custom-connector path)
+python3 -c "import secrets,sys; sys.stdout.write(secrets.token_urlsafe(12))" \
+  | sudo tee /etc/credstore/geodata-mcp.invite >/dev/null
+
+sudo chmod 0600 /etc/credstore/geodata-mcp.*
+sudo chown root:root /etc/credstore/geodata-mcp.*
+sudo systemctl restart geodata-mcp
+# Already-issued OAuth access tokens are wiped (in-memory store). Update
+# Claude Code CLI configs with the new bearer; claude.ai users re-Connect
+# and enter the new invite code.
 ```
 
 For a GitHub CLI token: `gh auth logout && gh auth login`.
@@ -379,8 +400,10 @@ r = await c.call_tool("execute_sql",
 - Claude Code OAuth token — fully rotated via `rm ~/.claude/.credentials.json`
   + re-auth + server-side revocation in console.anthropic.com.
 - GitHub CLI OAuth token — rotated via `gh auth logout && gh auth login`.
-- MCP bearer token — rotated via `/etc/geodata-mcp.env` write +
-  `systemctl restart caddy`.
+- MCP bearer token — rotated via `/etc/credstore/geodata-mcp.token`
+  write + `systemctl restart geodata-mcp` (2026-04-19, after the env-leak
+  finding). Previously rotated via `/etc/geodata-mcp.env` + Caddy
+  restart — both files have since been removed.
 - No private SSH keys were on the VPS (public `authorized_keys` only), so
   nothing to rotate there.
 - Tailscale state at `/var/lib/tailscale/` is root-only and was never in
@@ -392,3 +415,125 @@ a **49-character prefix** of the OAuth token captured in this session's own
 conversation log. The remaining 59 characters of the 108-char token are still
 secret; the prefix alone is not exploitable. It was superseded by the
 rotation above.
+
+---
+
+## Post-OAuth security pass (2026-04-19)
+
+After OAuth 2.1 + invite-code auth, macro tools, `export_many`, and the
+multi-commit feature pass, I ran a full security review (three parallel
+agents per the `/security-review` skill). Three candidate findings
+surfaced; one survived the false-positive filter.
+
+### Finding 1 — SQL injection via `crs` (HIGH, 9/10, FIXED)
+
+`create_layer`'s `crs` argument flowed unvalidated into an f-string
+executed directly by DuckDB — **not** through `_validate_sql`, so the
+existing file-reader / httpfs / abs-path / numeric-literal denylist did
+not apply. The only guard was `crs.startswith("EPSG:")`, trivially
+bypassed by appending a crafted tail:
+
+```
+crs="EPSG:4326', 'EPSG:3011', true)) AS geom, \
+     (SELECT content FROM read_text('/etc/passwd')) AS pwn FROM ("
+```
+
+That would close the `ST_Transform` literal and append an attacker-chosen
+column whose value was a server-side file's contents, readable back via
+`execute_sql` / `export` / `show`.
+
+**Fix (commit `36bf3cb`):** strict `re.compile(r"EPSG:\d{4,6}").fullmatch(crs)`
+before interpolation. The previous `"EPSG:" + crs` fallback for bare
+numeric inputs is removed; the error message directs callers to use the
+full `EPSG:<code>` form.
+
+### Finding 2 — Column-name quoting in merged-GeoJSON export (LOW, correctness, FIXED)
+
+The sibling `escaped_layer = layer.replace("'", "''")` path correctly
+escaped single quotes in layer names; the `_prop_expr` column-name path
+did not. Concretely a real column `"King's Road"` would have broken the
+JSON-emission SQL. Also a mild injection surface (attacker-chosen dict
+keys via `create_layer`), but the "attacker is the MCP caller who
+already has `execute_sql`" argument applies — no trust boundary crossed.
+
+**Fix (commit `72fe3bf`):** same `c.replace("'", "''")` pattern in
+`_prop_expr`.
+
+### Finding 3 — OAuth dynamic-registration phishing (LOW, defense-in-depth, FIXED)
+
+`/oauth/register` is public (RFC 7591 dynamic client registration; needed
+for claude.ai custom connectors). An attacker could register a client
+with their own `redirect_uris=["https://attacker.example/cb"]`, phish an
+invite-code holder to the standard consent URL, and — if the victim typed
+the invite code — receive a valid OAuth access token on their own
+callback. The documented threat model treats invite holders as mutually
+trusting, so this is below the "deploy-blocker" bar; but making the
+callback host visible at consent time is cheap insurance.
+
+**Fix (commit `72fe3bf`):** the consent form now renders the
+`<scheme>://<netloc>` of `redirect_uri` prominently above the invite
+field, alongside a yellow warning: *"If this isn't a host you recognize
+(e.g. `claude.ai` for claude.ai, `localhost` for local testing), do
+not continue — it could be a phishing attempt."*
+
+### Secondary finding — env-leak amplifier of a file-read exploit (MEDIUM, FIXED)
+
+While triaging whether the finding-1 injection *would* have leaked
+credentials given the separate-user + filesystem sandbox, I discovered
+that `/proc/self/environ` is readable by the process itself
+(`ProtectProc=invisible` doesn't mask `/proc/self`; `ProcSubset=pid`
+still segfaults DuckDB spatial's GDAL loader). Since the unit loaded
+secrets via `EnvironmentFile=/etc/geodata-mcp.env`, the bearer and invite
+code appeared in the service's `/proc/<pid>/environ` block. A DuckDB
+`read_text('/proc/self/environ')` call (reachable through the finding-1
+bypass) would have exfiltrated both.
+
+**Fix (commit `72fe3bf` + operational changes):**
+
+- Secrets moved to `/etc/credstore/geodata-mcp.token` and
+  `/etc/credstore/geodata-mcp.invite` (root:root `0600`).
+- Unit reads them via `LoadCredential=mcp-token:…` /
+  `LoadCredential=invite-code:…`. systemd places copies in a per-unit
+  tmpfs at `/run/credentials/geodata-mcp.service/<name>` with an ACL
+  granting only the service user `r--`. The app reads
+  `$CREDENTIALS_DIRECTORY/<name>` at import time (falling back to env
+  for dev/stdio mode).
+- The env-var form is gone from the process: `cat /proc/$PID/environ |
+  tr '\0' '\n' | grep -E 'TOKEN|INVITE'` returns nothing.
+- `ProtectProc=invisible` added (blocks visibility into other processes'
+  `/proc/<pid>` — defense-in-depth).
+- `/etc/credstore` added to `InaccessiblePaths`; the source files are
+  only readable via systemd's credential delivery, not via any path the
+  service can reach directly.
+- `EnvironmentFile=/etc/geodata-mcp.env` removed from the unit;
+  `/etc/geodata-mcp.env` deleted on disk.
+- The orphaned `/etc/systemd/system/caddy.service.d/geodata-token.conf`
+  Caddy drop-in was also removed — Caddy stopped bearer-checking at the
+  edge when OAuth 2.1 landed in the app, so it hasn't needed the token
+  since.
+
+### Why `ProcSubset=pid` still isn't applied
+
+Reproducibly segfaults DuckDB spatial at `INSTALL spatial; LOAD spatial`
+— GDAL (bundled into the spatial extension) reads `/proc/cpuinfo` during
+SIMD feature detection, and `ProcSubset=pid` hides non-PID entries from
+`/proc`. Verified 2026-04-19 on Linux 6.8, systemd 255, DuckDB 1.5.2.
+`ProtectProc=invisible` alone works and is now applied.
+
+### Residual, not yet fixed
+
+- **OAuth token store is in-process (in-memory).** On restart, issued
+  access/refresh tokens are lost and users re-click Connect. Fine for
+  the demo posture; swap for SQLite if the deployment becomes persistent.
+- **One shared invite code.** No per-user revocation. Rotation via
+  `/etc/credstore/geodata-mcp.invite` + service restart.
+- **No audit log of `execute_sql` calls** — still pending; journalctl
+  access-log line is the only trail.
+
+### Rotation after this pass
+
+Both the legacy bearer and the invite code were rotated on 2026-04-19
+as part of the credstore migration. Any OAuth access token issued
+before that rotation is now invalid (in-memory store was wiped on the
+service restart). Coworkers who had connected earlier need to re-click
+Connect in claude.ai and re-enter the new invite code.

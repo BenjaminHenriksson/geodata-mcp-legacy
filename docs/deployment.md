@@ -37,9 +37,12 @@ The Python app binds **only** to `127.0.0.1`, so Caddy is the only thing that ca
 | `/home/ben/geodata-mcp/` | `ben` | Source + data + venv |
 | `/etc/systemd/system/geodata-mcp.service` | `root` | systemd unit for the app |
 | `/etc/geodata-mcp.env` | `root:caddy` (0640) | Bearer token env var |
-| `/etc/systemd/system/caddy.service.d/geodata-token.conf` | `root` | Caddy drop-in loading the env file |
+| `/etc/credstore/geodata-mcp.token` | `root:root 0600` | Legacy shared bearer (Claude Code CLI). Loaded via `LoadCredential=` into the service; never appears in `/proc/<pid>/environ`. |
+| `/etc/credstore/geodata-mcp.invite` | `root:root 0600` | OAuth invite code (single-factor shared secret for `claude.ai` custom-connector flow). Same delivery path. |
 | `/etc/caddy/Caddyfile` → `/home/ben/personal-homepage/Caddyfile` | `ben` | Caddy site configs (symlinked) |
 | `/var/lib/caddy/.local/share/caddy/certificates/acme-v02…/geo.benjaminhenriksson.com/` | `caddy` | Auto-provisioned LE cert |
+
+Caddy no longer reads the shared bearer — auth moved into the app once OAuth 2.1 landed. The previous `EnvironmentFile=/etc/geodata-mcp.env` drop-in for Caddy has been removed.
 
 ### `geodata-mcp.service`
 
@@ -59,6 +62,15 @@ WorkingDirectory=/home/ben/geodata-mcp
 Environment=HOME=/home/ben/geodata-mcp
 Environment=GEODATA_PUBLIC_URL=https://geo.benjaminhenriksson.com
 Environment=PATH=/home/ben/geodata-mcp/.venv/bin:/usr/local/bin:/usr/bin:/bin
+
+# Secrets are delivered via LoadCredential= rather than EnvironmentFile=.
+# Files appear at $CREDENTIALS_DIRECTORY/<name> — readable only by the
+# service user, not present in /proc/self/environ, so a DuckDB file-read
+# exploit can't exfiltrate them via the env block. Source files live in
+# /etc/credstore/ (root:root 0600).
+LoadCredential=mcp-token:/etc/credstore/geodata-mcp.token
+LoadCredential=invite-code:/etc/credstore/geodata-mcp.invite
+
 ExecStart=/home/ben/geodata-mcp/.venv/bin/python -m geodata_mcp --http --host 127.0.0.1 --port 8765
 Restart=on-failure
 RestartSec=3
@@ -68,7 +80,7 @@ ProtectHome=tmpfs
 BindPaths=/home/ben/geodata-mcp
 ProtectSystem=strict
 ReadWritePaths=/home/ben/geodata-mcp/data/exports /home/ben/geodata-mcp/.duckdb
-InaccessiblePaths=/etc/ssh /etc/ssl/private /etc/shadow /etc/gshadow /etc/sudoers /etc/sudoers.d /etc/caddy /etc/geodata-mcp.env /etc/systemd /root /var/log
+InaccessiblePaths=/etc/ssh /etc/ssl/private /etc/shadow /etc/gshadow /etc/sudoers /etc/sudoers.d /etc/credstore /etc/caddy /etc/systemd /root /var/log
 PrivateTmp=true
 PrivateDevices=true
 ProtectKernelTunables=true
@@ -77,6 +89,7 @@ ProtectKernelLogs=true
 ProtectControlGroups=true
 ProtectClock=true
 ProtectHostname=true
+ProtectProc=invisible
 
 # Egress (cgroup BPF)
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
@@ -114,17 +127,23 @@ are group `geodata-mcp` with setgid + default ACL `g::rwX` so both `ben`
 ```caddy
 geo.benjaminhenriksson.com {
     encode zstd gzip
+    header X-Robots-Tag "noindex, nofollow, noarchive, nosnippet"
 
+    # Auth is handled by the MCP app (OAuth 2.1 + invite-code + the legacy
+    # shared bearer for Claude Code CLI). Caddy used to bearer-check at
+    # the edge; that check was removed when OAuth 2.1 landed in the app.
     @mcp path /mcp /mcp/*
     handle @mcp {
-        @unauthed not header Authorization "Bearer {$GEODATA_MCP_TOKEN}"
-        handle @unauthed {
-            respond "Unauthorized" 401
-        }
         reverse_proxy 127.0.0.1:8765 {
-            # Streamable HTTP is long-poll; don't let Caddy buffer responses.
-            flush_interval -1
+            flush_interval -1   # don't buffer streamable-HTTP long-polls
         }
+    }
+
+    handle /robots.txt {
+        header Content-Type "text/plain"
+        respond `User-agent: *
+Disallow: /
+` 200
     }
 
     handle {
@@ -133,14 +152,9 @@ geo.benjaminhenriksson.com {
 }
 ```
 
-### Caddy env drop-in (`/etc/systemd/system/caddy.service.d/geodata-token.conf`)
-
-```ini
-[Service]
-EnvironmentFile=/etc/geodata-mcp.env
-```
-
-The env file exposes `GEODATA_MCP_TOKEN` to the Caddy process so the `{$GEODATA_MCP_TOKEN}` placeholder in the Caddyfile resolves. When the token is rotated, **restart** Caddy (not reload — reload doesn't re-read `EnvironmentFile`).
+Caddy has no service-unit drop-in for this site anymore — the previous
+`/etc/systemd/system/caddy.service.d/geodata-token.conf` was removed once
+Caddy stopped reading `GEODATA_MCP_TOKEN`.
 
 ---
 
@@ -164,18 +178,58 @@ tls {
 
 ## Authentication
 
-- **MCP endpoint `/mcp/*`** — `Authorization: Bearer <token>` required, enforced by Caddy reading `GEODATA_MCP_TOKEN` from `/etc/geodata-mcp.env`. Wrong or missing token returns `401` before hitting the app.
-- **Viewer + API (`/view/*`, `/api/*`, `/static/*`)** — **open**. Knowing the session id is the only access control. Phase 1 uses a hardcoded `"default"` session, so anyone who finds the hostname can read whatever you've `show()`ed. Tighten before sharing broadly (see [Known limitations](#known-limitations)).
+Two auth paths, both enforced by the app (not Caddy):
 
-### Retrieve the token
+- **OAuth 2.1 + PKCE via invite code** — `claude.ai` custom connectors and
+  other OAuth-capable clients. The app publishes RFC 9728
+  `/.well-known/oauth-protected-resource` + RFC 8414 metadata + RFC 7591
+  dynamic client registration. User enters the shared invite code on the
+  server-rendered consent form (which displays the `redirect_uri` host
+  prominently plus a phishing warning). Returns authorization code →
+  PKCE-verified token exchange → bearer for `/mcp/*`.
+- **Legacy shared bearer** — Claude Code CLI users pass the
+  `GEODATA_MCP_TOKEN` value directly in `Authorization: Bearer …`. Kept
+  for back-compat; prefer the OAuth path for new coworkers.
+
+Viewer + API (`/view/*`, `/api/*`, `/static/*`) are open on the session id
+— knowing the session UUID is the only access control. Fine for a single
+operator's own session, not safe to share URLs publicly.
+
+### Retrieve the current secrets
+
+Both live in `/etc/credstore/` (root-only), delivered into the service
+via `LoadCredential=`. Neither appears in `/proc/<pid>/environ`.
 
 ```bash
-sudo grep GEODATA_MCP_TOKEN /etc/geodata-mcp.env
+sudo cat /etc/credstore/geodata-mcp.invite   # invite code (share w/ coworkers)
+sudo cat /etc/credstore/geodata-mcp.token    # legacy CLI bearer
 ```
 
-### Rotate the token
+### Rotate the secrets
 
 ```bash
+# Invite code
+python3 -c "import secrets,sys; sys.stdout.write(secrets.token_urlsafe(12))" \
+  | sudo tee /etc/credstore/geodata-mcp.invite >/dev/null
+
+# Legacy bearer
+python3 -c "import secrets,sys; sys.stdout.write(secrets.token_urlsafe(48))" \
+  | sudo tee /etc/credstore/geodata-mcp.token >/dev/null
+
+sudo chmod 0600 /etc/credstore/geodata-mcp.*
+sudo systemctl restart geodata-mcp
+```
+
+The restart wipes any already-issued OAuth access tokens (in-memory
+store), so coworkers who had connected pre-rotation must re-click
+*Connect* and enter the new invite code.
+
+(Legacy `/etc/geodata-mcp.env`-style rotation — below — is retained as a
+reference for older revisions of this doc; the env file and Caddy drop-in
+were removed when OAuth landed.)
+
+```bash
+# Historical (pre-credstore):
 NEW=$(python3 -c "import secrets; print(secrets.token_urlsafe(48))")
 echo "GEODATA_MCP_TOKEN=$NEW" | sudo tee /etc/geodata-mcp.env >/dev/null
 sudo systemctl restart caddy     # reload does NOT re-read EnvironmentFile
@@ -252,7 +306,7 @@ From anywhere:
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' https://geo.benjaminhenriksson.com/view/default  # 200
 curl -s -o /dev/null -w '%{http_code}\n' https://geo.benjaminhenriksson.com/mcp              # 401
-TOKEN=...   # from /etc/geodata-mcp.env
+TOKEN=$(sudo cat /etc/credstore/geodata-mcp.token)
 curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" \
      https://geo.benjaminhenriksson.com/mcp                                                    # != 401
 ```
@@ -287,7 +341,7 @@ a seccomp syscall denylist:
 - **Filesystem.** `ProtectHome=tmpfs` + `BindPaths=/home/ben/geodata-mcp` —
   only the project dir is visible under `/home`. `ProtectSystem=strict`
   with minimal `ReadWritePaths`. `InaccessiblePaths` for `/etc/ssh`,
-  `/etc/ssl/private`, `/etc/shadow`, `/etc/caddy`, `/etc/geodata-mcp.env`,
+  `/etc/ssl/private`, `/etc/shadow`, `/etc/caddy`, `/etc/credstore`,
   `/etc/systemd`, `/root`, `/var/log`.
 - **Egress.** `IPAddressDeny=any` + `IPAddressAllow=localhost` — kernel
   cgroup-BPF filter restricts outbound to `127.0.0.0/8` / `::1`. Blocks

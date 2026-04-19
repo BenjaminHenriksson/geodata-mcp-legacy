@@ -1,6 +1,13 @@
 Lantmäteriet (LM), Karta 1:10 000 Nedladdning (CC BY 4.0)
 link: ftp://download-opendata.lantmateriet.se/
 
+OpenStreetMap contributors, Sweden extract (ODbL 1.0)
+link: https://download.geofabrik.de/europe/sweden-latest.osm.pbf
+usage: address-geocoding source. Parsed at normalize-time via
+  `scripts/fetch_osm.py` into `data/normalized/osm/addresses.parquet`
+  (Stockholm kommun bbox only, ~131 k addresses). ODbL requires attribution
+  "© OpenStreetMap contributors" on any export derived from this.
+
 Stockholms Stads Stadsbyggnadskontor (SBK), Stadskarta (1:4000 - 1:8000)
 metadata: https://dataportalen.stockholm.se/dataportalen/GetMetaDataById?id=0eed76ad-7a89-4da1-9766-e9fcf7b31789
 link: https://dataportalen.stockholm.se/dataportalen/Data/Stadsbyggnadskontoret/Stadskarta_hela_Stockholm.zip

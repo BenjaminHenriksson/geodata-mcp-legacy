@@ -98,6 +98,16 @@ under `data/` is regenerable from the pipeline.
 #    Runs catalog_audit.py + cross_ref_audit.py at the end.
 uv run --with pandas --with pyarrow --with openpyxl \
   python scripts/normalize.py
+
+# 3. OSM addresses (optional but recommended — needed for reliable
+#    composite-address geocoding). Downloads Geofabrik's Sweden extract
+#    (~800 MB one-time) and extracts ~131 k structured addresses for
+#    Stockholm kommun. Uses ~1.5 GB RAM peak; run under a 2 GB cap on
+#    modest hardware:
+#       systemd-run --scope -p MemoryMax=2G -p AllowedCPUs=1 \
+#         python scripts/fetch_osm.py
+#    Output: data/normalized/osm/addresses.parquet (4 MB). Under ODbL —
+#    attribute "© OpenStreetMap contributors" in any derived export.
 ```
 
 Expected output layout and sizes are documented in

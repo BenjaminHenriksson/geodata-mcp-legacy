@@ -28,6 +28,12 @@ ROOT = Path(__file__).resolve().parents[1]
 NAMN_GPKG = ROOT / "data/normalized/sbk/NamnText_point.gpkg"
 ADR_GPKG = ROOT / "data/normalized/sbk/AdressText_point.gpkg"
 ADM_GPKG = ROOT / "data/normalized/sbk/Adm_area.gpkg"
+# OSM-derived structured addresses (street + number → coords). Built at
+# normalize time from the Geofabrik Sweden extract; see scripts/fetch_osm.py.
+# Used as the primary source for composite street+number queries because it's
+# authoritative (the SBK cartographic labels are positioned for rendering,
+# not as an address registry, and have gaps).
+OSM_ADDR_PARQUET = ROOT / "data/normalized/osm/addresses.parquet"
 
 GEOCODABLE_GROUPS = (
     "Stadsdel",
@@ -139,13 +145,68 @@ def _place_matches(
     return matches
 
 
-def _address_matches(
+def _address_matches_osm(
+    conn: duckdb.DuckDBPyConnection, street: str, number: str, *,
+    limit: int,
+) -> list[GeocodeMatch]:
+    """Primary composite-address path — OSM structured `(street, number)`
+    lookup. Fuzzy-matches the street (case-insensitive), exact-matches the
+    number. Returns empty list if no hit; caller falls back to the SBK
+    spatial-pairing path."""
+    if not OSM_ADDR_PARQUET.exists():
+        return []
+    # Threshold tuned to prefer returning nothing over returning the wrong
+    # street. Exact (case-insensitive) matches score 1.0; a typo like
+    # "Drotningatan" vs "Drottninggatan" scores ~0.88 and gets rejected
+    # (user re-types). Cross-street confusion "Drottninggatan" vs
+    # "Drottningholmsvägen" scores ~0.87 — rejected for the same reason.
+    # Legitimate case/space variants ("Elin Falks Gata" vs "Elin Falks
+    # gata") go through lowercase and score 1.0.
+    rows = conn.execute(
+        """
+        WITH cand AS (
+            SELECT street, number, source, x_3011, y_3011,
+                   jaro_winkler_similarity(lower(street), lower(?)) AS sscore,
+                   CASE WHEN lower(street) = lower(?) THEN 1 ELSE 0 END AS exact_match
+            FROM read_parquet(?)
+            WHERE number = ?
+        )
+        SELECT street, number, source, x_3011, y_3011, sscore
+        FROM cand
+        WHERE sscore > 0.92 OR exact_match = 1
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY lower(street)
+            ORDER BY exact_match DESC, sscore DESC, source ASC
+        ) = 1
+        ORDER BY exact_match DESC, sscore DESC
+        LIMIT ?
+        """,
+        [street, street, str(OSM_ADDR_PARQUET), number, limit],
+    ).fetchall()
+
+    matches = []
+    for street_name, num, source, nx, ny, sscore in rows:
+        matches.append(GeocodeMatch(
+            name=f"{street_name} {num}",
+            grupp="Adress",
+            kategori=f"osm {source} street_sim={sscore:.3f}",
+            x_3011=float(nx), y_3011=float(ny),
+            # Strong score: the OSM match is authoritative, not distance-penalized.
+            score=float(sscore),
+            bbox_3011=(float(nx)-30, float(ny)-30, float(nx)+30, float(ny)+30),
+            kind="address",
+        ))
+    return matches
+
+
+def _address_matches_sbk(
     conn: duckdb.DuckDBPyConnection, street: str, number: str, *,
     limit: int, search_radius_m: float = 250.0,
 ) -> list[GeocodeMatch]:
-    """Pair the best street-label points for `street` with the nearest
-    AdressText points whose NAMN equals `number`. Returns one match per
-    distinct pair within `search_radius_m`."""
+    """Fallback: SBK spatial-pairing. Pair the best street-label points for
+    `street` with the nearest AdressText points whose NAMN equals `number`
+    within `search_radius_m`. Fragile because SBK is a cartographic dataset
+    — kept as a backup for addresses OSM doesn't cover."""
     rows = conn.execute(
         f"""
         WITH street_pts AS (
@@ -181,18 +242,29 @@ def _address_matches(
 
     matches = []
     for street_name, num, nx, ny, dist, sscore in rows:
-        # Combined score: street jw-similarity weighted down by distance penalty.
         combined = float(sscore) * max(0.0, 1.0 - (float(dist) / search_radius_m))
         matches.append(GeocodeMatch(
             name=f"{street_name} {num}",
             grupp="Adress",
-            kategori=f"street_sim={sscore:.3f} dist_m={dist:.1f}",
+            kategori=f"sbk street_sim={sscore:.3f} dist_m={dist:.1f} (fallback)",
             x_3011=float(nx), y_3011=float(ny),
             score=combined,
             bbox_3011=(float(nx)-30, float(ny)-30, float(nx)+30, float(ny)+30),
             kind="address",
         ))
     return matches
+
+
+def _address_matches(
+    conn: duckdb.DuckDBPyConnection, street: str, number: str, *,
+    limit: int,
+) -> list[GeocodeMatch]:
+    """Composite street-number geocoder. Prefers OSM structured addresses;
+    falls back to SBK spatial-pairing if OSM has no hit."""
+    hits = _address_matches_osm(conn, street, number, limit=limit)
+    if hits:
+        return hits
+    return _address_matches_sbk(conn, street, number, limit=limit)
 
 
 def geocode(

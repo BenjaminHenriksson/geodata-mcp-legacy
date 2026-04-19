@@ -7210,6 +7210,132 @@
       "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
       "source_url": "https://www.statistikdatabasen.scb.se/pxweb/sv/ssd/START__AM__AM0207__AM0207I/NattDeSoSyss/",
       "retrieved": "2026-04-17"
+    },
+    {
+      "id": "osm_addresses",
+      "name_sv": "OSM-adresser (Stockholm)",
+      "name_en": "OSM addresses (Stockholm)",
+      "description_sv": "Strukturerade adresser (gatunamn + husnummer → EPSG:3011-koordinat) extraherade från OpenStreetMap för Stockholms kommun. Används av geocoder för pålitlig matchning av sammansatta adressfrågor. Innehåller både adresspunkter (noder) och byggnadscentroider (ways).",
+      "description_en": "Structured addresses (street name + house number → EPSG:3011 coord) extracted from OpenStreetMap for Stockholm municipality. Used by the geocoder for reliable composite-address matching. Mixes address nodes and building-footprint centroids.",
+      "source_type": "parquet",
+      "file_path": "data/normalized/osm/addresses.parquet",
+      "crs_epsg": 3011,
+      "geometry_type": "Point",
+      "feature_count": 131399,
+      "coverage": "Stockholm kommun (kommunkod=0180) via WGS84 bbox lon 17.78–18.25, lat 59.20–59.45",
+      "temporal": "snapshot 2026-04-19",
+      "keywords_sv": [
+        "adress",
+        "gata",
+        "husnummer",
+        "geokodning",
+        "osm"
+      ],
+      "keywords_en": [
+        "address",
+        "street",
+        "housenumber",
+        "geocoding",
+        "osm"
+      ],
+      "publisher": "OpenStreetMap contributors",
+      "license": "ODbL 1.0",
+      "source_url": "https://download.geofabrik.de/europe/sweden-latest.osm.pbf",
+      "retrieved": "2026-04-19",
+      "attributes": [
+        {
+          "name": "street",
+          "type": "VARCHAR",
+          "description_sv": "Gatunamn (OSM addr:street).",
+          "description_en": "Street name (OSM addr:street).",
+          "sample_values": [
+            "Drottninggatan",
+            "Sveavägen",
+            "Ringvägen",
+            "Elin Falks gata",
+            "Skrinvägen"
+          ]
+        },
+        {
+          "name": "number",
+          "type": "VARCHAR",
+          "description_sv": "Husnummer med eventuell bokstav (OSM addr:housenumber).",
+          "description_en": "House number, optional letter suffix (OSM addr:housenumber).",
+          "sample_values": [
+            "1",
+            "15",
+            "100",
+            "2A",
+            "18B"
+          ]
+        },
+        {
+          "name": "postcode",
+          "type": "VARCHAR",
+          "description_sv": "Postnummer om angivet (OSM addr:postcode). Kan vara NULL.",
+          "description_en": "Postcode if tagged (OSM addr:postcode). May be NULL.",
+          "sample_values": [
+            "12626",
+            "12932",
+            "115 25"
+          ]
+        },
+        {
+          "name": "city",
+          "type": "VARCHAR",
+          "description_sv": "Ortnamn om angivet (OSM addr:city). Kan vara NULL.",
+          "description_en": "City name if tagged (OSM addr:city). May be NULL.",
+          "sample_values": [
+            "Solna",
+            "Spånga",
+            "Sundbyberg",
+            "Stockholm",
+            "Enskede"
+          ]
+        },
+        {
+          "name": "source",
+          "type": "VARCHAR",
+          "description_sv": "'osm_node' = fristående adresspunkt, 'osm_way_centroid' = centroid av byggnadsfootprint.",
+          "description_en": "'osm_node' = standalone address point, 'osm_way_centroid' = centroid of building footprint.",
+          "sample_values": [
+            "osm_node",
+            "osm_way_centroid"
+          ]
+        },
+        {
+          "name": "osm_id",
+          "type": "BIGINT",
+          "description_sv": "OSM-objektets id. Unik per (source, osm_id).",
+          "description_en": "OSM object id; unique per (source, osm_id).",
+          "sample_values": [
+            "1314052",
+            "6963266",
+            "21761316"
+          ]
+        },
+        {
+          "name": "x_3011",
+          "type": "DOUBLE",
+          "description_sv": "X-koordinat i EPSG:3011.",
+          "description_en": "X coordinate in EPSG:3011.",
+          "sample_values": []
+        },
+        {
+          "name": "y_3011",
+          "type": "DOUBLE",
+          "description_sv": "Y-koordinat i EPSG:3011.",
+          "description_en": "Y coordinate in EPSG:3011.",
+          "sample_values": []
+        },
+        {
+          "name": "geom",
+          "type": "GEOMETRY",
+          "description_sv": "Punktgeometri (EPSG:3011).",
+          "description_en": "Point geometry (EPSG:3011).",
+          "sample_values": []
+        }
+      ]
     }
   ]
 }

@@ -26,6 +26,12 @@ EXPIRED_RETAIN_S = 24 * 60 * 60    # remember expired sessions' logs for 24h
 SESSION_LOG_DIR = Path("/tmp/geodata_sessions")
 SESSION_DB_MEMORY_LIMIT = "256MB"
 SESSION_DB_THREADS = 2
+# DuckDB spills to disk when a query exceeds memory_limit. It defaults to
+# creating `.tmp/` in the process cwd, which under systemd sandbox is the
+# project root (read-only). Pin it to a path inside ReadWritePaths so
+# large ORDER BY / hash-join / aggregate queries don't fail with
+# "Failed to create directory '.tmp'".
+SESSION_DB_TEMP_DIR = Path(__file__).resolve().parents[1] / ".duckdb" / "tmp"
 
 
 @dataclass
@@ -102,6 +108,10 @@ class Session:
         # Cap per-session resource usage so one greedy SQL can't OOM others.
         self.conn.execute(f"SET memory_limit = '{SESSION_DB_MEMORY_LIMIT}'")
         self.conn.execute(f"SET threads = {SESSION_DB_THREADS}")
+        # Spill directory for out-of-memory queries. Must be writable by the
+        # service user; project root is not, under the systemd sandbox.
+        SESSION_DB_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+        self.conn.execute(f"SET temp_directory = '{SESSION_DB_TEMP_DIR}'")
         self.layers: dict[str, LayerMeta] = {}
         self.visible_layers: list[str] = []
         self.history: list[Operation] = []

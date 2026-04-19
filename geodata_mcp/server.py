@@ -40,6 +40,7 @@ from .operations import (
     inspect_location as op_inspect_location,
     inspect_locations as op_inspect_locations,
     list_layers as op_list_layers,
+    reverse_geocode as op_reverse_geocode,
     rename_layer as op_rename_layer,
     rollback as op_rollback,
     set_notes as op_set_notes,
@@ -199,6 +200,41 @@ by `source` to audit what came from where.
 - If the user's bbox / radius / expression yields 0 rows, tell them; don't
   silently proceed with an empty layer.
 - Small rule of thumb: when in doubt, ask before inventing.
+
+## Never guess a place from raw coordinates
+
+**Do not** assert a neighborhood, kommun part, or district based on
+EPSG:3011 numbers. Coordinates like `(154706, 6572108)` do not tell you
+"this is Mariehäll" or "this is Enskede" — getting this wrong makes the
+MCP look broken when it isn't. If you want to name the place a point
+sits in, call **`reverse_geocode(x_3011, y_3011)`** — it returns the
+containing Stadsdel / Distrikt / Kvarter polygons from SBK's
+administrative layer. Cite those names only, never invent them. Same
+rule for `inspect_location` results — state what the tool returned, not
+an inferred neighborhood.
+
+## Fewer, bigger tool calls — claude.ai has per-turn tool-use caps
+
+The web interface imposes a limit on tool calls per message. Long
+"N small calls in a row" workflows will hit it. Prefer:
+
+1. **`load_many([ids])` over repeated `load(id)`.** One call, N datasets.
+2. **`execute_sql` with CTEs** over chains of `filter` → `spatial` →
+   `stats`. A single multi-step CTE is one call; the chain is three.
+3. **Classify all features in one message** when they fit in your
+   context (< ~500). Call `inspect(layer, n=500)` once, reason over the
+   whole result, then one `annotate(layer, {...})` — not a
+   `batch_iterate` loop. Reserve `batch_iterate` for layers in the
+   thousands.
+4. **`annotate` with multiple attributes at once** rather than separate
+   `add_field` calls per attribute.
+5. **`inspect_locations(points=[...])`** over repeated
+   `inspect_location` calls.
+6. **`checkpoint(layers=[...])` with wide scope** over many narrow ones
+   if the work coheres — one rollback covers the set.
+
+Rough heuristic: if a step is expressible as a single SQL query or a
+single batch-shaped tool, use that form.
 
 ## If something goes wrong
 
@@ -1163,6 +1199,34 @@ def batch_iterate(
             columns=columns, batch_size=batch_size,
             cursor=cursor, where=where,
         )
+    except Exception as e:
+        return _error_response(e)
+
+
+@mcp.tool(annotations=_READ_ONLY)
+def reverse_geocode(
+    x_3011: float,
+    y_3011: float,
+    ctx: Context | None = None,
+) -> dict:
+    """Identify the administrative areas that contain an EPSG:3011 point.
+
+    Use this whenever you want to name the neighborhood / district / block a
+    coordinate sits in — **do not guess place names from raw coordinates.**
+    Returns all containing polygons from SBK's `Adm_area` layer
+    (Stadsdel, Stadsdelsnämndsområde, Distrikt, Kvarter, Kommun) plus a
+    convenience `by_kategori` grouping.
+
+    Args:
+        x_3011, y_3011: EPSG:3011 coordinate.
+
+    If the point is outside SBK's coverage, returns empty `containing` with
+    a warning — state that the location is unidentifiable, do not invent.
+    """
+    try:
+        sess = _session(ctx)
+        admin_path = str(ROOT / "data/normalized/sbk/Adm_area.gpkg")
+        return op_reverse_geocode(sess, x_3011, y_3011, admin_path)
     except Exception as e:
         return _error_response(e)
 

@@ -2023,6 +2023,66 @@ def inspect_locations(
     return payload
 
 
+def reverse_geocode(
+    session: Session,
+    x_3011: float,
+    y_3011: float,
+    admin_gpkg_path: str,
+) -> dict:
+    """Given a coordinate in EPSG:3011, return the administrative areas
+    (Stadsdel, Distrikt, Stadsdelsnämndsområde, Kvarter, Kommun) from SBK's
+    Adm_area that contain the point. Intended to kill the temptation to
+    guess neighborhoods from raw coordinates.
+
+    Args:
+        x_3011, y_3011: query point in EPSG:3011.
+        admin_gpkg_path: path to Adm_area.gpkg (injected by the tool wrapper).
+
+    Returns a dict with the containing polygons grouped by KATEGORI.
+    """
+    try:
+        rows = session.conn.execute(
+            """
+            SELECT KATEGORI, NAMN,
+                   ROUND(ST_Area(geom), 0) AS area_m2
+            FROM ST_Read(?)
+            WHERE ST_Contains(geom, ST_Point(?, ?))
+            ORDER BY area_m2 ASC
+            """,
+            [admin_gpkg_path, float(x_3011), float(y_3011)],
+        ).fetchall()
+    except Exception as e:
+        raise OpError(f"reverse_geocode failed: {type(e).__name__}: {e}")
+
+    containing = []
+    for kategori, namn, area in rows:
+        containing.append({
+            "kategori": kategori,
+            "namn": namn,
+            "area_m2": int(area) if area is not None else None,
+        })
+    # Group by kategori for convenience.
+    by_kategori: dict[str, list[dict]] = {}
+    for r in containing:
+        by_kategori.setdefault(r["kategori"] or "_unknown", []).append(
+            {"namn": r["namn"], "area_m2": r["area_m2"]}
+        )
+
+    payload = {
+        "query": {"x_3011": x_3011, "y_3011": y_3011},
+        "containing": containing,
+        "by_kategori": by_kategori,
+    }
+    if not containing:
+        payload["warning"] = (
+            f"no SBK admin polygons contain ({x_3011}, {y_3011}) — either the "
+            "point is outside Stockholm kommun or outside the SBK coverage "
+            "area. Do NOT guess the neighborhood; state that the point is "
+            "unidentifiable from the available data."
+        )
+    return payload
+
+
 def hide_layers(session: Session, layers: list[str] | None = None) -> dict:
     """Remove layers from the viewer's visible list. With `layers=None` hides
     all."""

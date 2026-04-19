@@ -1450,6 +1450,14 @@ def build_http_app() -> object:
         return FileResponse(path, filename=filename)
 
     async def api_layer_geojson(request):
+        """Emit a layer as a GeoJSON FeatureCollection.
+
+        Streams features in chunks rather than building one giant JSON value,
+        which OOMs the 256 MB per-session DuckDB limit for large layers
+        (observed with 79 k buildings). Per-feature JSON is cheap; the
+        aggregate is the problem.
+        """
+        from starlette.responses import StreamingResponse
         sid = request.path_params["session_id"]
         layer = request.path_params["layer"]
         s = REGISTRY.get(sid)
@@ -1459,27 +1467,56 @@ def build_http_app() -> object:
         geom_col = meta.attributes.get("__geom_col__") or ""
         if not geom_col:
             return JSONResponse({"type": "FeatureCollection", "features": []})
-        # Reproject EPSG:3011 → EPSG:4326 at the API boundary, emit GeoJSON.
         cols = [c for c in meta.attributes if not c.startswith("__") and c != geom_col]
         props_struct = ", ".join(f"'{c}', {_qi(c)}" for c in cols) or "'_', NULL"
-        sql = f"""
+
+        # Build the per-feature JSON on the DuckDB side but keep them as
+        # individual rows so the aggregator doesn't hold them all at once.
+        per_feature_sql = f"""
             SELECT json_object(
-                'type', 'FeatureCollection',
-                'features', json_group_array(json_object(
-                    'type', 'Feature',
-                    'properties', json_object({props_struct}),
-                    'geometry', ST_AsGeoJSON(ST_Transform({_qi(geom_col)}, 'EPSG:3011', 'EPSG:4326', true))::JSON
-                ))
-            ) FROM {_qi(layer)}
+                'type', 'Feature',
+                'properties', json_object({props_struct}),
+                'geometry', ST_AsGeoJSON(ST_Transform({_qi(geom_col)}, 'EPSG:3011', 'EPSG:4326', true))::JSON
+            )::VARCHAR AS feature_json
+            FROM {_qi(layer)}
         """
-        try:
-            (payload,) = s.conn.execute(sql).fetchone()
-            return Response(payload, media_type="application/json")
-        except Exception as e:
-            return JSONResponse(
-                {"error": "geojson_failed", "detail": f"{type(e).__name__}: {e}"},
-                status_code=500,
-            )
+        CHUNK = 2000  # features per fetch — keeps per-iteration alloc bounded
+
+        async def stream():
+            try:
+                cur = s.conn.execute(per_feature_sql)
+            except Exception as e:
+                # Can't start streaming a header + error — emit an empty FC.
+                yield ('{"type":"FeatureCollection","features":[],'
+                       '"error":"geojson_query_failed",'
+                       f'"detail":{json.dumps(str(e))}' + '}').encode("utf-8")
+                return
+            yield b'{"type":"FeatureCollection","features":['
+            first = True
+            try:
+                while True:
+                    rows = cur.fetchmany(CHUNK)
+                    if not rows:
+                        break
+                    parts = []
+                    for (fj,) in rows:
+                        if fj is None:
+                            continue
+                        if first:
+                            first = False
+                        else:
+                            parts.append(",")
+                        parts.append(fj)
+                    if parts:
+                        yield ("".join(parts)).encode("utf-8")
+            except Exception as e:
+                # Close the array and include a trailing error sidecar.
+                yield (f'],"error":"geojson_stream_failed",'
+                       f'"detail":{json.dumps(str(e))}' + '}').encode("utf-8")
+                return
+            yield b']}'
+
+        return StreamingResponse(stream(), media_type="application/json")
 
     # FastMCP's http_app provides a /mcp route AND a lifespan that starts the
     # streamable-http session manager. We must (a) include its routes directly

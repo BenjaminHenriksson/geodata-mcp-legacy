@@ -142,6 +142,22 @@ and `sources`. Useful for recording *why* a layer exists ("filtered to
 pre-1940 stone buildings as a proxy for the historical core") so the
 reasoning is recoverable from session state alone.
 
+## Injecting LLM-found data — `source` is mandatory
+
+Every row you inject via `create_layer` must carry a `source` attribute so
+provenance survives filtering, joining, and export. Two ways to provide it:
+
+  - Top-level `source="Booli.se 2026-03 scrape"` — broadcast to every row.
+    Use this when all rows share one origin.
+  - Per-row `source` field in each dict — use when rows come from different
+    origins (some from hitta.se, some from web search, some from the user).
+
+Failing to provide either form returns `missing_arg`. Short, specific
+source strings are the norm ("SL.se timetable 2026-04", "hitta.se manual
+lookup 2026-04-19"), not generic ones like "the internet". When the LLM
+has mixed sources, prefer the per-row form so the user can later filter
+by `source` to audit what came from where.
+
 ## Coordinate reference system
 
 - **All session layers are in EPSG:3011** (SWEREF 99 18 00; Stockholm-local metres).
@@ -748,20 +764,34 @@ def create_layer(
 ) -> dict:
     """Inject LLM-provided data as a new session layer.
 
-    Use this when the LLM brings data that isn't in the catalog — e.g. a
-    manually curated lookup table, a transcription of external research, a
-    simulated result — to join with catalog layers. The data is materialized
-    in the session's DuckDB instance so all other tools (filter, spatial,
-    stats, execute_sql, sources) can use it.
+    Use this when you bring data that isn't in the catalog — e.g. a manually
+    curated lookup table, a transcription of external research, a simulated
+    result — to join with catalog layers. The data is materialized in the
+    session's DuckDB instance so all other tools (filter, spatial, stats,
+    execute_sql, sources) can use it.
+
+    **`source` is mandatory** — every row of the resulting layer carries a
+    `source` attribute so the origin survives filtering, joining, and
+    export. You can provide provenance two ways:
+
+      - Top-level `source="Booli.se 2026-03 scrape"` — broadcast to every
+        row. Use when all rows share one origin.
+      - Per-row `source` field inside each dict — use when rows come from
+        different origins (some from hitta.se, some from web search). The
+        top-level `source` then fills gaps for rows that omit it.
+
+    The call fails if neither form is provided. Short, specific source
+    strings are best ("SL.se timetable 2026-04", "manual count 2026-04-19"),
+    not generic ones like "the internet" or "web search".
 
     Args:
         name: Desired layer name. Collisions are suffixed (`_2`, `_3`, …).
         data: Up to 1,000 rows. List of dicts; each dict is one row with
               identical keys. Values may be any JSON-serializable scalar.
-        source: Short free-text description of where you got this data
-                (e.g. "Booli.se 2026-03 scrape", "manual count of tram stops
-                from SL.se timetable"). Stored in provenance as
-                `llm_source_description` and always marked `llm_sourced=True`.
+              A `source` key on each dict is preserved; otherwise the
+              top-level `source` is auto-added.
+        source: Required unless every row already has its own `source`.
+                Short free-text description of where you got this data.
         geometry_column: If one of the columns contains WKT strings (e.g.
                          "POINT(18.07 59.33)" or "POLYGON((…))"), name it here.
                          It'll be parsed and reprojected to EPSG:3011.

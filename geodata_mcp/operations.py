@@ -802,11 +802,19 @@ def create_layer(
 ) -> LayerMeta:
     """Inject LLM-provided data as a new session layer.
 
+    A `source` attribute is always present on every row of the resulting
+    layer so provenance survives filtering, joining, and export. Per-row
+    `source` values in `data` win; otherwise the top-level `source` arg is
+    broadcast to every row. One or the other MUST be supplied.
+
     Args:
         name: Desired layer name (may be suffixed if it collides).
         data: List of dicts. Each dict = one row. All rows should share keys.
-        source: Free-text description of where the LLM got this data (required
-                for meaningful provenance). Stored as `llm_source_description`.
+              If a row has a `source` field, it is preserved (per-row
+              provenance — e.g. mixing hitta.se + booli.se entries); if it
+              doesn't, the row gets the top-level `source` value.
+        source: Free-text description of where the data came from (required
+                unless every row already carries its own `source`).
         geometry_column: If set, this column in each row contains WKT geometry
                          that will be parsed and reprojected to EPSG:3011.
         crs: EPSG code of the input geometry. Default 'EPSG:4326' (lng/lat).
@@ -822,6 +830,30 @@ def create_layer(
         import pyarrow as pa
     except ImportError:
         raise OpError("pyarrow is required for create_layer but not installed")
+
+    # Provenance guarantee: every row gets a `source` string.
+    # Acceptable inputs:
+    #   (1) top-level `source="..."` and no `source` in any row → broadcast
+    #   (2) per-row `source` on every row → use as-is
+    #   (3) mix — per-row wins, top-level fills the gaps
+    #   (4) neither → OpError (cannot inject data with no provenance)
+    any_row_has_source = any("source" in r for r in data)
+    if not source and not any_row_has_source:
+        raise OpError(
+            "`source` is required — either pass a top-level source='<where this "
+            "came from>' string, or include a 'source' field in every row. "
+            "Every injected row must carry provenance so downstream filters/joins "
+            "preserve the origin."
+        )
+    # Broadcast / fill. Mutate the caller's dict entries in place — simpler
+    # than reconstructing the list.
+    filled = []
+    for r in data:
+        row = dict(r)
+        if row.get("source") in (None, ""):
+            row["source"] = source or ""
+        filled.append(row)
+    data = filled
 
     # Build an Arrow table. from_pylist auto-infers types column by column.
     try:

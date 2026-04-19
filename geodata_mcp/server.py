@@ -1363,6 +1363,54 @@ def _md_cell(v) -> str:
 
 # ---------- HTTP / viewer routes (added when run with --http) ----------
 
+class OAuthAuthMiddleware:
+    """Guards the MCP protocol path (`/mcp/*`) with bearer auth. Accepts:
+      - OAuth access tokens issued by our /oauth/token endpoint
+      - The legacy GEODATA_MCP_TOKEN env var (for Claude Code CLI back-compat)
+    On missing/invalid token returns 401 with WWW-Authenticate pointing at
+    the RFC 9728 resource metadata so claude.ai discovers the OAuth flow.
+
+    Public paths (everything else — /oauth/*, /.well-known/*, /view/*,
+    /api/*, /static/*, /exports/*) pass through unauthenticated. Caddy no
+    longer does a bearer check on /mcp; we handle it here so OAuth tokens
+    and the shared bearer can coexist.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        path = scope.get("path", "")
+        if not (path == "/mcp" or path.startswith("/mcp/")):
+            return await self.app(scope, receive, send)
+
+        from . import oauth as oauth_mod
+        from starlette.requests import Request as _Req
+        headers = {k.decode().lower(): v.decode()
+                   for k, v in scope.get("headers", [])}
+        client = oauth_mod.validate_bearer(headers.get("authorization"))
+        if client is None:
+            # Synthesize a 401 with WWW-Authenticate.
+            req = _Req(scope)
+            challenge = oauth_mod.www_authenticate_header(req)
+            from starlette.responses import JSONResponse as _JR
+            resp = _JR(
+                {"error": "invalid_token",
+                 "error_description": "missing or invalid bearer token"},
+                status_code=401,
+                headers={"WWW-Authenticate": challenge},
+            )
+            return await resp(scope, receive, send)
+        # Pass the authenticated caller downstream (for logging / auditing).
+        scope = dict(scope)
+        scope.setdefault("state", {})
+        if isinstance(scope.get("state"), dict):
+            scope["state"]["mcp_client"] = client
+        return await self.app(scope, receive, send)
+
+
 class RateLimitMiddleware:
     """Token-bucket rate limiter per client IP. Applies to all routes except
     /static/*. Generous defaults — this is belt-and-braces, not a production DDoS guard."""
@@ -1553,8 +1601,11 @@ def build_http_app() -> object:
     # (Mount double-prefixes the path) and (b) propagate its lifespan.
     mcp_app = mcp.http_app(transport="http")
 
+    from . import oauth as oauth_mod
+
     routes = [
         *mcp_app.routes,
+        *oauth_mod.routes(),
         Route("/view/{session_id}", view_index),
         Route("/api/{session_id}/visible_layers", api_visible),
         Route("/api/{session_id}/version", api_version),
@@ -1563,6 +1614,7 @@ def build_http_app() -> object:
         Mount("/static", StaticFiles(directory=str(viewer_dir)), name="static"),
     ]
     app = Starlette(routes=routes, lifespan=mcp_app.router.lifespan_context)
+    app = OAuthAuthMiddleware(app)
     # Wrap with a simple per-IP token bucket (120 req/min, burst 40).
     return RateLimitMiddleware(app)
 

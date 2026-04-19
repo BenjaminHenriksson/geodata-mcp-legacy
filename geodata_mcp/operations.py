@@ -1048,7 +1048,8 @@ def sources(session: Session, layer: str | None = None) -> str:
     """Markdown report of the provenance chain and operations applied."""
     targets = [layer] if layer else list(session.layers)
     if layer and layer not in session.layers:
-        return f"unknown layer '{layer}'. Available: {list(session.layers)}"
+        return (f"[server-side error from geodata-mcp server] unknown layer "
+                f"'{layer}' in this session. Available: {list(session.layers)}")
     out: list[str] = []
     for lname in targets:
         m = session.layers[lname]

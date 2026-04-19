@@ -186,11 +186,21 @@ reasoning is recoverable from session state alone.
 
 ## If something goes wrong
 
-Every error response carries `error` + `detail`. Common codes:
+Every error response carries `error`, `detail`, and `origin` fields — plus
+`detail` is prefixed with `[server-side]`. **Treat these as coming from
+the MCP server's host, not your local machine.** If you see
+"Permission denied" / "Failed to create directory" / any path-related
+error, do NOT try to mkdir, chmod, or inspect paths on the client
+filesystem — those files live on a different machine. Surface the error
+to the user verbatim and ask how to proceed.
+
+Common codes:
 - `unknown_dataset` — check `search_data()` first
 - `sql_rejected` — validator blocked the SQL; `detail` names the rule
 - `sql_failed` — DuckDB execution error; check column names / types
 - `op_failed` — generic op error; `detail` explains
+- `missing_arg` / `too_many_points` / `unsupported_operation` — client-input
+  shape problems
 - `session_expired` — idle > 30 min; `replay` carries the operation log
 """
 
@@ -238,15 +248,35 @@ def _session(ctx: Context | None) -> Session:
     return REGISTRY.get_or_create(sid or "default")
 
 
+# Stamp every error with a marker that identifies it as coming from the MCP
+# server (remote) rather than the client's local environment. This prevents
+# client LLMs from misdiagnosing e.g. "Permission denied" as a local
+# filesystem issue and trying to mkdir/chmod on their own host.
+_SERVER_ORIGIN = "geodata-mcp server (remote host)"
+_ERR_PREFIX = "[server-side] "
+
+
+def _server_error(kind: str, detail: str, **extra) -> dict:
+    payload = {
+        "error": kind,
+        "detail": detail if detail.startswith(_ERR_PREFIX) else _ERR_PREFIX + detail,
+        "origin": _SERVER_ORIGIN,
+        "note": "This error originated inside the MCP server, not on the "
+                "client/local machine. Do not try to mkdir/chmod/debug paths "
+                "locally — any filesystem references are on the server's host.",
+    }
+    payload.update(extra)
+    return payload
+
+
 def _error_response(e: Exception) -> dict:
     if isinstance(e, SessionExpired):
-        return {"error": "session_expired", "detail": str(e),
-                "replay": e.replay_info}
+        return _server_error("session_expired", str(e), replay=e.replay_info)
     if isinstance(e, SqlError):
-        return {"error": "sql_rejected", "detail": str(e)}
+        return _server_error("sql_rejected", str(e))
     if isinstance(e, OpError) or isinstance(e, LoadError):
-        return {"error": "op_failed", "detail": str(e)}
-    return {"error": type(e).__name__, "detail": str(e)}
+        return _server_error("op_failed", str(e))
+    return _server_error(type(e).__name__, str(e))
 
 
 # ---------- helpers ----------
@@ -353,11 +383,12 @@ def describe_dataset(dataset_id: str) -> dict:
     """
     entry = CATALOG.get(dataset_id)
     if entry is None:
-        return {
-            "error": "unknown_dataset",
-            "dataset_id": dataset_id,
-            "hint": "call search_data() to list datasets — id spelling matters",
-        }
+        return _server_error(
+            "unknown_dataset",
+            f"dataset_id '{dataset_id}' is not in the catalog on this server.",
+            dataset_id=dataset_id,
+            hint="call search_data() to list datasets — id spelling matters",
+        )
     return _dataset_summary(entry, verbose=True)
 
 
@@ -430,8 +461,12 @@ def load(
     """
     entry = CATALOG.get(dataset_id)
     if entry is None:
-        return {"error": "unknown_dataset", "dataset_id": dataset_id,
-                "hint": "Call search_data() to list available datasets."}
+        return _server_error(
+            "unknown_dataset",
+            f"dataset_id '{dataset_id}' is not in the catalog on this server.",
+            dataset_id=dataset_id,
+            hint="Call search_data() to list available datasets.",
+        )
     bbox_tuple = tuple(bbox_3011) if bbox_3011 and len(bbox_3011) == 4 else None
     try:
         sess = _session(ctx)
@@ -547,11 +582,11 @@ def spatial(
         sess = _session(ctx)
         if operation == "clip":
             if not layer or not by_layer:
-                return {"error": "missing_arg", "detail": "clip requires `layer` and `by_layer`."}
+                return _server_error("missing_arg", "clip requires `layer` and `by_layer`.")
             meta = spatial_clip(sess, layer, by_layer, result_name=result_name)
         elif operation == "select_by_location":
             if not layer or not by_layer:
-                return {"error": "missing_arg", "detail": "select_by_location requires `layer` and `by_layer`."}
+                return _server_error("missing_arg", "select_by_location requires `layer` and `by_layer`.")
             meta = spatial_select_by_location(
                 sess, layer, by_layer,
                 predicate=predicate,
@@ -560,27 +595,31 @@ def spatial(
             )
         elif operation == "intersect":
             if not a_layer or not b_layer:
-                return {"error": "missing_arg", "detail": "intersect requires `a_layer` and `b_layer`."}
+                return _server_error("missing_arg", "intersect requires `a_layer` and `b_layer`.")
             meta = spatial_intersect(sess, a_layer, b_layer, result_name=result_name)
         elif operation == "buffer":
             if not layer or distance_m is None:
-                return {"error": "missing_arg", "detail": "buffer requires `layer` and `distance_m`."}
+                return _server_error("missing_arg", "buffer requires `layer` and `distance_m`.")
             meta = spatial_buffer(sess, layer, float(distance_m), result_name=result_name)
         elif operation == "centroid":
             if not layer:
-                return {"error": "missing_arg", "detail": "centroid requires `layer`."}
+                return _server_error("missing_arg", "centroid requires `layer`.")
             meta = spatial_centroid(sess, layer, result_name=result_name)
         elif operation == "dissolve":
             if not layer:
-                return {"error": "missing_arg", "detail": "dissolve requires `layer`."}
+                return _server_error("missing_arg", "dissolve requires `layer`.")
             meta = spatial_dissolve(sess, layer, by_columns=by_columns, result_name=result_name)
         elif operation == "convex_hull":
             if not layer:
-                return {"error": "missing_arg", "detail": "convex_hull requires `layer`."}
+                return _server_error("missing_arg", "convex_hull requires `layer`.")
             meta = spatial_convex_hull(sess, layer, aggregate=aggregate, result_name=result_name)
         else:
-            return {"error": "unsupported_operation", "operation": operation,
-                    "supported": list(SpatialOp.__args__)}
+            return _server_error(
+                "unsupported_operation",
+                f"operation '{operation}' is not supported by the server.",
+                operation=operation,
+                supported=list(SpatialOp.__args__),
+            )
     except Exception as e:
         return _error_response(e)
     return _layer_summary(sess, meta.name)
@@ -609,7 +648,7 @@ def stats(
     try:
         return op_stats(_session(ctx), layer, columns=columns, group_by=group_by, limit=limit)
     except Exception as e:
-        return f"error: {e}"
+        return f"[server-side error from {_SERVER_ORIGIN}] {type(e).__name__}: {e}"
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
@@ -652,11 +691,11 @@ def execute_sql(
             geometry_column=geometry_column,
         )
     except SqlError as e:
-        return {"error": "sql_rejected", "detail": str(e)}
+        return _server_error("sql_rejected", str(e))
     except SessionExpired as e:
         return _error_response(e)
     except OpError as e:
-        return {"error": "sql_failed", "detail": str(e)}
+        return _server_error("sql_failed", str(e))
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
@@ -764,10 +803,11 @@ def inspect(
     try:
         sess = _session(ctx)
     except SessionExpired as e:
-        return f"error: {e}"
+        return f"[server-side error from {_SERVER_ORIGIN}] {e}"
     meta = sess.layers.get(layer)
     if meta is None:
-        return f"error: unknown layer '{layer}'. Available: {list(sess.layers)}"
+        return (f"[server-side error from {_SERVER_ORIGIN}] unknown layer "
+                f"'{layer}' in this session. Available: {list(sess.layers)}")
 
     cap = 10 if include_geometry else 200
     n = max(1, min(int(n), cap))
@@ -786,7 +826,8 @@ def inspect(
     where_sql = ""
     if where:
         if ";" in where:
-            return "error: WHERE expression cannot contain ';'"
+            return (f"[server-side error from {_SERVER_ORIGIN}] "
+                    "WHERE expression cannot contain ';'")
         where_sql = f" WHERE {where}"
     sql = (
         f"SELECT {', '.join(select_cols)} FROM {_qi(layer)}"
@@ -796,7 +837,7 @@ def inspect(
         rows = sess.conn.execute(sql).fetchall()
         col_names = [d[0] for d in sess.conn.description]
     except Exception as e:
-        return f"error: {type(e).__name__}: {e}"
+        return f"[server-side error from {_SERVER_ORIGIN}] {type(e).__name__}: {e}"
 
     if not rows:
         return f"(no rows; {meta.feature_count} in layer)"
@@ -1032,8 +1073,10 @@ def batch_iterate(
     try:
         sess = _session(ctx)
         if cursor is None and not layer:
-            return {"error": "missing_arg",
-                    "detail": "first call requires `layer`; subsequent calls use `cursor`."}
+            return _server_error(
+                "missing_arg",
+                "first call requires `layer`; subsequent calls use `cursor`.",
+            )
         return op_batch_iterate(
             sess, layer or "",  # layer is required for the first call
             columns=columns, batch_size=batch_size,
@@ -1107,8 +1150,10 @@ def inspect_locations(
     try:
         sess = _session(ctx)
         if len(points) > 500:
-            return {"error": "too_many_points",
-                    "detail": f"got {len(points)}, cap is 500. Batch into smaller calls."}
+            return _server_error(
+                "too_many_points",
+                f"got {len(points)}, cap is 500. Batch into smaller calls.",
+            )
         return op_inspect_locations(
             sess, points,
             radius_m=radius_m, layers=layers,

@@ -239,26 +239,15 @@ def normalize_scb() -> dict:
         # NULL elsewhere. The raw region column stays intact for provenance.
         is_deso_mask = df["region_kind"] == "deso"
         df["desokod"] = df["region_code"].where(is_deso_mask, None)
-        # 2018 → 2025 bridge. If the DeSO code is already a 2025 code (no
-        # entry in the split table) or unchanged since 2018, desokod_2025
-        # equals desokod.
-        def _bridge(code):
-            if code is None:
-                return None
-            return bridge_2018_2025.get(code, code)
-        df["desokod_2025"] = df["desokod"].apply(_bridge)
-        # RegSO / kommun lookup via desokod.
-        def _regso(code, field):
-            if code is None:
-                return None
-            entry = regso_map.get(code)
-            if entry is None:
-                return None
-            return entry.get(field)
-        df["regsokod"]    = df["desokod"].apply(lambda c: _regso(c, "regsokod"))
-        df["regso_name"]  = df["desokod"].apply(lambda c: _regso(c, "regso_name"))
-        df["kommunkod"]   = df["desokod"].apply(lambda c: _regso(c, "kommunkod"))
-        df["kommun_name"] = df["desokod"].apply(lambda c: _regso(c, "kommun_name"))
+        # Vectorized lookups via pandas Series.map. Unchanged DeSO codes
+        # fall through via the fillna for desokod_2025; regso lookups
+        # return NaN when the code isn't in the mapping and that's the
+        # desired NULL.
+        df["desokod_2025"] = df["desokod"].map(bridge_2018_2025).fillna(df["desokod"])
+        for field in ("regsokod", "regso_name", "kommunkod", "kommun_name"):
+            df[field] = df["desokod"].map(
+                {k: v[field] for k, v in regso_map.items()}
+            )
 
         # Some SCB tables publish duplicate rows for the same dimension keys
         # (one with a suppressed/NaN value, one with the real value). Collapse

@@ -104,33 +104,44 @@ def _geom_col(meta: LayerMeta) -> str:
     return g
 
 
-def _no_semicolon(s: str, arg: str) -> None:
-    """Legacy guard renamed to delegate to the parser-aware version. Kept as
-    a name because several callers reference it; the implementation is
-    sqlglot-based so semicolons inside quoted string literals no longer
-    false-trigger."""
-    # Late import to avoid circular defs — sqlglot is already loaded at
-    # module top, so this is effectively a no-op lookup.
-    _assert_predicate(s, arg)
+NUMERIC_SQL_TYPE_PREFIXES = (
+    "INTEGER", "BIGINT", "DOUBLE", "FLOAT", "REAL", "DECIMAL",
+    "HUGEINT", "UHUGEINT", "TINYINT", "SMALLINT",
+    "UINTEGER", "UBIGINT", "USMALLINT", "UTINYINT",
+)
+
+
+def is_numeric_sql_type(t: str | None) -> bool:
+    """Treat DuckDB type strings as numeric if their upper-cased form starts
+    with any of `NUMERIC_SQL_TYPE_PREFIXES`. Used by quick_stats + stats."""
+    if not t:
+        return False
+    u = t.upper()
+    return any(u.startswith(p) for p in NUMERIC_SQL_TYPE_PREFIXES)
 
 
 def _assert_predicate(s: str, arg: str) -> None:
-    """Parse `s` as a SQL predicate (WHERE-clause shape). Accept only
-    single-statement, whole-parse inputs. Lets expressions contain
-    literal `;` inside quoted strings, which the earlier substring ban
-    rejected spuriously."""
-    if s is None or s == "":
+    """Parse `s` as a SQL predicate/scalar expression. Rejects multi-statement
+    input, which is how we prevent SQL injection via the WHERE / expression /
+    ORDER BY args. Literal `;` inside quoted strings passes — only a real
+    statement separator fails. Shared by filter/update_field/add_field/
+    top_n/baseline_stats/classify/batch_iterate's where arg."""
+    if not s:
         return
     try:
         stmts = sqlglot.parse(f"SELECT 1 FROM _t WHERE ({s})", read="duckdb")
     except sqlglot.errors.ParseError as e:
-        raise OpError(f"`{arg}` is not a valid SQL predicate: {e}")
+        raise OpError(f"`{arg}` is not a valid SQL expression: {e}")
     stmts = [x for x in stmts if x is not None]
     if len(stmts) != 1:
         raise OpError(
-            f"`{arg}` must be a single SQL predicate (got {len(stmts)} "
-            "statements after parsing)"
+            f"`{arg}` must be a single SQL expression "
+            f"(got {len(stmts)} statements after parsing)"
         )
+
+
+_no_semicolon = _assert_predicate  # back-compat alias for existing callers
+_assert_single_sql_expression = _assert_predicate  # ditto
 
 
 # ---------- filter ----------
@@ -468,12 +479,8 @@ def stats(
     schema = {k: v for k, v in meta.attributes.items() if not k.startswith("__") and k != geom_col}
 
     # Derive default columns: all numeric columns if none given
-    numeric_types = {"INTEGER", "BIGINT", "DOUBLE", "FLOAT", "REAL", "DECIMAL", "HUGEINT", "TINYINT", "SMALLINT"}
-    def is_numeric(t: str) -> bool:
-        return any(t.upper().startswith(n) for n in numeric_types)
-
     if columns is None:
-        columns = [c for c, t in schema.items() if is_numeric(t)]
+        columns = [c for c, t in schema.items() if is_numeric_sql_type(t)]
     for c in (columns or []) + (group_by or []):
         if c not in schema:
             raise OpError(f"column '{c}' not in layer '{layer}'")
@@ -488,7 +495,7 @@ def stats(
     headers.append("n")
     for c in columns or []:
         qc = _quote_ident(c)
-        if is_numeric(schema[c]):
+        if is_numeric_sql_type(schema[c]):
             select_bits += [
                 f"MIN({qc}) AS {_quote_ident(c + '_min')}",
                 f"AVG({qc}) AS {_quote_ident(c + '_avg')}",
@@ -1636,13 +1643,10 @@ def _normalize_field_type(t: str) -> str:
 
 
 def _sanity_check_expr(expr: str) -> None:
-    """Expressions passed to add/update_field are inserted into CTAS/UPDATE
-    SQL. Parse to reject multi-statement input (literal ';' inside quoted
-    strings passes); then run the full sqlglot validator from execute_sql
-    to catch file readers / URLs / abs-paths / big numeric literals."""
-    _assert_predicate(expr, "expr")
-    # Validate by embedding. Any issue the execute_sql validator would catch
-    # is caught here too.
+    """Validate an expression destined for CTAS / UPDATE. `_validate_sql`
+    parses the embedded SELECT, rejects multi-statement input, and enforces
+    the execute_sql denylist (file readers / URLs / abs-paths / big
+    numeric literals)."""
     _validate_sql(f"SELECT ({expr}) AS _x")
 
 
@@ -2569,26 +2573,4 @@ def export_and_cite(
     return {**exported, "citations_markdown": citations}
 
 
-# ----- shared helpers -----
-
-def _assert_single_sql_expression(s: str, arg: str) -> None:
-    """Reject strings that parse as multiple SQL statements. Replaces the
-    naïve `';' in s` substring check so expressions with literal
-    semicolons inside quoted strings stop triggering false positives.
-    Semantics: the argument must parse as a single scalar expression
-    or predicate when embedded into `SELECT ... FROM _t WHERE (...)`.
-    """
-    if s is None:
-        return
-    try:
-        stmts = sqlglot.parse(
-            f"SELECT 1 FROM _t WHERE ({s})", read="duckdb"
-        )
-    except sqlglot.errors.ParseError as e:
-        raise OpError(f"`{arg}` is not a valid SQL expression: {e}")
-    stmts = [x for x in stmts if x is not None]
-    if len(stmts) != 1:
-        raise OpError(
-            f"`{arg}` must be a single SQL expression (got {len(stmts)} "
-            "statements after parsing)"
-        )
+# _assert_single_sql_expression aliased to _assert_predicate at module top.

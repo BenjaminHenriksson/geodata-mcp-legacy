@@ -341,31 +341,21 @@ def _pick(*vals):
 
 
 def _attach_hint(out: dict, sess: Session, layer: str) -> dict:
-    """Set `out["hint"]` from `_checkpoint_hint_for_layer`, dropping the key
-    entirely when no covering checkpoint exists (quieter responses)."""
-    h = _checkpoint_hint_for_layer(sess, layer)
-    if h:
-        out["hint"] = h
+    """Attach a reversibility `hint` to `out` only when a covering checkpoint
+    exists for `layer`. Otherwise ensure no stale `hint` sticks around —
+    the LLM can still see `reversible` / `covering_checkpoints` fields
+    if it wants to reason about checkpoint state explicitly."""
+    from .operations import _reversible_for_layer
+    covering = _reversible_for_layer(sess, layer)
+    if covering:
+        n = covering[0]
+        out["hint"] = (
+            f"Mutation on '{layer}' is reversible via checkpoint(s) {covering} — "
+            f"call rollback('{n}') to undo, commit('{n}') to make permanent."
+        )
     else:
         out.pop("hint", None)
     return out
-
-
-def _checkpoint_hint_for_layer(sess: Session, layer: str) -> str | None:
-    """Return a reversibility hint ONLY when a covering checkpoint exists.
-    Returns None otherwise — callers should drop the field so responses
-    aren't noisily reminding the LLM to checkpoint on every mutation.
-    The LLM can inspect `reversible` / `covering_checkpoints` in the
-    response if it wants to know explicitly."""
-    from .operations import _reversible_for_layer
-    covering = _reversible_for_layer(sess, layer)
-    if not covering:
-        return None
-    n = covering[0]
-    return (
-        f"Mutation on '{layer}' is reversible via checkpoint(s) {covering} — "
-        f"call rollback('{n}') to undo, commit('{n}') to make permanent."
-    )
 
 
 def _session(ctx: Context | None) -> Session:
@@ -461,14 +451,11 @@ def _quick_stats_and_sample(sess: Session, name: str, m) -> dict:
         return {}
     geom_col = m.attributes.get("__geom_col__") or ""
     attr_cols = [c for c in cols if c != geom_col]
-    numeric_types = {"INTEGER", "BIGINT", "DOUBLE", "FLOAT", "REAL",
-                     "DECIMAL", "HUGEINT", "TINYINT", "SMALLINT",
-                     "UINTEGER", "UBIGINT", "USMALLINT", "UTINYINT"}
+    from .operations import is_numeric_sql_type
     out: dict = {}
     qname = _qi(name)
     # Per-numeric quick stats in one SELECT.
-    numeric_cols = [c for c in attr_cols
-                    if any(m.attributes[c].upper().startswith(t) for t in numeric_types)]
+    numeric_cols = [c for c in attr_cols if is_numeric_sql_type(m.attributes[c])]
     if numeric_cols:
         parts = []
         for c in numeric_cols:
@@ -1203,20 +1190,11 @@ def inspect(
 
     where_sql = ""
     if where:
-        # Parser-aware single-statement check — literal ';' inside quoted
-        # strings no longer false-triggers.
+        from .operations import _assert_predicate as _p, OpError as _OE
         try:
-            import sqlglot
-            stmts = [s for s in sqlglot.parse(
-                f"SELECT 1 FROM _t WHERE ({where})", read="duckdb"
-            ) if s is not None]
-        except Exception as e:
-            return (f"[server-side error from {_SERVER_ORIGIN}] "
-                    f"WHERE is not a valid SQL predicate: {e}")
-        if len(stmts) != 1:
-            return (f"[server-side error from {_SERVER_ORIGIN}] "
-                    f"WHERE must be a single predicate "
-                    f"(got {len(stmts)} statements)")
+            _p(where, "where")
+        except _OE as e:
+            return f"[server-side error from {_SERVER_ORIGIN}] {e}"
         where_sql = f" WHERE {where}"
     sql = (
         f"SELECT {', '.join(select_cols)} FROM {_qi(layer)}"
@@ -1297,10 +1275,19 @@ def show(
     # Update styles — merge with any prior style (so you can call show twice
     # without losing earlier styling), keep only entries whose layer is
     # actually visible now.
+    VALID_SCALES = {"categorical", "linear"}
     if style:
         for lname, spec in style.items():
-            if lname in sess.layers:
-                sess.visible_styles[lname] = spec
+            if lname not in sess.layers:
+                continue
+            scale = (spec or {}).get("scale")
+            if scale is not None and scale not in VALID_SCALES:
+                return _server_error(
+                    "invalid_style",
+                    f"style[{lname!r}].scale must be one of {sorted(VALID_SCALES)}, "
+                    f"got {scale!r}",
+                )
+            sess.visible_styles[lname] = spec
     # Drop styles for layers that are no longer visible.
     sess.visible_styles = {k: v for k, v in sess.visible_styles.items()
                             if k in sess.visible_layers}

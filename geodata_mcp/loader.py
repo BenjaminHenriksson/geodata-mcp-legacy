@@ -94,20 +94,13 @@ def load_dataset(
     if not src.exists():
         raise LoadError(f"Dataset file missing: {dataset.file_path}")
     if where:
-        # Parse-level check: reject only if the predicate is actually
-        # multi-statement, allow literal ';' inside quoted strings.
+        # Parser-aware single-statement check (literal ';' inside strings OK).
+        # Late import to avoid a cycle: operations imports loader.
+        from .operations import _assert_predicate as _p
         try:
-            import sqlglot
-            stmts = [s for s in sqlglot.parse(
-                f"SELECT 1 FROM _t WHERE ({where})", read="duckdb"
-            ) if s is not None]
+            _p(where, "where")
         except Exception as e:
-            raise LoadError(f"`where` is not a valid SQL predicate: {e}")
-        if len(stmts) != 1:
-            raise LoadError(
-                f"`where` must be a single SQL predicate "
-                f"(got {len(stmts)} statements)"
-            )
+            raise LoadError(str(e))
 
     name = session.unique_layer_name(layer_name or dataset.id)
     qname = _quote_ident(name)

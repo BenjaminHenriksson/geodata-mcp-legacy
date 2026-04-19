@@ -66,18 +66,32 @@ class DatasetEntry:
 
 def _entry_from_dict(d: dict) -> DatasetEntry:
     attrs = [AttributeSpec(**a) for a in d.get("attributes", [])]
-    return DatasetEntry(
-        id=d["id"], name_sv=d["name_sv"], name_en=d["name_en"],
-        description_sv=d["description_sv"], description_en=d["description_en"],
-        source_type=d["source_type"], file_path=d["file_path"],
-        layer=d.get("layer"), crs_epsg=d.get("crs_epsg"),
-        geometry_type=d.get("geometry_type"), feature_count=d.get("feature_count"),
-        coverage=d["coverage"], temporal=d["temporal"],
-        keywords_sv=d.get("keywords_sv", []), keywords_en=d.get("keywords_en", []),
-        attributes=attrs,
-        publisher=d["publisher"], license=d["license"], license_url=d["license_url"],
-        source_url=d["source_url"], retrieved=d["retrieved"],
-    )
+    # Required fields — explicit so a typo at least fails loudly. Optional
+    # metadata uses .get() so adding a dataset with missing extras doesn't
+    # crash-loop the service (a hardening lesson from osm_addresses'
+    # missing license_url).
+    try:
+        return DatasetEntry(
+            id=d["id"], name_sv=d["name_sv"], name_en=d["name_en"],
+            description_sv=d["description_sv"], description_en=d["description_en"],
+            source_type=d["source_type"], file_path=d["file_path"],
+            layer=d.get("layer"), crs_epsg=d.get("crs_epsg"),
+            geometry_type=d.get("geometry_type"), feature_count=d.get("feature_count"),
+            coverage=d.get("coverage", ""), temporal=d.get("temporal", ""),
+            keywords_sv=d.get("keywords_sv", []), keywords_en=d.get("keywords_en", []),
+            attributes=attrs,
+            publisher=d.get("publisher", ""),
+            license=d.get("license", ""),
+            license_url=d.get("license_url", ""),
+            source_url=d.get("source_url", ""),
+            retrieved=d.get("retrieved", ""),
+        )
+    except KeyError as e:
+        raise ValueError(
+            f"catalog entry {d.get('id', '?')!r} is missing required field {e}. "
+            f"Required: id, name_sv, name_en, description_sv, description_en, "
+            f"source_type, file_path."
+        ) from e
 
 
 class Catalog:

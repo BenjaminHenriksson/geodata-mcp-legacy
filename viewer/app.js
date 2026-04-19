@@ -181,14 +181,26 @@ function addLayer(name, fc, color) {
   return ids;
 }
 
-// Sort drawn data-layers: largest (background polygons) at the bottom,
-// smallest (points / buildings) on top. Uses rough bbox area as proxy.
+// Draw order: polygon fills at the bottom (largest bbox first), then polygon
+// outlines, then lines, then points on top. This guarantees that e.g. a
+// city-wide address point layer stays above a Södermalm polygon's fill, so
+// the point is both visible and clickable through queryRenderedFeatures.
 function reorderLayers() {
   const names = Object.keys(dataLayers);
-  names.sort((a, b) => (dataLayers[b].areaEst ?? 0) - (dataLayers[a].areaEst ?? 0));
-  // MapLibre draws layers in the order they're added; moveLayer to bring to top.
-  for (const n of names) {
-    for (const id of dataLayers[n].layerIds) {
+  // Within each sublayer tier, draw larger-bbox layers first so smaller ones
+  // sit on top of same-kind neighbours.
+  const byArea = [...names].sort(
+    (a, b) => (dataLayers[b].areaEst ?? 0) - (dataLayers[a].areaEst ?? 0)
+  );
+  const tiers = [
+    (n) => `${n}-fill`,
+    (n) => `${n}-outline`,
+    (n) => `${n}-line`,
+    (n) => `${n}-pt`,
+  ];
+  for (const makeId of tiers) {
+    for (const n of byArea) {
+      const id = makeId(n);
       if (map.getLayer(id)) map.moveLayer(id);
     }
   }
@@ -230,23 +242,48 @@ let currentPopup = null;
 function onMapClick(e) {
   const allIds = [];
   for (const info of Object.values(dataLayers)) allIds.push(...info.layerIds);
-  const feats = map.queryRenderedFeatures(e.point, { layers: allIds });
+  // Slightly pad the hit box so point/line selection is forgiving even when
+  // a polygon fill sits under them. queryRenderedFeatures returns everything
+  // at these pixels; we rank below.
+  const PAD = 4;
+  const bbox = [
+    [e.point.x - PAD, e.point.y - PAD],
+    [e.point.x + PAD, e.point.y + PAD],
+  ];
+  const feats = map.queryRenderedFeatures(bbox, { layers: allIds });
   if (!feats.length) return;
 
-  // Pick the feature from the "smallest" layer at this point — reduces the
-  // classic polygon-masks-building case where a borough polygon wins over a
-  // specific building. "Smallest" means the layer whose estimated bbox
-  // priority is lowest (buildings < districts < boroughs).
-  const byLayer = new Map();  // layerName → feature (first hit per layer)
+  // Rank hits: prefer point geometry > line > polygon-outline > polygon-fill.
+  // This fixes "points under large polygons are unclickable" — the polygon's
+  // fill was winning a tie by virtue of sitting at the click pixel too.
+  // Tie-break within a kind by smaller-bbox layer (specific beats general).
+  function kindRank(id) {
+    if (id.endsWith('-pt')) return 0;
+    if (id.endsWith('-line')) return 1;
+    if (id.endsWith('-outline')) return 2;
+    if (id.endsWith('-fill')) return 3;
+    return 4;
+  }
+  // Dedupe: one entry per (layerName, kindRank) — first hit wins, which for
+  // point layers is the one closest to the click since MapLibre returns
+  // features in draw order.
+  const seen = new Map();  // layerName → { feat, kind, area }
   for (const f of feats) {
     const srcId = f.source;
     const layerName = srcId.startsWith('src-') ? srcId.slice(4) : srcId;
-    if (!byLayer.has(layerName)) byLayer.set(layerName, f);
+    const kind = kindRank(f.layer.id);
+    const prior = seen.get(layerName);
+    if (prior == null || kind < prior.kind) {
+      seen.set(layerName, {
+        feat: f, kind,
+        area: dataLayers[layerName]?.areaEst ?? 0,
+      });
+    }
   }
-  const ranked = [...byLayer.entries()].sort(
-    (a, b) => (dataLayers[a[0]]?.areaEst ?? 0) - (dataLayers[b[0]]?.areaEst ?? 0)
+  const ranked = [...seen.entries()].sort(
+    ([, a], [, b]) => (a.kind - b.kind) || (a.area - b.area)
   );
-  const [topName, topFeat] = ranked[0];
+  const [topName, { feat: topFeat }] = ranked[0];
   const other = ranked.slice(1).map(([n]) => n);
 
   const color = dataLayers[topName]?.color || '#6cf';

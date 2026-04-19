@@ -1292,13 +1292,21 @@ def export_layers(
                 col_types = {r[0]: r[1].upper() for r in type_rows}
 
                 def _prop_expr(c: str) -> str:
+                    # Escape single quotes in the column-name literal the
+                    # same way `escaped_layer` does below. Matters for
+                    # correctness (columns like "King's Road" would break
+                    # the SQL string) and blocks an injection surface — an
+                    # LLM caller could supply a dict key like
+                    # `x', (SELECT ...)::JSON, 'y` via create_layer and
+                    # pass it through to this per-feature JSON emitter.
+                    key = c.replace("'", "''")
                     qc = _quote_ident(c)
                     t = col_types.get(c, "")
                     if t == "HUGEINT" or t.startswith("HUGEINT"):
-                        return f"'{c}', CAST({qc} AS BIGINT)"
+                        return f"'{key}', CAST({qc} AS BIGINT)"
                     if t == "UHUGEINT" or t.startswith("UHUGEINT"):
-                        return f"'{c}', CAST({qc} AS UBIGINT)"
-                    return f"'{c}', {qc}"
+                        return f"'{key}', CAST({qc} AS UBIGINT)"
+                    return f"'{key}', {qc}"
 
                 escaped_layer = layer.replace("'", "''")
                 if attr_cols:

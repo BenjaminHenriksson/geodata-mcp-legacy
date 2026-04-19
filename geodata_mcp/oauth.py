@@ -47,8 +47,25 @@ from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 # ---- configuration -------------------------------------------------------
 
-INVITE_CODE = os.environ.get("GEODATA_INVITE_CODE", "").strip()
-LEGACY_BEARER = os.environ.get("GEODATA_MCP_TOKEN", "").strip()
+def _load_secret(cred_name: str, env_fallback: str) -> str:
+    """Prefer systemd's $CREDENTIALS_DIRECTORY/<cred_name> over env vars.
+    Under the service unit we use LoadCredential= (file-based, not in
+    /proc/<pid>/environ) so a DuckDB file-read exploit can't exfiltrate
+    the token via read_text('/proc/self/environ'). The env fallback is
+    for dev / stdio mode where systemd isn't involved."""
+    cred_dir = os.environ.get("CREDENTIALS_DIRECTORY", "")
+    if cred_dir:
+        path = os.path.join(cred_dir, cred_name)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read().strip()
+        except (FileNotFoundError, PermissionError):
+            pass
+    return os.environ.get(env_fallback, "").strip()
+
+
+INVITE_CODE = _load_secret("invite-code", "GEODATA_INVITE_CODE")
+LEGACY_BEARER = _load_secret("mcp-token", "GEODATA_MCP_TOKEN")
 
 # Public URL for issuer / endpoint advertisement. Required for claude.ai —
 # it will call back to what we advertise here.
@@ -178,14 +195,31 @@ _AUTH_FORM_HTML = """<!doctype html>
     .meta { color: #5c6672; font-size: 11px; margin-top: 18px;
             line-height: 1.5; }
     .client { color: #d7dde4; }
+    .callback { display: block; color: #d7dde4; background: #0b0f14;
+                border: 1px solid #2a323d; border-radius: 6px;
+                padding: 8px 10px; margin-top: 8px; font-size: 12px;
+                font-family: ui-monospace, SFMono-Regular, monospace;
+                word-break: break-all; }
+    .callback-label { font-size: 12px; color: #8c95a1;
+                      text-transform: uppercase; letter-spacing: 0.05em;
+                      display: block; margin-top: 14px; }
+    .warn { color: #ffd27a; font-size: 12px; margin-top: 10px;
+            line-height: 1.45; }
   </style>
 </head>
 <body>
   <form class="card" method="post" action="/oauth/authorize">
     <h1>Connect to geodata-mcp</h1>
     <p><span class="client">@@CLIENT_NAME@@</span> is asking for access.
-       Enter the invite code to continue.</p>
-    <label for="code">Invite code</label>
+       Verify the callback below before continuing — it's where your
+       access token will be sent.</p>
+    <span class="callback-label">Callback (redirect_uri)</span>
+    <span class="callback">@@REDIRECT_HOST@@</span>
+    <div class="warn">If this isn't a host you recognize (e.g.
+        <code>claude.ai</code> for claude.ai, <code>localhost</code> for
+        local testing), <strong>do not continue</strong> — it could be a
+        phishing attempt to hijack your session.</div>
+    <label for="code" style="margin-top:16px">Invite code</label>
     <input type="password" id="code" name="invite_code" autocomplete="off"
            autofocus required>
     <button type="submit">Connect</button>
@@ -201,14 +235,29 @@ _AUTH_FORM_HTML = """<!doctype html>
 
 
 def _render_form(client_name: str, params: dict, error: str | None = None) -> HTMLResponse:
+    from urllib.parse import urlparse
     hidden = "".join(
         f'<input type="hidden" name="{html.escape(k)}" value="{html.escape(v)}">'
         for k, v in params.items()
     )
     err_html = f'<div class="err">{html.escape(error)}</div>' if error else ""
-    # Use explicit tokens instead of str.format so CSS braces pass through.
+    # Show the callback's host + scheme prominently so a phished user has a
+    # chance to notice when the redirect_uri is attacker-controlled. Full
+    # URL is hidden in the HTML source; the host+scheme preview is what
+    # the user actually eyeballs. We fall back to the whole URL if parsing
+    # fails.
+    redirect_uri = params.get("redirect_uri", "")
+    try:
+        parsed = urlparse(redirect_uri)
+        if parsed.scheme and parsed.netloc:
+            preview = f"{parsed.scheme}://{parsed.netloc}"
+        else:
+            preview = redirect_uri or "(missing)"
+    except Exception:
+        preview = redirect_uri or "(missing)"
     page = (_AUTH_FORM_HTML
             .replace("@@CLIENT_NAME@@", html.escape(client_name or "a client"))
+            .replace("@@REDIRECT_HOST@@", html.escape(preview))
             .replace("@@HIDDEN@@", hidden)
             .replace("@@ERROR@@", err_html))
     return HTMLResponse(page)

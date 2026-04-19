@@ -253,10 +253,11 @@ function onMapClick(e) {
   const feats = map.queryRenderedFeatures(bbox, { layers: allIds });
   if (!feats.length) return;
 
-  // Rank hits: prefer point geometry > line > polygon-outline > polygon-fill.
-  // This fixes "points under large polygons are unclickable" — the polygon's
-  // fill was winning a tie by virtue of sitting at the click pixel too.
-  // Tie-break within a kind by smaller-bbox layer (specific beats general).
+  // Rank hits: prefer point > line > polygon-outline > polygon-fill. Within
+  // a kind, prefer the smaller individual feature (so clicking where
+  // Södermalm overlaps Gamla stan inside the same layer yields Gamla stan,
+  // not whichever one MapLibre happened to draw on top). Final tiebreak by
+  // layer bbox — catches edge cases where feature area is 0.
   function kindRank(id) {
     if (id.endsWith('-pt')) return 0;
     if (id.endsWith('-line')) return 1;
@@ -264,27 +265,65 @@ function onMapClick(e) {
     if (id.endsWith('-fill')) return 3;
     return 4;
   }
-  // Dedupe: one entry per (layerName, kindRank) — first hit wins, which for
-  // point layers is the one closest to the click since MapLibre returns
-  // features in draw order.
-  const seen = new Map();  // layerName → { feat, kind, area }
-  for (const f of feats) {
+
+  // Signed shoelace area of a single ring (lng/lat degrees — absolute value
+  // is a monotonic proxy for geographic area at city scale). Good enough
+  // for "smaller beats bigger"; not for cartographic accuracy.
+  function ringArea(ring) {
+    let a = 0;
+    for (let i = 0, n = ring.length - 1; i < n; i++) {
+      a += ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1];
+    }
+    return Math.abs(a) / 2;
+  }
+  function featureArea(g) {
+    if (!g) return 0;
+    if (g.type === 'Polygon') {
+      // outer ring minus holes
+      let a = ringArea(g.coordinates[0] || []);
+      for (let i = 1; i < g.coordinates.length; i++) a -= ringArea(g.coordinates[i]);
+      return Math.max(0, a);
+    }
+    if (g.type === 'MultiPolygon') {
+      let a = 0;
+      for (const poly of g.coordinates) {
+        a += ringArea(poly[0] || []);
+        for (let i = 1; i < poly.length; i++) a -= ringArea(poly[i]);
+      }
+      return Math.max(0, a);
+    }
+    return 0;  // points / lines / etc. — kindRank already orders them above
+  }
+
+  // Keep per-feature entries (not per-layer) so same-layer overlapping
+  // features can compete on their own area. Then dedupe by layer for the
+  // "also at this point" listing.
+  const candidates = feats.map((f) => {
     const srcId = f.source;
     const layerName = srcId.startsWith('src-') ? srcId.slice(4) : srcId;
-    const kind = kindRank(f.layer.id);
-    const prior = seen.get(layerName);
-    if (prior == null || kind < prior.kind) {
-      seen.set(layerName, {
-        feat: f, kind,
-        area: dataLayers[layerName]?.areaEst ?? 0,
-      });
+    return {
+      feat: f,
+      layerName,
+      kind: kindRank(f.layer.id),
+      fArea: featureArea(f.geometry),
+      lArea: dataLayers[layerName]?.areaEst ?? 0,
+    };
+  });
+  candidates.sort((a, b) =>
+    (a.kind - b.kind) || (a.fArea - b.fArea) || (a.lArea - b.lArea)
+  );
+  const top = candidates[0];
+  const topName = top.layerName;
+  const topFeat = top.feat;
+  // Build "also at this point" from the remaining unique layer names.
+  const other = [];
+  const seenNames = new Set([topName]);
+  for (const c of candidates.slice(1)) {
+    if (!seenNames.has(c.layerName)) {
+      seenNames.add(c.layerName);
+      other.push(c.layerName);
     }
   }
-  const ranked = [...seen.entries()].sort(
-    ([, a], [, b]) => (a.kind - b.kind) || (a.area - b.area)
-  );
-  const [topName, { feat: topFeat }] = ranked[0];
-  const other = ranked.slice(1).map(([n]) => n);
 
   const color = dataLayers[topName]?.color || '#6cf';
   const props = topFeat.properties || {};

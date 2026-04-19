@@ -6,10 +6,17 @@ source references (deduped by dataset id) in `LayerMeta.provenance`.
 """
 from __future__ import annotations
 
+import re
 import threading
 from dataclasses import replace
 from datetime import datetime
 from typing import Iterable
+
+# Strict CRS whitelist — `create_layer` interpolates this value directly
+# into a SQL literal that reaches DuckDB outside the execute_sql sandbox,
+# so anything broader than EPSG:<digits> would reopen a full SQL injection
+# → filesystem / httpfs / extension-loader reach.
+_EPSG_RE = re.compile(r"EPSG:\d{4,6}")
 
 import duckdb
 import sqlglot
@@ -899,6 +906,19 @@ def create_layer(
     new_name = session.unique_layer_name(name)
     qnew = _quote_ident(new_name)
 
+    # Strict whitelist: CRS strings MUST match EPSG:<digits>. This runs before
+    # the value is interpolated into a literal that reaches DuckDB directly
+    # (not through _validate_sql). Without the whitelist, a crafted `crs`
+    # could close the ST_Transform arg and append arbitrary SQL — including
+    # DuckDB's filesystem / httpfs / extension-loader functions that the
+    # execute_sql sandbox denylists.
+    if geometry_column:
+        if not _EPSG_RE.fullmatch(crs or ""):
+            raise OpError(
+                f"crs must match 'EPSG:<digits>' (got {crs!r}). Examples: "
+                "'EPSG:4326' (WGS84 lng/lat), 'EPSG:3011' (SWEREF99 18 00)."
+            )
+
     # Register the arrow table so we can CREATE TABLE AS SELECT from it.
     tmp = "_create_layer_tmp"
     session.conn.register(tmp, table)
@@ -906,12 +926,11 @@ def create_layer(
         if geometry_column:
             other_cols = [c for c in columns if c != geometry_column]
             attr_select = ", ".join(_quote_ident(c) for c in other_cols)
-            src_crs = crs if crs.startswith("EPSG:") else f"EPSG:{crs}"
             sql = (
                 f"CREATE TABLE {qnew} AS "
                 f"SELECT {attr_select + ',' if attr_select else ''} "
                 f"ST_Transform(ST_GeomFromText({_quote_ident(geometry_column)}), "
-                f"'{src_crs}', 'EPSG:3011', true) AS geom "
+                f"'{crs}', 'EPSG:3011', true) AS geom "
                 f"FROM {tmp}"
             )
         else:

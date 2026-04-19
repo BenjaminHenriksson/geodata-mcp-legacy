@@ -1,6 +1,6 @@
 # MCP tool reference
 
-**35 tools** across four categories + a macros tier. Endpoint:
+**38 tools** across four categories + a macros tier. Endpoint:
 `https://geo.benjaminhenriksson.com/mcp` (OAuth 2.1 + PKCE via invite code
 for claude.ai; legacy shared bearer for Claude Code CLI). Every tool
 carries MCP `toolAnnotations` (`readOnlyHint`, `destructiveHint=false`)

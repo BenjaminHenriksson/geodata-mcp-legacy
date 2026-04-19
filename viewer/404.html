@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex" />
+<meta name="theme-color" content="#F5F0E8" />
+<title>Not found · Geodata MCP</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=DM+Sans:wght@300;400&display=swap" rel="stylesheet" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --ivory:     #F5F0E8;
+    --paper:     #EDE7D9;
+    --ink:       #1C1A16;
+    --ink-mid:   #4A4540;
+    --ink-faint: #9A9188;
+    --terra:     #B05B3B;
+    --rule:      rgba(28,26,22,0.12);
+    --serif:     'Cormorant Garamond', Georgia, serif;
+    --sans:      'DM Sans', system-ui, sans-serif;
+  }
+
+  body {
+    background: var(--ivory);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.7;
+    font-weight: 300;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      repeating-linear-gradient(0deg, transparent, transparent 59px, rgba(28,26,22,0.04) 60px),
+      repeating-linear-gradient(90deg, transparent, transparent 59px, rgba(28,26,22,0.04) 60px);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .card {
+    position: relative;
+    z-index: 1;
+    max-width: 560px;
+    text-align: left;
+  }
+
+  .eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--terra);
+    margin-bottom: 1.2rem;
+    font-weight: 400;
+  }
+  h1 {
+    font-family: var(--serif);
+    font-size: clamp(44px, 7vw, 72px);
+    font-weight: 300;
+    line-height: 1.0;
+    letter-spacing: -0.01em;
+    margin-bottom: 1.4rem;
+  }
+  h1 em { font-style: italic; color: var(--terra); }
+
+  p {
+    color: var(--ink-mid);
+    font-size: 16px;
+    line-height: 1.75;
+    margin-bottom: 1.2rem;
+    max-width: 480px;
+  }
+
+  .links {
+    margin-top: 1.8rem;
+    display: flex;
+    gap: 0.8rem;
+    flex-wrap: wrap;
+  }
+  .btn {
+    display: inline-block;
+    padding: 10px 22px;
+    font-family: var(--sans);
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    text-decoration: none;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    user-select: none;
+  }
+  .btn-primary {
+    background: var(--ink);
+    color: var(--ivory);
+  }
+  .btn-primary:hover { background: var(--terra); }
+  .btn-ghost {
+    border: 1px solid var(--ink);
+    color: var(--ink);
+  }
+  .btn-ghost:hover { border-color: var(--terra); color: var(--terra); }
+
+  .coords {
+    margin-top: 2.6rem;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .coords .divider { opacity: 0.5; padding: 0 0.4rem; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="eyebrow">404 · Not in the atlas</div>
+    <h1>Off the <em>map</em>.</h1>
+    <p>
+      This coordinate isn't part of the Geodata MCP surface. Sessions
+      have short ids; one-letter typos take you here. Export links
+      expire after twenty-four hours.
+    </p>
+    <p>
+      Start again from the landing page, or read the docs to see what
+      does live here.
+    </p>
+    <div class="links">
+      <a href="/" class="btn btn-primary">Return home</a>
+      <a href="/docs" class="btn btn-ghost">Docs</a>
+    </div>
+    <div class="coords">
+      EPSG:3011 <span class="divider">·</span> SWEREF 99 18 00
+    </div>
+  </div>
+</body>
+</html>

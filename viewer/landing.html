@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<meta name="theme-color" content="#F5F0E8" />
+<title>Geodata MCP · Stockholm</title>
+<meta name="description" content="Municipal geodata for LLM-driven analysis. SCB DeSO, SBK Stadskarta and OSM addresses over a session-scoped DuckDB spatial backend." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&family=DM+Sans:wght@300;400;500&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --ivory:     #F5F0E8;
+    --paper:     #EDE7D9;
+    --ink:       #1C1A16;
+    --ink-mid:   #4A4540;
+    --ink-faint: #9A9188;
+    --terra:     #B05B3B;
+    --rule:      rgba(28,26,22,0.12);
+    --serif:     'Cormorant Garamond', Georgia, serif;
+    --sans:      'DM Sans', system-ui, sans-serif;
+    --mono:      'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--ivory);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.6;
+    font-weight: 300;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      repeating-linear-gradient(0deg, transparent, transparent 59px, rgba(28,26,22,0.04) 60px),
+      repeating-linear-gradient(90deg, transparent, transparent 59px, rgba(28,26,22,0.04) 60px);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .page-map {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 600px;
+    pointer-events: none;
+    z-index: 0;
+    overflow: hidden;
+    -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 45%, rgba(0,0,0,0) 100%);
+    mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 45%, rgba(0,0,0,0) 100%);
+  }
+  .page-map img {
+    width: 100%;
+    position: absolute;
+    left: 0; top: 220px;
+    transform: translateY(-50%);
+    opacity: 0.45;
+    user-select: none;
+  }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 0 2rem;
+  }
+
+  /* Canonical site nav — identical on landing, /about, /docs. */
+  .site-nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(245,240,232,0.92);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--rule);
+  }
+  .site-nav-inner {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 2rem;
+    height: 56px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .site-nav-name {
+    font-family: var(--serif);
+    font-size: 18px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    color: var(--ink);
+    text-decoration: none;
+  }
+  .site-nav-name em { font-style: italic; color: var(--terra); }
+  .site-nav-links {
+    display: flex;
+    gap: 2rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .site-nav-links a {
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-mid);
+    text-decoration: none;
+    transition: color 0.2s;
+  }
+  .site-nav-links a:hover { color: var(--terra); }
+  @media (max-width: 640px) {
+    .site-nav-links { display: none; }
+  }
+
+  #hero {
+    padding: 160px 0 90px;
+    position: relative;
+  }
+  .hero-label {
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--terra);
+    margin-bottom: 1.4rem;
+    font-weight: 400;
+  }
+  .hero-name {
+    font-family: var(--serif);
+    font-size: clamp(52px, 8vw, 88px);
+    font-weight: 300;
+    line-height: 1.0;
+    letter-spacing: -0.01em;
+    margin-bottom: 1.6rem;
+  }
+  .hero-name em { font-style: italic; color: var(--terra); }
+  .hero-tagline {
+    font-size: 16px;
+    color: var(--ink-mid);
+    max-width: 560px;
+    line-height: 1.75;
+    margin-bottom: 2rem;
+    font-weight: 300;
+  }
+  .hero-coords {
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .hero-coords .divider { opacity: 0.5; padding: 0 0.4rem; }
+
+  section {
+    padding: 64px 0;
+    border-top: 1px solid var(--rule);
+  }
+  .section-header {
+    display: flex;
+    align-items: baseline;
+    gap: 1.5rem;
+    margin-bottom: 2.4rem;
+  }
+  .section-num {
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--terra);
+    font-weight: 400;
+    white-space: nowrap;
+    user-select: none;
+  }
+  .section-title {
+    font-family: var(--serif);
+    font-size: 32px;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+  }
+  .section-rule {
+    flex: 1;
+    height: 1px;
+    background: var(--rule);
+  }
+
+  p.prose {
+    font-size: 16px;
+    line-height: 1.8;
+    color: var(--ink-mid);
+    max-width: 680px;
+    margin-bottom: 1.1rem;
+    font-weight: 300;
+  }
+  p.prose:last-child { margin-bottom: 0; }
+
+  code, .mono {
+    font-family: var(--mono);
+    font-size: 0.92em;
+    font-weight: 400;
+  }
+  .url-row {
+    display: flex;
+    align-items: stretch;
+    margin: 0.4rem 0 0.2rem;
+    grid-column: 2;
+    justify-self: start;
+    max-width: 100%;
+  }
+  .url-block {
+    flex: 0 1 auto;
+    min-width: 0;
+    padding: 0.4rem 0.7rem;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 13px;
+    user-select: all;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .copy-btn {
+    padding: 0 0.8rem;
+    background: var(--ink);
+    color: var(--ivory);
+    border: 1px solid var(--ink);
+    border-left: none;
+    font-family: var(--sans);
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    flex-shrink: 0;
+    min-width: 4.8rem;
+  }
+  .copy-btn:hover { background: var(--terra); border-color: var(--terra); }
+  .copy-btn.copied { background: var(--ivory); color: var(--terra); border-color: var(--terra); }
+
+  .steps {
+    margin-top: 1rem;
+    counter-reset: step;
+    list-style: none;
+    max-width: 680px;
+  }
+  .steps li {
+    display: grid;
+    grid-template-columns: 2.1rem 1fr;
+    gap: 0.4rem;
+    padding: 0.9rem 0;
+    border-bottom: 1px dashed var(--rule);
+    color: var(--ink-mid);
+    font-size: 15px;
+    line-height: 1.7;
+  }
+  .steps li:last-child { border-bottom: none; }
+  .steps li::before {
+    counter-increment: step;
+    content: counter(step, decimal-leading-zero);
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--terra);
+    letter-spacing: 0.08em;
+    padding-top: 3px;
+  }
+
+  .client-title {
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--terra);
+    margin-bottom: 0.6rem;
+    margin-top: 2.2rem;
+    font-weight: 400;
+  }
+  .client-title:first-child { margin-top: 0; }
+
+  .inventory {
+    display: grid;
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    margin-top: 0.4rem;
+  }
+  .inventory-row {
+    background: var(--ivory);
+    padding: 1.2rem 1.4rem;
+    display: grid;
+    grid-template-columns: minmax(7rem, 1fr) 3fr;
+    gap: 1.4rem;
+    align-items: baseline;
+  }
+  .inventory-key {
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--terra);
+    font-weight: 400;
+  }
+  .inventory-val {
+    font-size: 14px;
+    color: var(--ink-mid);
+    line-height: 1.6;
+  }
+  .inventory-val strong {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: 20px;
+    color: var(--ink);
+    display: block;
+    margin-bottom: 0.2rem;
+    letter-spacing: -0.01em;
+  }
+
+  .read-more-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+  }
+  .read-card {
+    display: flex;
+    flex-direction: column;
+    background: var(--ivory);
+    padding: 1.8rem 1.8rem 1.6rem;
+    text-decoration: none;
+    color: inherit;
+    transition: background 0.15s;
+    min-height: 100%;
+  }
+  .read-card:hover { background: var(--paper); }
+  .read-card-eyebrow {
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--terra);
+    font-weight: 400;
+    margin-bottom: 0.6rem;
+  }
+  .read-card-title {
+    font-family: var(--serif);
+    font-size: 22px;
+    font-weight: 500;
+    line-height: 1.2;
+    color: var(--ink);
+    margin-bottom: 0.7rem;
+  }
+  .read-card-desc {
+    font-size: 14px;
+    color: var(--ink-mid);
+    line-height: 1.7;
+    margin-bottom: 1.2rem;
+    font-weight: 300;
+    flex: 1;
+  }
+  .read-card-cta {
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink);
+    font-weight: 400;
+    transition: color 0.15s;
+  }
+  .read-card:hover .read-card-cta { color: var(--terra); }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding: 1.5rem 0;
+    margin-top: 2rem;
+  }
+  footer .container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    color: var(--ink-faint);
+    letter-spacing: 0.08em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  a.inline {
+    color: var(--ink);
+    text-decoration: underline;
+    text-decoration-color: var(--rule);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+    transition: color 0.2s, text-decoration-color 0.2s;
+  }
+  a.inline:hover {
+    color: var(--terra);
+    text-decoration-color: var(--terra);
+  }
+
+  @media (max-width: 640px) {
+    .nav-links { display: none; }
+    #hero { padding: 96px 0 48px; }
+    .inventory-row { grid-template-columns: 1fr; gap: 0.4rem; }
+    .read-more-grid { grid-template-columns: 1fr; }
+    .page-map img {
+      width: auto;
+      height: 100%;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+  }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(18px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .hero-label   { animation: fadeUp 0.6s ease both; animation-delay: 0.1s; }
+  .hero-name    { animation: fadeUp 0.6s ease both; animation-delay: 0.22s; }
+  .hero-tagline { animation: fadeUp 0.6s ease both; animation-delay: 0.34s; }
+  .hero-coords  { animation: fadeUp 0.6s ease both; animation-delay: 0.44s; }
+</style>
+</head>
+<body>
+
+<div class="page-map" aria-hidden="true"><img src="/static/stockholm-map.svg" alt="" /></div>
+
+<nav class="site-nav">
+  <div class="site-nav-inner">
+    <a href="/" class="site-nav-name">Geodata <em>MCP</em></a>
+    <ul class="site-nav-links">
+      <li><a href="/about">About</a></li>
+      <li><a href="/docs">Docs</a></li>
+      <li><a href="/#connect">Connect</a></li>
+    </ul>
+  </div>
+</nav>
+
+<div class="container">
+  <section id="hero">
+    <p class="hero-label">Data Infrastructure · Stockholm</p>
+    <h1 class="hero-name">Geodata <em>MCP</em></h1>
+    <p class="hero-tagline">
+      Municipal geodata for LLM-driven analysis. SCB DeSO, SBK Stadskarta
+      and OSM addresses over a session-scoped DuckDB spatial backend,
+      with enforced provenance and normalized join keys. Built for Claude
+      and other MCP clients.
+    </p>
+    <div class="hero-coords">
+      EPSG:3011 <span class="divider">·</span> SWEREF 99 18 00
+    </div>
+  </section>
+</div>
+
+<div class="container">
+  <section id="connect">
+    <div class="section-header">
+      <span class="section-num">01 / Connect</span>
+      <h2 class="section-title">How to use it</h2>
+      <div class="section-rule"></div>
+    </div>
+
+    <p class="prose">
+      Access is invite-only. If you have an invite code, point an MCP
+      client at the endpoint below. Everything runs server-side. Your
+      client sends natural-language questions, receives tool results
+      (tables, layer summaries, viewer URLs, download links).
+    </p>
+
+    <p class="client-title">For claude.ai (recommended)</p>
+    <ol class="steps">
+      <li>In claude.ai, open Settings, Connectors, Add custom connector.
+        Paste the endpoint URL:
+        <div class="url-row">
+          <span class="url-block" id="mcp-url">https://geo.benjaminhenriksson.com/mcp</span><button
+            type="button" class="copy-btn" data-copy-target="mcp-url">Copy</button>
+        </div>
+      </li>
+      <li>Complete the authorization flow in the popup. Enter the invite
+        code you were given.</li>
+      <li>Start a new chat. The 38 geodata tools are now available under
+        the "Stockholm Geodata MCP" connector. Ask a spatial question and
+        Claude does the rest.</li>
+    </ol>
+
+    <p class="client-title">For Claude Code or other MCP clients</p>
+    <p class="prose">
+      Legacy bearer-token flow, available on request. Send the token as
+      <code>Authorization: Bearer &lt;token&gt;</code> on every request to
+      <code>/mcp</code>. The OAuth flow above is preferred; the bearer
+      path exists for clients that do not yet implement OAuth 2.1 with
+      PKCE.
+    </p>
+  </section>
+</div>
+
+<div class="container">
+  <section id="inside">
+    <div class="section-header">
+      <span class="section-num">02 / Inside</span>
+      <h2 class="section-title">What the server knows</h2>
+      <div class="section-rule"></div>
+    </div>
+
+    <div class="inventory">
+      <div class="inventory-row">
+        <span class="inventory-key">Datasets</span>
+        <span class="inventory-val">
+          <strong>65 pre-normalized layers</strong>
+          SCB DeSO demographics (population, income, age, household
+          composition), SBK Stadskarta (buildings, parks, roads, land
+          use), OSM addresses. All reprojected to EPSG:3011, pre-filtered
+          to kommunkod 0180 (Stockholm).
+        </span>
+      </div>
+      <div class="inventory-row">
+        <span class="inventory-key">Join keys</span>
+        <span class="inventory-val">
+          <strong>desokod, regsokod, kommunkod</strong>
+          Every SCB table carries canonical join columns, plus a
+          <code>desokod_2025</code> bridge from 2018 boundaries.
+          Cross-table joins do not need to know which raw column name
+          came from which source.
+        </span>
+      </div>
+      <div class="inventory-row">
+        <span class="inventory-key">Tools</span>
+        <span class="inventory-val">
+          <strong>38 tools over DuckDB</strong>
+          load, filter, spatial, stats, execute_sql, frequencies,
+          bbox_from, geocode, inspect_location, macro helpers (top_n,
+          baseline_stats, classify, export_and_cite), reversible
+          checkpoints with per-layer scopes, batch annotate with
+          dry-run and coverage stats, multi-layer GPKG export with
+          merged provenance, server-side PNG render with legend and
+          scale bar.
+        </span>
+      </div>
+      <div class="inventory-row">
+        <span class="inventory-key">Viewer</span>
+        <span class="inventory-val">
+          <strong>MapLibre, per session</strong>
+          A <code>show(layers)</code> call returns a private
+          <code>/view/&lt;session&gt;</code> URL. Auto-refreshes as the
+          LLM adds or styles layers. Thematic styling (categorical or
+          linear) via the same call.
+        </span>
+      </div>
+      <div class="inventory-row">
+        <span class="inventory-key">Provenance</span>
+        <span class="inventory-val">
+          <strong>Citations per layer</strong>
+          Every derived layer carries the union of its source dataset
+          IDs. <code>sources(layer)</code> returns citations and
+          licences; <code>export(layer)</code> returns a signed download
+          URL with a short TTL.
+        </span>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="container">
+  <section id="read">
+    <div class="section-header">
+      <span class="section-num">03 / Read more</span>
+      <h2 class="section-title">Dig in further</h2>
+      <div class="section-rule"></div>
+    </div>
+
+    <div class="read-more-grid">
+      <a href="/about" class="read-card">
+        <div class="read-card-eyebrow">New to MCP, AI, or GIS</div>
+        <div class="read-card-title">Start with the primer</div>
+        <p class="read-card-desc">
+          A practical walk-through of what the Model Context Protocol
+          is, how this server works, and the handful of
+          misunderstandings worth clearing up before you use it. No
+          ML background assumed.
+        </p>
+        <span class="read-card-cta">Read the primer →</span>
+      </a>
+      <a href="/docs" class="read-card">
+        <div class="read-card-eyebrow">Technical detail</div>
+        <div class="read-card-title">Dig into the docs</div>
+        <p class="read-card-desc">
+          Design rationale, architecture, the data model, session
+          persistence, provenance, the tool reference, and the
+          roadmap. Assumes comfort with SQL, CRSs, and HTTP.
+        </p>
+        <span class="read-card-cta">Read the docs →</span>
+      </a>
+    </div>
+  </section>
+</div>
+
+<footer>
+  <div class="container">
+    <span>© 2026 Benjamin Henriksson</span>
+    <span>Stockholm · 59.33°N 18.07°E</span>
+  </div>
+</footer>
+
+<script>
+  document.querySelectorAll('.copy-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const target = document.getElementById(btn.dataset.copyTarget);
+      if (!target) return;
+      const text = target.textContent.trim();
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const r = document.createRange();
+        r.selectNodeContents(target);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(r);
+        try { document.execCommand('copy'); } catch {}
+        sel.removeAllRanges();
+      }
+      const prev = btn.textContent;
+      btn.textContent = 'Copied';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.textContent = prev;
+        btn.classList.remove('copied');
+      }, 1600);
+    });
+  });
+</script>
+
+</body>
+</html>

@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<meta name="theme-color" content="#F5F0E8" />
+<title>What is MCP · Geodata MCP</title>
+<meta name="description" content="What MCP is, how this Stockholm geodata MCP works, and the misunderstandings worth avoiding." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400&family=DM+Sans:wght@300;400;500&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --ivory:     #F5F0E8;
+    --paper:     #EDE7D9;
+    --ink:       #1C1A16;
+    --ink-mid:   #4A4540;
+    --ink-faint: #9A9188;
+    --terra:     #B05B3B;
+    --amber-bg:  #F5E6C8;
+    --amber-bd:  #C99A5B;
+    --amber-ink: #6E4A1E;
+    --rule:      rgba(28,26,22,0.12);
+    --rule-soft: rgba(28,26,22,0.06);
+    --serif:     'Cormorant Garamond', Georgia, serif;
+    --sans:      'DM Sans', system-ui, sans-serif;
+    --mono:      'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--ivory);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.75;
+    font-weight: 300;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      repeating-linear-gradient(0deg, transparent, transparent 59px, rgba(28,26,22,0.04) 60px),
+      repeating-linear-gradient(90deg, transparent, transparent 59px, rgba(28,26,22,0.04) 60px);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Canonical site nav — identical on landing, /about, /docs. */
+  .site-nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(245,240,232,0.92);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--rule);
+  }
+  .site-nav-inner {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 2rem;
+    height: 56px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .site-nav-name {
+    font-family: var(--serif);
+    font-size: 18px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    color: var(--ink);
+    text-decoration: none;
+  }
+  .site-nav-name em { font-style: italic; color: var(--terra); }
+  .site-nav-links {
+    display: flex;
+    gap: 2rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .site-nav-links a {
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-mid);
+    text-decoration: none;
+    transition: color 0.2s;
+  }
+  .site-nav-links a:hover { color: var(--terra); }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 0 2rem;
+  }
+
+  /* Hero */
+  header.hero {
+    padding: 100px 0 60px;
+  }
+  .eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--terra);
+    margin-bottom: 1.4rem;
+    font-weight: 400;
+  }
+  header.hero h1 {
+    font-family: var(--serif);
+    font-size: clamp(44px, 6.5vw, 72px);
+    font-weight: 300;
+    line-height: 1.05;
+    letter-spacing: -0.01em;
+    margin-bottom: 1.4rem;
+  }
+  header.hero h1 em { font-style: italic; color: var(--terra); }
+  header.hero p.lede {
+    font-size: 17px;
+    line-height: 1.75;
+    color: var(--ink-mid);
+    max-width: 620px;
+  }
+
+  /* Sections */
+  section {
+    padding: 60px 0;
+    border-top: 1px solid var(--rule);
+  }
+  section .section-head {
+    display: flex;
+    align-items: baseline;
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+  }
+  section .section-num {
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--terra);
+    font-weight: 400;
+    white-space: nowrap;
+  }
+  section h2 {
+    font-family: var(--serif);
+    font-size: 32px;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+  }
+  section .section-rule {
+    flex: 1;
+    height: 1px;
+    background: var(--rule);
+  }
+  section h3 {
+    font-family: var(--serif);
+    font-size: 22px;
+    font-weight: 500;
+    margin: 2rem 0 0.6rem;
+    color: var(--ink);
+  }
+
+  p {
+    color: var(--ink-mid);
+    font-size: 16px;
+    line-height: 1.8;
+    margin-bottom: 1.1rem;
+  }
+  p strong { color: var(--ink); font-weight: 500; }
+  p a {
+    color: var(--ink);
+    text-decoration: underline;
+    text-decoration-color: var(--rule);
+    text-underline-offset: 3px;
+    text-decoration-thickness: 1px;
+    transition: color 0.15s, text-decoration-color 0.15s;
+  }
+  p a:hover { color: var(--terra); text-decoration-color: var(--terra); }
+  code {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    background: var(--paper);
+    padding: 0.08rem 0.3rem;
+    border-radius: 2px;
+    color: var(--ink);
+  }
+
+  /* Diagram */
+  .flow {
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    padding: 1.5rem 1.8rem;
+    margin: 1.5rem 0;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.9;
+    color: var(--ink);
+    overflow-x: auto;
+    white-space: pre;
+  }
+
+  /* Pitfall block */
+  .pitfall {
+    border: 1px solid var(--rule);
+    background: var(--ivory);
+    padding: 1.5rem 1.6rem;
+    margin: 1.3rem 0;
+  }
+  .pitfall .pitfall-label {
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--terra);
+    margin-bottom: 0.7rem;
+    font-weight: 400;
+  }
+  .pitfall h3 {
+    font-family: var(--serif);
+    font-size: 22px;
+    font-weight: 500;
+    line-height: 1.2;
+    margin: 0 0 0.8rem;
+    color: var(--ink);
+  }
+  .pitfall p {
+    margin: 0 0 0.6rem;
+    font-size: 15px;
+    line-height: 1.75;
+  }
+  .pitfall p:last-child { margin-bottom: 0; }
+
+  /* Callout */
+  .callout {
+    background: var(--amber-bg);
+    border-left: 2px solid var(--amber-bd);
+    padding: 1rem 1.2rem;
+    margin: 1.4rem 0;
+    color: var(--amber-ink);
+    font-size: 14px;
+    line-height: 1.7;
+  }
+  .callout strong { color: var(--amber-ink); font-weight: 500; }
+
+  /* Steps */
+  .steps {
+    counter-reset: step;
+    list-style: none;
+    padding: 0;
+    margin: 1.2rem 0;
+  }
+  .steps li {
+    counter-increment: step;
+    position: relative;
+    padding: 0.8rem 0 0.8rem 2.6rem;
+    border-bottom: 1px dashed var(--rule);
+    color: var(--ink-mid);
+    font-size: 15px;
+    line-height: 1.7;
+  }
+  .steps li:last-child { border-bottom: none; }
+  .steps li::before {
+    content: counter(step, decimal-leading-zero);
+    position: absolute;
+    left: 0;
+    top: 0.95rem;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--terra);
+    letter-spacing: 0.08em;
+  }
+
+  /* Footer */
+  footer {
+    border-top: 1px solid var(--rule);
+    padding: 1.5rem 0;
+    margin-top: 2rem;
+  }
+  footer .inner {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 2rem;
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--ink-faint);
+    letter-spacing: 0.08em;
+  }
+
+  @media (max-width: 640px) {
+    .site-nav-links { display: none; }
+    header.hero { padding: 60px 0 40px; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="site-nav">
+  <div class="site-nav-inner">
+    <a href="/" class="site-nav-name">Geodata <em>MCP</em></a>
+    <ul class="site-nav-links">
+      <li><a href="/about">About</a></li>
+      <li><a href="/docs">Docs</a></li>
+      <li><a href="/#connect">Connect</a></li>
+    </ul>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="container">
+    <div class="eyebrow">Primer · For newcomers</div>
+    <h1>What is an <em>MCP</em>,<br />and what is this one?</h1>
+    <p class="lede">
+      A practical read for anyone who has heard the word "MCP" and
+      wants to understand what this specific thing does, what it
+      doesn't, and where its rough edges are. Aimed at readers
+      coming from a planning, municipal, or GIS background. No prior
+      ML background assumed.
+    </p>
+  </div>
+</header>
+
+<section id="what">
+  <div class="container">
+    <div class="section-head">
+      <span class="section-num">01 / Basics</span>
+      <h2>What an MCP server is</h2>
+      <div class="section-rule"></div>
+    </div>
+
+    <p>
+      <strong>MCP</strong> stands for <em>Model Context Protocol</em>. It
+      is an open specification for letting a chat-based AI (Claude,
+      ChatGPT, and others) call structured tools and read structured
+      data while the user is talking to it. Think of it as a standard
+      plug: the AI learned how the plug works once, and now it can
+      connect to any server that offers one.
+    </p>
+
+    <p>
+      The arrangement looks like this:
+    </p>
+
+    <div class="flow">You  ↔  Your Claude app (MCP client)  ↔  MCP server  ↔  Tools, data
+               ↕
+          Claude (AI)</div>
+
+    <p>
+      A small but load-bearing distinction: <strong>Claude</strong>
+      (the AI, the LLM, the model) is not the same thing as the
+      <strong>Claude app</strong> you type into. Claude itself is a
+      large model running on Anthropic's servers. The app is the
+      software on your computer or in your browser: the claude.ai
+      website, the Claude desktop app, or a terminal program like
+      Claude Code. In the Model Context Protocol's vocabulary, that
+      app is called the <strong>MCP client</strong>.
+    </p>
+
+    <p>
+      The client sits between you and Claude. When you type a
+      question, the client sends it to Claude and waits for a reply.
+      When Claude decides to call a tool, the client does the actual
+      network call to the MCP server, reads the result, and hands it
+      back to Claude. When Claude is done, the client shows you the
+      answer. Claude decides <em>what</em> to call; the client does
+      the calling. From the MCP server's perspective, it doesn't
+      matter which app you are using; the protocol is the same.
+    </p>
+
+    <p>
+      So: you ask the AI a question, Claude decides what to do, the
+      client makes the tool calls, Claude reads the results, and
+      eventually you see an answer. The server never sees your
+      natural-language prompt; it only sees the structured tool calls.
+      You usually don't see the individual tool calls either (unless
+      the client chooses to show them); you see the answer.
+    </p>
+
+    <p>
+      Each MCP server offers a fixed, discoverable catalogue of tools.
+      Every tool has a name, a description, argument types, and a
+      machine-readable annotation of whether it is safe to call
+      automatically (read-only) or needs the user's permission
+      (destructive). The AI's client library reads this catalogue at
+      connection time and uses it to decide what to call.
+    </p>
+
+    <p>
+      The key idea: the AI does not have magical access to anything
+      you have not explicitly given it a tool for. An MCP server is a
+      <em>bounded</em> surface. If a tool isn't in the catalogue, the
+      action isn't available.
+    </p>
+  </div>
+</section>
+
+<section id="this">
+  <div class="container">
+    <div class="section-head">
+      <span class="section-num">02 / This server</span>
+      <h2>How this MCP works</h2>
+      <div class="section-rule"></div>
+    </div>
+
+    <p>
+      <strong>Geodata MCP</strong> is an MCP server that exposes
+      Stockholm's open municipal geodata to an AI chat. The catalogue
+      includes SCB DeSO demographics, the SBK Stadskarta, and OSM
+      addresses, pre-projected to EPSG:3011 and pre-joined to canonical
+      keys. The server offers roughly forty tools: load a dataset,
+      filter, intersect, classify, export, render a map image, and so
+      on.
+    </p>
+
+    <p>
+      A typical session looks like this:
+    </p>
+
+    <ol class="steps">
+      <li>You open Claude (in the browser or the desktop app) and connect
+        to this server once, entering an invite code. That setup step
+        is one-off.</li>
+      <li>You ask a question in plain Swedish or English. Something
+        like: <em>Vilka fem DeSO:n i Stockholm har högst medianinkomst,
+        och hur ser bebyggelsen runt omkring ut?</em></li>
+      <li>Claude decides which tools to call. It might load the SCB
+        income layer, join it with the SBK building layer, run a
+        spatial buffer, classify the result, and call <code>show()</code>
+        to mark the layers visible in a viewer.</li>
+      <li>You get back an answer and a private viewer URL that shows
+        the map. The viewer auto-refreshes as Claude does more work.</li>
+      <li>If you want a shareable image of the map, Claude calls
+        <code>render_map()</code> and hands you a PNG URL valid for
+        twenty-four hours. You embed it in whatever document you are
+        writing.</li>
+    </ol>
+
+    <p>
+      Everything runs in a <em>session</em>, a private workspace keyed
+      to your connection. Your session has its own database, its own
+      layers, its own visible styles. Nobody else can see it. If you
+      close Claude and come back tomorrow, the session is still there;
+      analyses resume where they left off.
+    </p>
+
+    <h3>Why it is stateful, and why that matters</h3>
+
+    <p>
+      Most web APIs are <em>stateless</em>: each request stands alone,
+      the server forgets it the moment it is done, and the client has
+      to include everything the server needs to do its job. That works
+      well for simple request-response shapes. It works badly for the
+      kind of iterative, composable work an LLM does when it analyses
+      data.
+    </p>
+
+    <p>
+      This MCP server is <strong>stateful within a session</strong>.
+      When Claude calls <code>load("scb_income")</code>, the resulting
+      layer stays in your session. The next call, <code>filter(...)</code>,
+      operates on that loaded layer by name, not on a re-fetched copy.
+      The call after that, <code>annotate(...)</code>, writes columns
+      into the same table. Twenty operations can compose over a shared
+      workspace without re-downloading, re-projecting, or re-joining
+      anything. The viewer looks at the same state.
+    </p>
+
+    <p>
+      This is one of the problems the Model Context Protocol is
+      explicitly trying to solve. Earlier "function-calling" patterns
+      for LLMs were stateless: every tool call was a self-contained
+      RPC, and the LLM had to re-assemble context each time. That
+      burns tokens (the LLM re-reads the same data repeatedly), burns
+      time (network round-trips add up), and makes certain workflows
+      effectively impossible (a five-step analysis would blow past
+      context limits). MCP's session model gives the server a place
+      to keep durable state that the LLM can reference by name,
+      instead of by content.
+    </p>
+
+    <p>
+      Concretely, this session stores: the DuckDB database, the set of
+      layers you have loaded, their column schemas and provenance,
+      styles you have applied in the viewer, your operation history,
+      any checkpoints you have created, and pagination cursors for
+      in-progress iteration. All of that is persistent on disk on this
+      server, so it survives reconnects and even service restarts. A
+      session abandoned for two weeks gets cleaned up; a session you
+      come back to tomorrow is exactly where you left it.
+    </p>
+
+    <h3>Everything the AI sees is authoritative</h3>
+
+    <p>
+      The tools the AI calls are authoritative. Spatial joins use real
+      DuckDB spatial SQL over the actual source data, with the correct
+      coordinate reference system. There is no "AI pretending to know
+      geography." Every number in the answer was computed by a
+      deterministic query against a named dataset, and every dataset
+      carries its licence and citation all the way through the
+      analysis.
+    </p>
+  </div>
+</section>
+
+<section id="pitfalls">
+  <div class="container">
+    <div class="section-head">
+      <span class="section-num">03 / Pitfalls</span>
+      <h2>Common misunderstandings</h2>
+      <div class="section-rule"></div>
+    </div>
+
+    <p>
+      These are the things people trip on repeatedly. Most of them
+      are corrections to intuitions imported from other tools (ArcGIS,
+      QGIS,
+      Excel, general-purpose chatbots, web search).
+    </p>
+
+    <div class="pitfall">
+      <div class="pitfall-label">Pitfall 01</div>
+      <h3>It is not a search engine</h3>
+      <p>
+        The AI does not have random-access memory of all 66 datasets.
+        Every tool call retrieves exactly what it asks for. If you ask
+        a vague question, Claude will narrow it down by calling
+        <code>search_data</code> or <code>describe_dataset</code> first
+        to find the right table. It is not searching a pre-built index
+        of everything.
+      </p>
+      <p>
+        This means a question like "what does the data say about
+        Södermalm" will not get a one-shot answer. Claude will
+        iteratively pull relevant layers and join them. That takes a
+        handful of seconds but is more accurate than a keyword search
+        would be.
+      </p>
+    </div>
+
+    <div class="pitfall">
+      <div class="pitfall-label">Pitfall 02</div>
+      <h3>Memory lives on the server, not in the model</h3>
+      <p>
+        Claude has no persistent memory of your previous conversations.
+        Each new chat starts fresh on the model side. What continuity
+        you get across days comes from the session state stored on
+        <em>this</em> server (layers, styles, operation log), which
+        Claude rereads when you reconnect. The AI itself does not
+        carry anything forward.
+      </p>
+      <p>
+        Separately, on training: under Anthropic's standard consumer
+        terms, chat conversations may be used to improve future models
+        unless you are on a plan that opts out (most enterprise and
+        API plans do). Whether that matters for your work depends on
+        what you discuss. The data this MCP exposes is public
+        municipal data, so nothing confidential leaves your
+        organisation through the chat, but if you paste internal
+        documents into the prompt, that is a different question. Check
+        the specifics of your Claude plan if you are not sure.
+      </p>
+      <p>
+        Nothing the MCP server stores (session state, exported files)
+        leaves this server or feeds back into Claude's training.
+      </p>
+    </div>
+
+    <div class="pitfall">
+      <div class="pitfall-label">Pitfall 03</div>
+      <h3>LLM-authored columns are not the same as loaded data</h3>
+      <p>
+        You can ask Claude to classify every feature in a layer: tag
+        each stadsdel with a dominant architectural era, for example.
+        That works, and the values are written into a column as if
+        they came from the source. But they did not. Claude invented
+        them based on its training data plus whatever context you
+        supplied.
+      </p>
+      <p>
+        The server tracks this. Every in-session column carries
+        provenance: <em>LLM-authored via annotate by model
+        claude-opus-4-7 on 2026-04-19</em>, or <em>derived via
+        add_field with this SQL expression</em>. The viewer and
+        <code>sources()</code> tool surface the distinction.
+      </p>
+      <div class="callout">
+        <strong>Check before you trust.</strong> If a column's values
+        came from the LLM, treat them as candidate classifications to
+        verify, not authoritative data. Spot-check a few and iterate.
+      </div>
+    </div>
+
+    <div class="pitfall">
+      <div class="pitfall-label">Pitfall 04</div>
+      <h3>It is not a replacement for ArcGIS or QGIS</h3>
+      <p>
+        This MCP is optimised for ad-hoc conversational queries that
+        end in a rendered answer or a downloadable file. It is not
+        for production cartography, not for complex map composition,
+        not for manual feature editing, and not for raster or terrain
+        analysis (no DEM loaded today).
+      </p>
+      <p>
+        For those workflows, export the relevant layer as a GeoPackage
+        and open it in ArcGIS or QGIS. The MCP is where you decide
+        <em>what</em> to export; ArcGIS and QGIS are where you polish
+        it for print.
+      </p>
+    </div>
+
+    <div class="pitfall">
+      <div class="pitfall-label">Pitfall 05</div>
+      <h3>Claude can still hallucinate around the data</h3>
+      <p>
+        The numbers Claude reads from tool calls are authoritative.
+        The prose Claude writes <em>around</em> those numbers is
+        subject to the usual AI failure modes: misreading a column,
+        confusing similar place names, inventing a plausible-sounding
+        explanation for a pattern. The data is trustworthy; the
+        storytelling on top of it needs the same scepticism you would
+        apply to any AI-generated prose.
+      </p>
+      <p>
+        Rule of thumb: if Claude makes a claim, check it against the
+        underlying layer. <code>inspect</code> and <code>stats</code>
+        give you the raw rows and aggregates. If the prose and the
+        rows disagree, trust the rows.
+      </p>
+    </div>
+
+    <div class="pitfall">
+      <div class="pitfall-label">Pitfall 06</div>
+      <h3>Sessions are private by default, not secret</h3>
+      <p>
+        Your session and its viewer URL are private to you until you
+        share them. There is no shared workspace across users. If you
+        want someone else to see your map, you send them the viewer
+        URL. They can look, but they cannot tool-call against it;
+        their own questions start a fresh session.
+      </p>
+      <p>
+        Conversely, the viewer URL has no password. Anyone you send
+        it to can see the map. Only send it to people who should see
+        the analysis.
+      </p>
+    </div>
+
+    <div class="pitfall">
+      <div class="pitfall-label">Pitfall 07</div>
+      <h3>Ad-hoc exploration, not a pipeline</h3>
+      <p>
+        This is the right tool for <em>let me look at this quickly</em>
+        and <em>what would that tell me</em>. It is the wrong tool for
+        a nightly-refreshed production job. The session model, the
+        LLM-in-the-loop, and the 24-hour export TTL all assume
+        exploratory work.
+      </p>
+      <p>
+        If an analysis becomes a recurring need, port it out: the SQL
+        Claude writes is standard DuckDB, and the datasets are all
+        publicly downloadable. A production pipeline is a different
+        problem.
+      </p>
+    </div>
+
+    <div class="pitfall">
+      <div class="pitfall-label">Pitfall 08</div>
+      <h3>The AI is a collaborator, not a spec</h3>
+      <p>
+        Claude responds to ambiguity by making judgement calls. If
+        your question is underspecified, Claude will pick a reasonable
+        interpretation and proceed. That interpretation might not be
+        yours.
+      </p>
+      <p>
+        The cure is to read what Claude did. The tool call log is
+        usually visible in the client. Ask follow-ups. Ask Claude to
+        show the SQL it ran. Treat it as a capable helper with good
+        instincts, not a mind-reader.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section id="try">
+  <div class="container">
+    <div class="section-head">
+      <span class="section-num">04 / Try it</span>
+      <h2>How to start</h2>
+      <div class="section-rule"></div>
+    </div>
+
+    <p>
+      Access is invite-only. If you do not have a code, ask; the list
+      of people with codes is currently small. With a code, the set-up
+      is the same as any other custom claude.ai connector: a one-time
+      paste of the endpoint URL, a confirmation screen, and the invite
+      code.
+    </p>
+    <p>
+      The full connect flow and tool catalogue are on the
+      <a href="/">landing page</a> and in the
+      <a href="/docs">docs</a>. The docs cover design rationale,
+      architecture, the data model, and the current roadmap.
+    </p>
+    <p>
+      Ask a question that matters for your work. The best way to see
+      what this is good for is to use it on something concrete.
+    </p>
+  </div>
+</section>
+
+<footer>
+  <div class="inner">
+    <span>© 2026 Benjamin Henriksson</span>
+    <span>Stockholm · 59.33°N 18.07°E</span>
+  </div>
+</footer>
+
+</body>
+</html>

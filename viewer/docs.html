@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<meta name="theme-color" content="#F5F0E8" />
+<title>@@TITLE@@ · Geodata MCP docs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400&family=DM+Sans:wght@300;400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --ivory:     #F5F0E8;
+    --paper:     #EDE7D9;
+    --ink:       #1C1A16;
+    --ink-mid:   #4A4540;
+    --ink-faint: #9A9188;
+    --terra:     #B05B3B;
+    --rule:      rgba(28,26,22,0.12);
+    --rule-soft: rgba(28,26,22,0.06);
+    --serif:     'Cormorant Garamond', Georgia, serif;
+    --sans:      'DM Sans', system-ui, sans-serif;
+    --mono:      'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--ivory);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.7;
+    font-weight: 300;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Faint grid in the background, matching landing. */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      repeating-linear-gradient(0deg, transparent, transparent 59px, rgba(28,26,22,0.03) 60px),
+      repeating-linear-gradient(90deg, transparent, transparent 59px, rgba(28,26,22,0.03) 60px);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Canonical site nav — identical on landing, /about, /docs. */
+  .site-nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(245,240,232,0.92);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--rule);
+  }
+  .site-nav-inner {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 2rem;
+    height: 56px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .site-nav-name {
+    font-family: var(--serif);
+    font-size: 18px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    color: var(--ink);
+    text-decoration: none;
+  }
+  .site-nav-name em { font-style: italic; color: var(--terra); }
+  .site-nav-links {
+    display: flex;
+    gap: 2rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .site-nav-links a {
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-mid);
+    text-decoration: none;
+    transition: color 0.2s;
+  }
+  .site-nav-links a:hover { color: var(--terra); }
+  @media (max-width: 640px) {
+    .site-nav-links { display: none; }
+  }
+
+  /* ─── LAYOUT ─────────────────────────────────────────────── */
+  .shell {
+    position: relative;
+    z-index: 1;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 2.5rem 2rem 4rem;
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    gap: 3rem;
+  }
+
+  /* ─── SIDEBAR ─────────────────────────────────────────────── */
+  aside.toc {
+    position: sticky;
+    top: 84px;
+    align-self: start;
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+    padding-right: 0.5rem;
+  }
+  aside.toc .eyebrow {
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--terra);
+    margin-bottom: 1rem;
+    font-weight: 400;
+  }
+  aside.toc ol {
+    list-style: none;
+    counter-reset: toc;
+    padding-left: 0;
+  }
+  aside.toc li {
+    counter-increment: toc;
+    margin: 0;
+  }
+  aside.toc a {
+    display: grid;
+    grid-template-columns: 2.4rem 1fr;
+    gap: 0.2rem;
+    padding: 0.5rem 0;
+    text-decoration: none;
+    color: var(--ink-mid);
+    border-bottom: 1px dotted var(--rule-soft);
+    font-size: 14px;
+    transition: color 0.15s;
+  }
+  aside.toc a:hover { color: var(--terra); }
+  aside.toc a::before {
+    content: counter(toc, decimal-leading-zero);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--terra);
+    letter-spacing: 0.06em;
+    padding-top: 2px;
+  }
+  aside.toc a.current {
+    color: var(--ink);
+  }
+  aside.toc a.current::before { color: var(--ink); }
+
+  aside.toc .sidebar-note {
+    margin-top: 1.5rem;
+    font-size: 11px;
+    color: var(--ink-faint);
+    line-height: 1.55;
+    padding-top: 1rem;
+    border-top: 1px solid var(--rule-soft);
+  }
+
+  /* ─── MAIN CONTENT ────────────────────────────────────────── */
+  main {
+    min-width: 0;
+  }
+  main .doc-eyebrow {
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--terra);
+    margin-bottom: 0.4rem;
+  }
+  main .doc-title {
+    font-family: var(--serif);
+    font-size: 44px;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+    line-height: 1.05;
+    margin-bottom: 1.4rem;
+    color: var(--ink);
+  }
+
+  /* Markdown-generated content inside .doc-body */
+  .doc-body { max-width: 760px; }
+  .doc-body h1 { display: none; } /* top H1 handled by doc-title */
+  .doc-body h2 {
+    font-family: var(--serif);
+    font-size: 26px;
+    font-weight: 500;
+    letter-spacing: -0.005em;
+    line-height: 1.15;
+    margin: 2.4rem 0 0.8rem;
+    color: var(--ink);
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  .doc-body h3 {
+    font-family: var(--serif);
+    font-size: 20px;
+    font-weight: 500;
+    margin: 1.6rem 0 0.5rem;
+    color: var(--ink);
+  }
+  .doc-body h4 {
+    font-family: var(--sans);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--terra);
+    margin: 1.2rem 0 0.3rem;
+  }
+  .doc-body p {
+    margin: 0 0 1rem;
+    color: var(--ink-mid);
+    font-size: 15px;
+    line-height: 1.8;
+  }
+  .doc-body ul, .doc-body ol {
+    margin: 0 0 1rem 1.5rem;
+    color: var(--ink-mid);
+  }
+  .doc-body li {
+    margin: 0.25rem 0;
+    line-height: 1.75;
+  }
+  .doc-body li > ul, .doc-body li > ol { margin-top: 0.25rem; }
+  .doc-body strong {
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .doc-body em { color: inherit; }
+  .doc-body a {
+    color: var(--ink);
+    text-decoration: underline;
+    text-decoration-color: var(--rule);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+    transition: color 0.15s, text-decoration-color 0.15s;
+  }
+  .doc-body a:hover {
+    color: var(--terra);
+    text-decoration-color: var(--terra);
+  }
+
+  .doc-body code {
+    font-family: var(--mono);
+    font-size: 0.85em;
+    background: var(--paper);
+    padding: 0.1rem 0.35rem;
+    border-radius: 2px;
+    color: var(--ink);
+    word-break: break-word;
+  }
+  .doc-body pre {
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    padding: 0.9rem 1rem;
+    overflow-x: auto;
+    margin: 1rem 0 1.2rem;
+    font-size: 12.5px;
+    line-height: 1.55;
+  }
+  .doc-body pre code {
+    background: none;
+    padding: 0;
+    font-size: inherit;
+    border-radius: 0;
+    color: var(--ink);
+    white-space: pre;
+  }
+
+  .doc-body blockquote {
+    border-left: 2px solid var(--terra);
+    padding: 0.4rem 0 0.4rem 1.2rem;
+    margin: 1rem 0;
+    color: var(--ink-mid);
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 17px;
+  }
+
+  .doc-body hr {
+    border: none;
+    border-top: 1px solid var(--rule);
+    margin: 2.4rem 0;
+  }
+
+  .doc-body table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1rem 0 1.4rem;
+    font-size: 14px;
+  }
+  .doc-body th, .doc-body td {
+    text-align: left;
+    padding: 0.5rem 0.7rem;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .doc-body th {
+    font-family: var(--sans);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--terra);
+    font-weight: 400;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  /* ─── FOOTER ──────────────────────────────────────────────── */
+  footer {
+    border-top: 1px solid var(--rule);
+    padding: 1.5rem 0;
+    margin-top: 3rem;
+  }
+  footer .inner {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 2rem;
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--ink-faint);
+    letter-spacing: 0.08em;
+  }
+
+  /* ─── RESPONSIVE ─────────────────────────────────────────── */
+  @media (max-width: 860px) {
+    .shell {
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+      padding: 1.5rem 1.25rem 3rem;
+    }
+    aside.toc {
+      position: static;
+      max-height: none;
+      padding: 1rem 1rem;
+      background: var(--paper);
+      border: 1px solid var(--rule);
+    }
+    main .doc-title { font-size: 34px; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="site-nav">
+  <div class="site-nav-inner">
+    <a href="/" class="site-nav-name">Geodata <em>MCP</em></a>
+    <ul class="site-nav-links">
+      <li><a href="/about">About</a></li>
+      <li><a href="/docs">Docs</a></li>
+      <li><a href="/#connect">Connect</a></li>
+    </ul>
+  </div>
+</nav>
+
+<div class="shell">
+
+  <aside class="toc">
+    <div class="eyebrow">Contents</div>
+    <ol>
+@@TOC@@
+    </ol>
+    <div class="sidebar-note">
+      These docs describe the system as of
+      <span style="font-variant-numeric:tabular-nums">2026-04-19</span>.
+      Source of truth is the code.
+    </div>
+  </aside>
+
+  <main>
+    <div class="doc-eyebrow">@@EYEBROW@@</div>
+    <h1 class="doc-title">@@TITLE@@</h1>
+    <div class="doc-body">
+@@CONTENT@@
+    </div>
+  </main>
+
+</div>
+
+<footer>
+  <div class="inner">
+    <span>© 2026 Benjamin Henriksson</span>
+    <span>Stockholm · 59.33°N 18.07°E</span>
+  </div>
+</footer>
+
+</body>
+</html>

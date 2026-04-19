@@ -1449,8 +1449,80 @@ def sources(session: Session, layer: str | None = None) -> str:
             if s.url: out.append(f"   - URL: {s.url}")
             if s.file_path: out.append(f"   - File: `{s.file_path}`")
             if s.retrieved: out.append(f"   - Retrieved: {s.retrieved}")
+        if m.column_provenance:
+            out.append("")
+            out.append("**Column attribution** (columns written in-session, "
+                       "distinct from the layer's loaded sources above):")
+            for col in sorted(m.column_provenance):
+                cp = m.column_provenance[col]
+                author = cp.get("authored_by", "?")
+                tool = cp.get("tool", "?")
+                at = cp.get("at", "")
+                line = f"- `{col}` — {author} via `{tool}` at {at}"
+                if cp.get("model"):
+                    line += f" (model: {cp['model']})"
+                if cp.get("expr"):
+                    line += f"\n    expr: `{cp['expr']}`"
+                out.append(line)
         out.append("")
     return "\n".join(out)
+
+
+def frequencies(
+    session: Session, layer: str, column: str, limit: int = 50,
+) -> dict:
+    """Return the top value counts for `column` on `layer`, ordered by
+    frequency descending. Cheap wrapper around GROUP BY + COUNT — included
+    as a first-class op because "what values are in this column and how
+    often" is one of the most common follow-up questions after load().
+
+    Args:
+        layer: session layer.
+        column: column name to group on.
+        limit: max distinct values to return (default 50).
+
+    Returns:
+        {layer, column, n_distinct, n_total, n_null, rows: [{value, count}, ...]}
+    """
+    meta = _require_layer(session, layer)
+    declared = [c for c in meta.attributes if not c.startswith("__")]
+    if column not in declared:
+        raise OpError(
+            f"column '{column}' not on '{layer}'. Available: {declared}"
+        )
+    qlayer = _quote_ident(layer)
+    qcol = _quote_ident(column)
+    limit = max(1, min(int(limit), 1000))
+    try:
+        totals = session.conn.execute(
+            f"SELECT COUNT(*), COUNT(*) - COUNT({qcol}), COUNT(DISTINCT {qcol}) "
+            f"FROM {qlayer}"
+        ).fetchone()
+        n_total = int(totals[0])
+        n_null = int(totals[1])
+        n_distinct = int(totals[2])
+        rows_raw = session.conn.execute(
+            f"SELECT {qcol} AS value, COUNT(*) AS count FROM {qlayer} "
+            f"GROUP BY {qcol} ORDER BY count DESC, value NULLS LAST LIMIT {limit}"
+        ).fetchall()
+    except Exception as e:
+        raise OpError(f"frequencies failed: {type(e).__name__}: {e}")
+    rows = [{"value": v, "count": int(c)} for v, c in rows_raw]
+    out = {
+        "layer": layer,
+        "column": column,
+        "n_total": n_total,
+        "n_null": n_null,
+        "n_distinct": n_distinct,
+        "rows": rows,
+    }
+    if n_distinct > limit:
+        out["truncated"] = True
+        out["hint"] = (
+            f"showing top {limit} of {n_distinct} distinct values; raise "
+            f"`limit` (max 1000) or add a WHERE via filter() first."
+        )
+    return out
 
 
 # ======================================================================
@@ -1743,6 +1815,12 @@ def add_field(
     geom_marker = meta.attributes.get("__geom_col__", "")
     meta.attributes = schema
     meta.attributes["__geom_col__"] = geom_marker
+    meta.column_provenance[name] = {
+        "authored_by": "derived",
+        "tool": "add_field",
+        "at": datetime.utcnow().isoformat() + "Z",
+        "expr": expr,
+    }
     session.log(Operation(
         tool="add_field",
         args={"layer": layer, "name": name, "expr": expr, "field_type": field_type},
@@ -1786,6 +1864,13 @@ def update_field(
     except Exception as e:
         raise OpError(f"update_field failed: {type(e).__name__}: {e}")
 
+    meta.column_provenance[name] = {
+        "authored_by": "derived",
+        "tool": "update_field",
+        "at": datetime.utcnow().isoformat() + "Z",
+        "expr": expr,
+        "where": where,
+    }
     session.log(Operation(
         tool="update_field",
         args={"layer": layer, "name": name, "expr": expr, "where": where},
@@ -1817,6 +1902,7 @@ def drop_field(session: Session, layer: str, name: str) -> dict:
     except Exception as e:
         raise OpError(f"drop_field failed: {type(e).__name__}: {e}")
     meta.attributes.pop(name, None)
+    meta.column_provenance.pop(name, None)
     session.log(Operation(
         tool="drop_field", args={"layer": layer, "name": name},
         result_layer=layer, summary=f"dropped {name}",
@@ -1835,6 +1921,8 @@ def annotate(
     session: Session, layer: str,
     values: dict,
     key_column: str = "rowid",
+    dry_run: bool = False,
+    model: str | None = None,
 ) -> dict:
     """Apply per-feature attribute values by key. Each `values` entry is
     `{key_value: {attr_name: attr_value, ...}}`. Missing attributes are created
@@ -1850,6 +1938,12 @@ def annotate(
         key_column: column to match on (default 'rowid' — DuckDB's implicit
                     rowid pseudo-column). Use a declared column (e.g. 'id')
                     when you have one; rowid is fine for ephemeral flows.
+        dry_run: if True, validate key matching and preview coverage without
+                 writing. Returns the same response shape with `dry_run: True`
+                 and no mutation; nothing is committed, no columns are created.
+        model: optional identifier for the LLM/tool that authored these
+               values. Stored in per-column provenance so an exported column
+               can be traced back to its author.
     """
     meta = _require_layer(session, layer)
     if not values:
@@ -1874,6 +1968,41 @@ def annotate(
             f"key_column '{key_column}' not on layer '{layer}'. "
             f"Available: {declared_cols + ['rowid']}"
         )
+
+    # Dry-run: report match coverage without writing anything.
+    if dry_run:
+        qlayer_dr = _quote_ident(layer)
+        qkey_dr = _quote_ident(key_column)
+        try:
+            import pyarrow as pa
+        except ImportError:
+            raise OpError("pyarrow is required for annotate")
+        keys_tbl = pa.Table.from_pylist([{"__key": k} for k in values.keys()])
+        tmp_dr = "_annotate_dry_tmp"
+        session.conn.register(tmp_dr, keys_tbl)
+        try:
+            matched_dr = session.conn.execute(
+                f"SELECT COUNT(*) FROM {tmp_dr} t WHERE EXISTS "
+                f"(SELECT 1 FROM {qlayer_dr} WHERE {qkey_dr} = t.__key)"
+            ).fetchone()
+            keys_matched = int(matched_dr[0]) if matched_dr else 0
+        finally:
+            session.conn.unregister(tmp_dr)
+        attr_order_dr = list(all_attrs.keys())
+        new_cols = [c for c in attr_order_dr if c not in meta.attributes]
+        return {
+            "layer": layer,
+            "dry_run": True,
+            "attributes_would_write": attr_order_dr,
+            "new_columns_would_create": new_cols,
+            "keys_submitted": len(values),
+            "keys_matched": keys_matched,
+            "keys_unmatched": len(values) - keys_matched,
+            "rows_total": meta.feature_count,
+            "coverage_pct_if_applied": round(
+                100.0 * keys_matched / meta.feature_count, 2
+            ) if meta.feature_count else 0.0,
+        }
 
     # Snapshot columns that will be written (new or existing).
     for col in all_attrs:
@@ -1944,6 +2073,34 @@ def annotate(
     meta.attributes = schema
     meta.attributes["__geom_col__"] = geom_marker
 
+    # Row-level coverage: how many rows in the target layer now have a
+    # non-NULL value in *any* of the columns we just wrote. Closes the
+    # silent-coverage-gap when the caller forgets to annotate some rows
+    # even if every key they submitted matched.
+    try:
+        any_non_null = " OR ".join(
+            f"{_quote_ident(c)} IS NOT NULL" for c in attr_order
+        )
+        cov = session.conn.execute(
+            f"SELECT COUNT(*) FROM {qlayer} WHERE {any_non_null}"
+        ).fetchone()
+        rows_with_any = int(cov[0]) if cov else 0
+    except Exception:
+        rows_with_any = 0
+    rows_without_any = max(0, meta.feature_count - rows_with_any)
+
+    # Per-column provenance stamp. Overwrites on re-annotate — the latest
+    # authoring wins. Existing human-authored columns that get re-annotated
+    # now reflect that the overwrite happened.
+    now_iso = datetime.utcnow().isoformat() + "Z"
+    for col in attr_order:
+        meta.column_provenance[col] = {
+            "authored_by": "llm",
+            "tool": "annotate",
+            "at": now_iso,
+            "model": model,
+        }
+
     session.log(Operation(
         tool="annotate",
         args={"layer": layer, "n_keys": len(values),
@@ -1959,9 +2116,21 @@ def annotate(
         "keys_matched": len(values) - unmatched,
         "keys_unmatched": unmatched,
         "keys_cap": ANNOTATE_CAP,
+        "rows_total": meta.feature_count,
+        "rows_with_any_annotation": rows_with_any,
+        "rows_without_annotation": rows_without_any,
+        "coverage_pct": round(
+            100.0 * rows_with_any / meta.feature_count, 2
+        ) if meta.feature_count else 0.0,
         "reversible": bool(covering),
         "covering_checkpoints": covering,
     }
+    if rows_without_any:
+        out["coverage_hint"] = (
+            f"{rows_without_any} of {meta.feature_count} rows have no value "
+            f"in any of the new columns. If that is unintended, check that "
+            f"your `values` dict covers every target feature."
+        )
     if unmatched:
         out["warning"] = (
             f"{unmatched} of {len(values)} keys did not match any row in "

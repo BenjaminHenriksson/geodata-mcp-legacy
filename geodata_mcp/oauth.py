@@ -166,68 +166,215 @@ async def register(request: Request) -> JSONResponse:
 
 
 _AUTH_FORM_HTML = """<!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Connect to geodata-mcp</title>
+  <title>Connect to Geodata MCP</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#F5F0E8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400&family=DM+Sans:wght@300;400;500&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
   <style>
-    body { margin: 0; background: #0b0f14; color: #d7dde4;
-           font: 15px -apple-system, BlinkMacSystemFont, sans-serif;
-           min-height: 100vh; display: flex; align-items: center;
-           justify-content: center; }
-    .card { background: #12181f; padding: 28px 32px; border-radius: 10px;
-            width: 380px; box-shadow: 0 10px 30px rgba(0,0,0,0.4); }
-    h1 { font-size: 16px; margin: 0 0 4px; color: #fff; }
-    p  { color: #8c95a1; margin: 0 0 18px; font-size: 13px; line-height: 1.5; }
-    label { display: block; font-size: 12px; color: #8c95a1;
-            margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
-    input[type=password] { width: 100%; padding: 10px 12px;
-        border: 1px solid #2a323d; background: #0b0f14; color: #fff;
-        border-radius: 6px; font: inherit; box-sizing: border-box; }
-    input[type=password]:focus { outline: none; border-color: #4ecdc4; }
-    button { margin-top: 14px; width: 100%; padding: 10px 14px;
-        background: #4ecdc4; color: #0b0f14; border: 0;
-        border-radius: 6px; font: inherit; font-weight: 600;
-        cursor: pointer; }
-    button:hover { background: #5ee0d7; }
-    .err { color: #ff8a8a; font-size: 13px; margin-top: 12px; }
-    .meta { color: #5c6672; font-size: 11px; margin-top: 18px;
-            line-height: 1.5; }
-    .client { color: #d7dde4; }
-    .callback { display: block; color: #d7dde4; background: #0b0f14;
-                border: 1px solid #2a323d; border-radius: 6px;
-                padding: 8px 10px; margin-top: 8px; font-size: 12px;
-                font-family: ui-monospace, SFMono-Regular, monospace;
-                word-break: break-all; }
-    .callback-label { font-size: 12px; color: #8c95a1;
-                      text-transform: uppercase; letter-spacing: 0.05em;
-                      display: block; margin-top: 14px; }
-    .warn { color: #ffd27a; font-size: 12px; margin-top: 10px;
-            line-height: 1.45; }
+    :root {
+      --ivory:     #F5F0E8;
+      --paper:     #EDE7D9;
+      --ink:       #1C1A16;
+      --ink-mid:   #4A4540;
+      --ink-faint: #9A9188;
+      --terra:     #B05B3B;
+      --amber-bg:  #F5E6C8;
+      --amber-bd:  #C99A5B;
+      --amber-ink: #6E4A1E;
+      --rule:      rgba(28,26,22,0.14);
+      --serif:     'Cormorant Garamond', Georgia, serif;
+      --sans:      'DM Sans', system-ui, sans-serif;
+      --mono:      'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--ivory);
+      color: var(--ink);
+      font-family: var(--sans);
+      font-weight: 300;
+      font-size: 15px;
+      line-height: 1.6;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem 1rem;
+      -webkit-font-smoothing: antialiased;
+    }
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        repeating-linear-gradient(0deg, transparent, transparent 59px, rgba(28,26,22,0.04) 60px),
+        repeating-linear-gradient(90deg, transparent, transparent 59px, rgba(28,26,22,0.04) 60px);
+      pointer-events: none;
+      z-index: 0;
+    }
+    .card {
+      position: relative;
+      z-index: 1;
+      background: var(--ivory);
+      border: 1px solid var(--rule);
+      padding: 2.2rem 2.4rem 2rem;
+      width: 100%;
+      max-width: 440px;
+      box-shadow: 0 10px 32px -8px rgba(28,26,22,0.14);
+    }
+    .eyebrow {
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--terra);
+      margin-bottom: 0.4rem;
+      font-weight: 400;
+    }
+    h1 {
+      font-family: var(--serif);
+      font-size: 32px;
+      font-weight: 400;
+      letter-spacing: -0.01em;
+      line-height: 1.1;
+      margin: 0 0 1rem;
+    }
+    h1 em { font-style: italic; color: var(--terra); }
+    .lede {
+      color: var(--ink-mid);
+      font-size: 14px;
+      line-height: 1.65;
+      margin: 0 0 1.2rem;
+    }
+    .lede .client { color: var(--ink); font-weight: 400; }
+    .label {
+      display: block;
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--terra);
+      margin: 1.4rem 0 0.35rem;
+      font-weight: 400;
+    }
+    .callback {
+      display: block;
+      background: var(--paper);
+      border: 1px solid var(--rule);
+      padding: 0.55rem 0.7rem;
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--ink);
+      word-break: break-all;
+      user-select: all;
+    }
+    .warn {
+      margin-top: 0.9rem;
+      padding: 0.75rem 0.9rem;
+      background: var(--amber-bg);
+      border-left: 2px solid var(--amber-bd);
+      color: var(--amber-ink);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .warn strong { color: var(--amber-ink); font-weight: 500; }
+    .warn code {
+      font-family: var(--mono);
+      font-size: 11px;
+      background: rgba(255,255,255,0.55);
+      padding: 0 3px;
+      border: 1px solid rgba(28,26,22,0.08);
+    }
+    input[type=password] {
+      width: 100%;
+      padding: 0.55rem 0.7rem;
+      background: var(--ivory);
+      color: var(--ink);
+      border: 1px solid var(--rule);
+      border-radius: 0;
+      font-family: var(--mono);
+      font-size: 13px;
+      letter-spacing: 0.06em;
+    }
+    input[type=password]:focus {
+      outline: none;
+      border-color: var(--terra);
+    }
+    button[type=submit] {
+      margin-top: 1.2rem;
+      width: 100%;
+      padding: 0.7rem 1rem;
+      background: var(--ink);
+      color: var(--ivory);
+      border: none;
+      border-radius: 0;
+      font-family: var(--sans);
+      font-size: 11px;
+      font-weight: 400;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    button[type=submit]:hover { background: var(--terra); }
+    .err {
+      margin-top: 0.9rem;
+      padding: 0.55rem 0.75rem;
+      background: rgba(176,91,59,0.10);
+      border-left: 2px solid var(--terra);
+      color: var(--terra);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .meta {
+      margin-top: 1.8rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--rule);
+      color: var(--ink-faint);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      line-height: 1.5;
+    }
+    .meta a {
+      color: var(--ink-mid);
+      text-decoration: underline;
+      text-decoration-color: var(--rule);
+      text-underline-offset: 3px;
+    }
+    .meta a:hover { color: var(--terra); text-decoration-color: var(--terra); }
   </style>
 </head>
 <body>
   <form class="card" method="post" action="/oauth/authorize">
-    <h1>Connect to geodata-mcp</h1>
-    <p><span class="client">@@CLIENT_NAME@@</span> is asking for access.
-       Verify the callback below before continuing — it's where your
-       access token will be sent.</p>
-    <span class="callback-label">Callback (redirect_uri)</span>
+    <div class="eyebrow">Authorize · Stockholm</div>
+    <h1>Connect to Geodata <em>MCP</em></h1>
+    <p class="lede">
+      <span class="client">@@CLIENT_NAME@@</span> is requesting access.
+      Verify the callback below before continuing. That is where your
+      access token will be sent.
+    </p>
+    <span class="label">Callback host</span>
     <span class="callback">@@REDIRECT_HOST@@</span>
-    <div class="warn">If this isn't a host you recognize (e.g.
-        <code>claude.ai</code> for claude.ai, <code>localhost</code> for
-        local testing), <strong>do not continue</strong> — it could be a
-        phishing attempt to hijack your session.</div>
-    <label for="code" style="margin-top:16px">Invite code</label>
+    <div class="warn">
+      If this is not a host you recognize (e.g. <code>claude.ai</code>
+      for claude.ai, <code>localhost</code> for local testing),
+      <strong>do not continue</strong>. It could be a phishing attempt
+      to hijack your session.
+    </div>
+    <label class="label" for="code">Invite code</label>
     <input type="password" id="code" name="invite_code" autocomplete="off"
            autofocus required>
     <button type="submit">Connect</button>
     @@ERROR@@
     @@HIDDEN@@
-    <div class="meta">Stockholm open geodata · read-only MCP server ·
-        <a href="https://github.com/BenjaminHenriksson/geodata-mcp"
-           style="color:#4ecdc4">source</a></div>
+    <div class="meta">
+      Stockholm open geodata, read-only MCP server.
+      <a href="https://github.com/BenjaminHenriksson/geodata-mcp">Source</a>.
+    </div>
   </form>
 </body>
 </html>

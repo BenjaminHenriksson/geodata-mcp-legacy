@@ -5,7 +5,7 @@ provenance and schema normalization.** Stockholm Stadsbyggnadskontorets city
 map, SCB demographic statistical areas (DeSO 2018 + 2025), SCB's DeSO-keyed
 statistical tables, and OpenStreetMap addresses — all pre-joined to
 canonical keys and exposed to any MCP client through a session-scoped
-DuckDB spatial backend. 66 datasets, one viewer, 35 tools shaped for how
+DuckDB spatial backend. 66 datasets, one viewer, 38 tools shaped for how
 LLMs actually reason.
 
 - **Live:** `https://geo.benjaminhenriksson.com`
@@ -74,9 +74,12 @@ Desktop can auto-approve safe calls.
 | `rollback` | Undo every mutation covered by this checkpoint |
 | `commit` | Make mutations permanent, discard snapshots |
 
-Full tool reference: **[`docs/tools.md`](docs/tools.md)**. The server also
-publishes top-level `instructions` at connection time — a ~5 KB workflow
-primer Claude (and other MCP clients) read before the first tool call.
+Full tool reference: **[`docs/tools.md`](docs/tools.md)**, plus the
+published docs at [`geo.benjaminhenriksson.com/docs`](https://geo.benjaminhenriksson.com/docs)
+(design rationale, architecture, data model, sessions, viewer,
+provenance, rendering, roadmap). The server also publishes top-level
+`instructions` at connection time — a ~5 KB workflow primer Claude (and
+other MCP clients) read before the first tool call.
 
 ---
 
@@ -137,7 +140,7 @@ claude mcp add --transport http geodata \
   --header "Authorization: Bearer $TOKEN"
 ```
 
-Restart Claude Code. The 35 tools appear automatically.
+Restart Claude Code. The 38 tools appear automatically.
 
 ### 3. Claude Desktop (via the `mcp-remote` shim)
 
@@ -274,7 +277,7 @@ Cloudflare edge → Caddy → geodata-mcp service on 127.0.0.1:8765
 - Token bearer auth on `/mcp/*` only. Viewer/API ride on the session UUID.
 - All data locally in `data/normalized/` (EPSG:3011 for spatial, UTF-8 for text).
 
-Full deployment details: **[`docs/deployment.md`](docs/deployment.md)**.
+Full deployment details: **[`docs/_deployment.md`](docs/_deployment.md)** (private; VPS specifics).
 
 ---
 

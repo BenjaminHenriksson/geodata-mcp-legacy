@@ -47,6 +47,9 @@ class DatasetEntry:
     license_url: str
     source_url: str
     retrieved: str
+    # Optional hint flagging non-obvious caveats (e.g. multi-word labels
+    # stored as one point per word — grouping required before use).
+    dedupe_hint: str | None = None
 
     def absolute_path(self) -> Path:
         return ROOT / self.file_path
@@ -85,6 +88,7 @@ def _entry_from_dict(d: dict) -> DatasetEntry:
             license_url=d.get("license_url", ""),
             source_url=d.get("source_url", ""),
             retrieved=d.get("retrieved", ""),
+            dedupe_hint=d.get("dedupe_hint"),
         )
     except KeyError as e:
         raise ValueError(

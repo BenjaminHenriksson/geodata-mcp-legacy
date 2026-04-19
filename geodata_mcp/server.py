@@ -11,6 +11,7 @@ The HTTP mode also serves the viewer at /view/{session_id}.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 from pathlib import Path
 
@@ -419,6 +420,8 @@ def _dataset_summary(d: DatasetEntry, verbose: bool = True) -> dict:
         "publisher": d.publisher,
         "license": d.license,
     }
+    if d.dedupe_hint:
+        base["dedupe_hint"] = d.dedupe_hint
     if verbose:
         base["attributes"] = [
             {
@@ -475,7 +478,20 @@ def _quick_stats_and_sample(sess: Session, name: str, m) -> dict:
             for k, v in zip(col_names, row):
                 col, _, key = k.partition("__")
                 stats.setdefault(col, {})[key] = v
-            out["quick_stats"] = stats
+            # Filter out columns with no informative distribution:
+            # all-null (count=0) or zero-variance (min==max). Cuts the
+            # "TEXTCHAR is always 0", "TEXT_ANGLE is always 0.0" noise
+            # that the LLM has to pay token cost for.
+            def _is_informative(s: dict) -> bool:
+                if (s.get("count") or 0) == 0:
+                    return False
+                mn, mx = s.get("min"), s.get("max")
+                if mn is not None and mx is not None and mn == mx:
+                    return False
+                return True
+            stats = {c: s for c, s in stats.items() if _is_informative(s)}
+            if stats:
+                out["quick_stats"] = stats
         except Exception:
             pass
     # 3-row sample — non-geometry cols only.
@@ -509,6 +525,12 @@ def _layer_summary(sess: Session, name: str) -> dict:
     }
     if m.notes:
         payload["notes"] = m.notes
+    # Per-column attribution for in-session-authored columns so the LLM and
+    # viewer can distinguish "loaded from source" from "LLM-written on this
+    # date by this tool". Layer-level provenance still covers the loaded
+    # attributes.
+    if m.column_provenance:
+        payload["column_provenance"] = dict(m.column_provenance)
     # Quick stats + sample so the LLM doesn't have to follow up with
     # stats() and inspect() just to orient.
     payload.update(_quick_stats_and_sample(sess, name, m))
@@ -620,6 +642,49 @@ def geocode(
             }
             for m in matches
         ],
+    }
+
+
+@mcp.tool(annotations=_READ_ONLY)
+def bbox_from(
+    name: str,
+    buffer_m: float = 0.0,
+    ctx: Context | None = None,
+) -> dict:
+    """Return the EPSG:3011 bounding box of a named place, optionally
+    expanded by a buffer. Thin convenience over `geocode` — collapses the
+    "geocode → eyeball coords → build a bbox by hand" pattern into one call.
+
+    Args:
+        name: place name ("Gamla Stan", "Södermalm", a block, a street).
+        buffer_m: extra metres to expand the box in every direction. 0 keeps
+                  the native envelope of the best geocode match.
+
+    Returns:
+        {name, kind, subkind, score, center_3011, bbox_3011, buffer_m}.
+        If no match is found, returns an error_response with the query.
+    """
+    sess = _session(ctx)
+    matches = do_geocode(sess.conn, name, limit=1)
+    if not matches:
+        return _server_error(
+            "no_match",
+            f"no geocode match within Stockholm coverage for '{name}'.",
+            query=name,
+        )
+    m = matches[0]
+    xmin, ymin, xmax, ymax = m.bbox_3011
+    b = max(0.0, float(buffer_m))
+    if b > 0:
+        xmin -= b; ymin -= b; xmax += b; ymax += b
+    return {
+        "name": m.name,
+        "kind": m.grupp,
+        "subkind": m.kategori,
+        "score": round(m.score, 4),
+        "center_3011": [m.x_3011, m.y_3011],
+        "bbox_3011": [xmin, ymin, xmax, ymax],
+        "buffer_m": b,
     }
 
 
@@ -844,6 +909,34 @@ def stats(
         return op_stats(_session(ctx), layer, columns=columns, group_by=group_by, limit=limit)
     except Exception as e:
         return f"[server-side error from {_SERVER_ORIGIN}] {type(e).__name__}: {e}"
+
+
+@mcp.tool(annotations=_READ_ONLY)
+def frequencies(
+    layer: str,
+    column: str,
+    limit: int = 50,
+    ctx: Context | None = None,
+) -> dict:
+    """Return value counts for `column` on `layer`, sorted by frequency.
+
+    Answers the "what categories are in this column and how many of each"
+    question in one call — a very common follow-up after load() when
+    deciding how to classify, filter, or style a layer.
+
+    Args:
+        layer: session layer.
+        column: column name.
+        limit: max distinct values (default 50, cap 1000).
+
+    Returns: {layer, column, n_total, n_null, n_distinct,
+              rows: [{value, count}, ...], truncated?}
+    """
+    try:
+        from .operations import frequencies as op_frequencies
+        return op_frequencies(_session(ctx), layer, column, limit=limit)
+    except Exception as e:
+        return _error_response(e)
 
 
 # ---------- macro helpers: filter+order+limit, baseline_stats, classify,
@@ -1132,6 +1225,67 @@ def export_many(
         return _error_response(e)
 
 
+@mcp.tool(annotations=_SAFE_MUTATION)
+def render_map(
+    layers: list[str],
+    title: str | None = None,
+    legend: bool = True,
+    width_px: int = 1600,
+    height_px: int = 1000,
+    ctx: Context | None = None,
+) -> dict:
+    """Render the given layers to a PNG and return a download URL.
+
+    Unlike `show()` (which points the caller at the interactive viewer),
+    this produces a self-contained image suitable for embedding in a
+    report, slide, or Slack message. Honors the same style spec as
+    `show()` — call `show(layers, style=...)` first if you want themed
+    colors, then `render_map(layers)` for the export.
+
+    Design: editorial paper-toned backdrop (no tiled basemap — the
+    server sandbox denies outbound egress, and the editorial palette
+    reads cleaner than a Carto tile anyway). Includes title, scale bar,
+    and legend derived from the active style.
+
+    Args:
+        layers: layer names to render.
+        title: optional figure title; falls back to the session's
+               current `show()` title.
+        legend: include a per-layer legend (default True).
+        width_px, height_px: output dimensions. Defaults to 1600×1000.
+
+    Returns: {url, format='png', width, height, bbox_3011,
+              files: [{url, size_bytes}], hint}.
+    """
+    try:
+        sess = _session(ctx)
+        from . import render as _render
+        import secrets as _secrets, time as _time
+        token = _secrets.token_urlsafe(12)
+        out_dir = EXPORT_ROOT / token
+        info = _render.render_map_png(
+            sess, layers, out_dir,
+            title=title, legend=legend,
+            width_px=int(width_px), height_px=int(height_px),
+        )
+        size = (out_dir / info["filename"]).stat().st_size
+        url = _abs_url(f"/exports/{token}/{info['filename']}")
+        return {
+            "url": url,
+            "format": "png",
+            "width": info["width"],
+            "height": info["height"],
+            "bbox_3011": info["bbox_3011"],
+            "size_bytes": size,
+            "expires_in_s": EXPORT_TTL_S,
+            "hint": ("PNG artefact rendered server-side. Paper-toned "
+                     "editorial backdrop, no tiles. Embed in docs, slides, "
+                     "or messages directly; no further processing needed."),
+        }
+    except Exception as e:
+        return _error_response(e)
+
+
 @mcp.tool(annotations=_READ_ONLY)
 def sources(layer: str | None = None, ctx: Context | None = None) -> str:
     """Return a structured provenance report (publisher, license, URL,
@@ -1212,10 +1366,33 @@ def inspect(
           "|" + "|".join(["---"] * len(col_names)) + "|"]
     for r in rows:
         md.append("| " + " | ".join(_md_cell(v) for v in r) + " |")
-    suffix = ""
+    suffix_parts = []
+    # L2 fix: if the cap or requested `n` left more rows unseen, say so
+    # explicitly. Before this change 187 and 201 rows were indistinguishable
+    # from the caller's side.
+    effective_total = meta.feature_count
+    if where:
+        try:
+            cnt = sess.conn.execute(
+                f"SELECT COUNT(*) FROM {_qi(layer)} WHERE {where}"
+            ).fetchone()
+            effective_total = int(cnt[0]) if cnt else effective_total
+        except Exception:
+            pass
+    seen = int(offset) + len(rows)
+    remaining = max(0, effective_total - seen)
+    if remaining > 0:
+        more = (f"\n\n_{remaining} more row{'s' if remaining != 1 else ''} "
+                f"not shown; raise `n` (cap {cap}) or `offset` to see them._")
+        suffix_parts.append(more)
     if include_geometry:
-        suffix = "\n\n_geom_wkt is large — request only when needed._"
-    return f"Showing {len(rows)} of {meta.feature_count} rows in `{layer}`.\n\n" + "\n".join(md) + suffix
+        suffix_parts.append("\n\n_geom_wkt is large — request only when needed._")
+    suffix = "".join(suffix_parts)
+    header = f"Showing {len(rows)} of {effective_total}"
+    if where:
+        header += f" (filtered; layer has {meta.feature_count})"
+    header += f" rows in `{layer}`."
+    return header + "\n\n" + "\n".join(md) + suffix
 
 
 @mcp.tool(annotations=_IDEMPOTENT_MUTATION)
@@ -1231,71 +1408,126 @@ def show(
 
     Args:
         layers: names of session layers to make visible.
-        title: optional title for the viewer (not currently rendered).
-        style: optional per-layer styling. Shape:
+        title: optional title rendered in the viewer's panel header and
+            browser tab. Passing `None` preserves any previously-set title.
+            Pass `""` to clear it.
+        style: optional per-layer styling with up to four visual channels.
 
-            style = {
-                "<layer_name>": {
-                    "column": "<attribute_name>",
-                    "scale": "categorical" | "linear",
-                    "palette": {"val1": "#rrggbb", ...}       # categorical
-                             | ["#lo", "#hi"]                 # linear
+            Shape:
+                style = {
+                    "<layer_name>": {
+                        # color channel (required to render anything non-default)
+                        "column": "<attribute_name>",
+                        "scale": "categorical" | "linear",
+                        "palette": {"val1": "#rrggbb", ...}  # categorical
+                                 | ["#lo", "#hi"]            # linear
+                                 | None                       # auto-assign
+                                                              # (categorical)
+
+                        # optional extra channels — each maps a numeric
+                        # column to a linear range. Use them to
+                        # double-encode features (e.g. color=category,
+                        # size=importance).
+                        "size":    {"column": "<attr>", "range": [3, 12]},
+                        "opacity": {"column": "<attr>", "range": [0.3, 1.0]},
+                        "stroke":  {"column": "<attr>", "range": [0.5, 3.0]},
+                    }
                 }
-            }
 
-          Example — color buildings by LLM-classified era:
-            show(["buildings"], style={
-                "buildings": {
-                    "column": "era", "scale": "categorical",
-                    "palette": {
-                        "pre-1900": "#6a3d9a",
-                        "functionalist": "#1f78b4",
-                        "post-war": "#33a02c",
-                        "modern": "#ff7f00",
-                    },
-                },
-            })
+          Examples:
+
+          # 1) color by category with an auto-assigned palette
+          show(["places"], style={
+              "places": {"column": "era", "scale": "categorical"},
+          })
+
+          # 2) two channels: color = category, size = population
+          show(["deso_income"], style={
+              "deso_income": {
+                  "column": "income_bracket", "scale": "categorical",
+                  "palette": {"low": "#B05B3B", "mid": "#9A7A42", "high": "#6B7348"},
+                  "size": {"column": "population", "range": [4, 14]},
+              },
+          })
 
           Layers without a style entry fall back to their default color.
-          The style is stored in session state and consumed by the viewer
-          automatically on its next auto-refresh poll.
+          The full style is stored in session state and consumed by the
+          viewer automatically on its next auto-refresh poll.
     """
     try:
         sess = _session(ctx)
     except SessionExpired as e:
         return _error_response(e)
-    summaries = []
     missing = []
     for n in layers:
-        if n in sess.layers:
-            summaries.append(_layer_summary(sess, n))
-        else:
+        if n not in sess.layers:
             missing.append(n)
     sess.visible_layers = [n for n in layers if n in sess.layers]
-    # Update styles — merge with any prior style (so you can call show twice
-    # without losing earlier styling), keep only entries whose layer is
-    # actually visible now.
+    if title is not None:
+        sess.visible_title = title or None
+    # Style validation — color channel + optional size/opacity/stroke
+    # channels. Invalid specs reject the whole call so the LLM can fix and
+    # retry in one round.
     VALID_SCALES = {"categorical", "linear"}
+    CHANNEL_KEYS = ("size", "opacity", "stroke")
     if style:
         for lname, spec in style.items():
             if lname not in sess.layers:
                 continue
-            scale = (spec or {}).get("scale")
+            spec = spec or {}
+            scale = spec.get("scale")
             if scale is not None and scale not in VALID_SCALES:
                 return _server_error(
                     "invalid_style",
                     f"style[{lname!r}].scale must be one of {sorted(VALID_SCALES)}, "
                     f"got {scale!r}",
                 )
+            for ch in CHANNEL_KEYS:
+                if ch not in spec:
+                    continue
+                ch_spec = spec[ch]
+                if ch_spec is None:
+                    continue
+                if not isinstance(ch_spec, dict):
+                    return _server_error(
+                        "invalid_style",
+                        f"style[{lname!r}].{ch} must be a dict like "
+                        f"{{'column': '...', 'range': [lo, hi]}}, got {type(ch_spec).__name__}",
+                    )
+                if not ch_spec.get("column"):
+                    return _server_error(
+                        "invalid_style",
+                        f"style[{lname!r}].{ch} missing required 'column'",
+                    )
+                rng = ch_spec.get("range")
+                if (not isinstance(rng, list) or len(rng) != 2
+                    or not all(isinstance(v, (int, float)) for v in rng)):
+                    return _server_error(
+                        "invalid_style",
+                        f"style[{lname!r}].{ch}.range must be [lo, hi] numbers, got {rng!r}",
+                    )
             sess.visible_styles[lname] = spec
     # Drop styles for layers that are no longer visible.
     sess.visible_styles = {k: v for k, v in sess.visible_styles.items()
                             if k in sess.visible_layers}
     sess.bump_version()
+    # Trimmed per-layer summary: `show()` is the visibility-toggle entry
+    # point, not the "tell me everything about this layer" one. Heavy
+    # fields (quick_stats, sample, provenance) stay on load/filter/spatial
+    # responses where they're actually useful.
+    compact = []
+    for n in sess.visible_layers:
+        m = sess.layers[n]
+        compact.append({
+            "name": n,
+            "feature_count": m.feature_count,
+            "geometry_type": m.geometry_type,
+            "style_applied": bool(sess.visible_styles.get(n)),
+        })
     return {
-        "title": title,
+        "title": sess.visible_title,
         "viewer_url": _abs_url(f"/view/{sess.id}"),
-        "visible_layers": summaries,
+        "visible_layers": compact,
         "unknown_layers": missing,
         "styles": sess.visible_styles,
     }
@@ -1440,6 +1672,8 @@ def annotate(
     layer: str,
     values: dict,
     key_column: str = "rowid",
+    dry_run: bool = False,
+    model: str | None = None,
     ctx: Context | None = None,
 ) -> dict:
     """Attach LLM-classified per-feature attributes in one call.
@@ -1456,18 +1690,32 @@ def annotate(
     VARCHAR). Up to 10,000 keys per call. Pair with `batch_iterate` for layers
     larger than you can reason about in one pass.
 
+    The response reports both key-level matching (keys_matched / keys_unmatched)
+    and row-level coverage (rows_total / rows_with_any_annotation /
+    rows_without_annotation) — so you can distinguish "every key I sent hit a
+    row" from "every row in the layer received a value". The two differ when
+    your `values` dict covers only a subset of the layer.
+
     Args:
         layer: target layer.
         values: {key_value: {attr_name: val, ...}} — many features per call.
         key_column: column to match on. Default 'rowid' (DuckDB pseudo-column,
                     stable within a session). Use a declared key column when
                     one exists.
+        dry_run: if True, preview coverage without writing. Returns
+                 `{dry_run: True, keys_matched, keys_unmatched,
+                 new_columns_would_create, ...}`. Use this before committing
+                 large annotation payloads to catch key_column mismatches.
+        model: optional author id ("claude-sonnet-4-6", etc.) stored in
+               per-column provenance so exported columns can be traced
+               to their author.
 
     Reversible inside a checkpoint (pre-image snapshotted once per column).
     """
     try:
         sess = _session(ctx)
-        out = op_annotate(sess, layer, values, key_column=key_column)
+        out = op_annotate(sess, layer, values, key_column=key_column,
+                          dry_run=dry_run, model=model)
         _attach_hint(out, sess, layer)
         return out
     except Exception as e:
@@ -1841,11 +2089,92 @@ def build_http_app() -> object:
     from starlette.staticfiles import StaticFiles
 
     viewer_dir = ROOT / "viewer"
+    docs_dir = ROOT / "docs"
     # Content-hash the JS at startup so the viewer HTML references /static/app.js?v=<hash>.
     # Changes to the JS auto-bust Cloudflare's cache-control: max-age=14400.
     app_js_hash = hashlib.sha256((viewer_dir / "app.js").read_bytes()).hexdigest()[:10]
     index_template = (viewer_dir / "index.html").read_text(encoding="utf-8")
     index_rendered = index_template.replace("{APP_JS_HASH}", app_js_hash)
+    landing_html = (viewer_dir / "landing.html").read_text(encoding="utf-8")
+    docs_template = (viewer_dir / "docs.html").read_text(encoding="utf-8")
+    notfound_html = (viewer_dir / "404.html").read_text(encoding="utf-8")
+    about_html = (viewer_dir / "about.html").read_text(encoding="utf-8")
+
+    # Allow-list of slug → (title, eyebrow). Only these are served at
+    # /docs/<slug>. Underscore-prefixed files in docs/ (deployment,
+    # security) are private and never exposed. Order matters — determines
+    # the sidebar ordering.
+    DOCS_PAGES = [
+        ("index",        "Overview",                "Documentation"),
+        ("design",       "Design philosophy",       "Why this exists"),
+        ("architecture", "Architecture",            "How the pieces fit"),
+        ("data",         "Data model",              "What is loaded and how it's shaped"),
+        ("tools",        "Tool reference",          "The MCP surface"),
+        ("sessions",     "Sessions and persistence", "The workspace model"),
+        ("viewer",       "Viewer",                  "Interactive map surface"),
+        ("provenance",   "Provenance",              "Layer- and column-level lineage"),
+        ("rendering",    "Map rendering",           "Server-side PNG export"),
+        ("roadmap",      "Roadmap and limitations", "What's missing, what's deferred"),
+    ]
+    DOCS_BY_SLUG = {slug: (title, eyebrow) for slug, title, eyebrow in DOCS_PAGES}
+
+    def _render_docs_page(slug: str) -> HTMLResponse | None:
+        if slug not in DOCS_BY_SLUG:
+            return None
+        import markdown as _md
+        try:
+            md_text = (docs_dir / f"{slug}.md").read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+        title, eyebrow = DOCS_BY_SLUG[slug]
+        # Rewrite bare slug links in markdown so "[tools](tools)" becomes
+        # an absolute `/docs/tools` link (markdown's default would produce
+        # a relative link that breaks under the viewer path layout).
+        for other_slug in DOCS_BY_SLUG:
+            md_text = md_text.replace(f"]({other_slug})",
+                                      f"](/docs/{other_slug})")
+        html = _md.markdown(
+            md_text,
+            extensions=["fenced_code", "tables", "toc", "sane_lists"],
+        )
+        # Sidebar TOC — links to every allow-listed page, marking current.
+        toc_items = []
+        for s, t, _ in DOCS_PAGES:
+            cls = ' class="current"' if s == slug else ''
+            toc_items.append(
+                f'      <li><a href="/docs/{s}"{cls}>{t}</a></li>'
+            )
+        page = (docs_template
+                .replace("@@TITLE@@", title)
+                .replace("@@EYEBROW@@", eyebrow)
+                .replace("@@TOC@@", "\n".join(toc_items))
+                .replace("@@CONTENT@@", html))
+        return HTMLResponse(page)
+
+    async def root_index(request):
+        return HTMLResponse(landing_html)
+
+    async def about_page(request):
+        return HTMLResponse(about_html)
+
+    async def docs_index(request):
+        resp = _render_docs_page("index")
+        if resp is None:
+            return HTMLResponse("<h1>Docs unavailable</h1>", status_code=500)
+        return resp
+
+    async def docs_page(request):
+        from starlette.exceptions import HTTPException as _HTTPException
+        slug = request.path_params["slug"]
+        if not slug.replace("-", "").replace("_", "").isalnum():
+            raise _HTTPException(404)
+        resp = _render_docs_page(slug)
+        if resp is None:
+            raise _HTTPException(404)
+        return resp
+
+    async def not_found(request, exc):
+        return HTMLResponse(notfound_html, status_code=404)
 
     async def view_index(request):
         return HTMLResponse(index_rendered)
@@ -1864,6 +2193,7 @@ def build_http_app() -> object:
             "visible_layers": s.visible_layers,
             "layers": {n: _layer_summary(s, n) for n in s.visible_layers},
             "styles": s.visible_styles,
+            "title": s.visible_title,
         })
 
     async def api_version(request):
@@ -1985,6 +2315,11 @@ def build_http_app() -> object:
     routes = [
         *mcp_app.routes,
         *oauth_mod.routes(),
+        Route("/", root_index),
+        Route("/about", about_page),
+        Route("/docs", docs_index),
+        Route("/docs/", docs_index),
+        Route("/docs/{slug}", docs_page),
         Route("/view/{session_id}", view_index),
         Route("/api/{session_id}/visible_layers", api_visible),
         Route("/api/{session_id}/version", api_version),
@@ -1992,7 +2327,23 @@ def build_http_app() -> object:
         Route("/exports/{token}/{filename}", serve_export),
         Mount("/static", StaticFiles(directory=str(viewer_dir)), name="static"),
     ]
-    app = Starlette(routes=routes, lifespan=mcp_app.router.lifespan_context)
+    # Compose a lifespan that runs FastMCP's startup/shutdown AND flushes
+    # persistent session state on SIGTERM so graceful restarts don't drop
+    # any dirty sidecars.
+    _inner_lifespan = mcp_app.router.lifespan_context
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app):  # noqa: ANN001
+        async with _inner_lifespan(app):
+            try:
+                yield
+            finally:
+                REGISTRY.flush_all()
+
+    app = Starlette(
+        routes=routes, lifespan=lifespan,
+        exception_handlers={404: not_found},
+    )
     app = OAuthAuthMiddleware(app)
     # Wrap with a simple per-IP token bucket (120 req/min, burst 40).
     return RateLimitMiddleware(app)

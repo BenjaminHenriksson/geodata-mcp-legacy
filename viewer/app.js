@@ -5,11 +5,25 @@
 const sessionId = location.pathname.split('/').pop();
 const statusEl = document.getElementById('status');
 const layersEl = document.getElementById('layers');
+const titleEl = document.getElementById('viewer-title');
+const DEFAULT_TITLE = 'Geodata viewer';
 const LS_BASEMAP = 'geodata_basemap_style_url';
 const POLL_MS = 2000;
 
-const COLORS = ['#ff6b6b', '#4ecdc4', '#ffe66d', '#95e1d3', '#c7ceea',
-                '#fcb1a6', '#a3d2ca', '#f6bd60', '#f28482', '#84a59d'];
+// Cartographer's-ink palette: iron gall, Van Dyke brown, burnt sienna,
+// verdigris, raw umber. All desaturated, all warm-biased, all at a similar
+// value so no single layer dominates. Reads as annotations on paper rather
+// than dashboard accents.
+const COLORS = ['#B05B3B',  // terra (primary accent, shared with site)
+                '#7A4A35',  // burnt umber
+                '#8C6A3E',  // raw sienna / ochre
+                '#5C5040',  // sepia ink
+                '#6B7348',  // olive / moss
+                '#4F5E6B',  // payne's grey, warm
+                '#8A5A7A',  // muted plum
+                '#4E7F7A',  // verdigris
+                '#A5462F',  // vermillion
+                '#9A7A42']; // antique brass
 
 function defaultStyle() {
   return {
@@ -18,10 +32,10 @@ function defaultStyle() {
       'basemap': {
         type: 'raster',
         tiles: [
-          'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
-          'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
-          'https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
-          'https://d.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
+          'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png',
+          'https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png',
+          'https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png',
+          'https://d.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png',
         ],
         tileSize: 256,
         attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a>',
@@ -97,19 +111,27 @@ async function syncSession(isFirstLoad) {
   }
   lastVersion = payload.version ?? 0;
 
+  // Title: server-set via show(title=...), falls back to default.
+  const desiredTitle = payload.title || DEFAULT_TITLE;
+  if (titleEl.textContent !== desiredTitle) titleEl.textContent = desiredTitle;
+  document.title = payload.title
+    ? `${payload.title} · Geodata viewer`
+    : 'Geodata viewer';
+
   // Diff: remove layers that are no longer visible.
   const visible = new Set(payload.visible_layers || []);
   for (const name of Object.keys(dataLayers)) {
     if (!visible.has(name)) removeLayer(name);
   }
   if (!visible.size) {
-    statusEl.textContent = 'No layers marked visible. Call show([...]) from the MCP tool.';
+    statusEl.textContent = 'No layers visible. Call show([...]) from the MCP tool.';
     layersEl.innerHTML = '';
     return;
   }
 
+  const n = payload.visible_layers.length;
   statusEl.textContent =
-    `Session ${payload.session_id.slice(0,10)}… — ${payload.visible_layers.length} layer(s) · v${payload.version}`;
+    `${n} layer${n === 1 ? '' : 's'} · v${payload.version} · ${payload.session_id.slice(0,10)}`;
   layersEl.innerHTML = '';
 
   const styles = payload.styles || {};
@@ -165,20 +187,20 @@ function addLayer(name, fc, color) {
   map.addSource(sourceId, { type: 'geojson', data: fc });
   const ids = [];
   map.addLayer({ id: `${name}-fill`, type: 'fill', source: sourceId,
-    paint: { 'fill-color': color, 'fill-opacity': 0.12 },
+    paint: { 'fill-color': color, 'fill-opacity': 0.22 },
     filter: ['==', '$type', 'Polygon'] });
   ids.push(`${name}-fill`);
   map.addLayer({ id: `${name}-outline`, type: 'line', source: sourceId,
-    paint: { 'line-color': color, 'line-width': 1.2, 'line-opacity': 0.9 },
+    paint: { 'line-color': color, 'line-width': 1.3, 'line-opacity': 0.95 },
     filter: ['==', '$type', 'Polygon'] });
   ids.push(`${name}-outline`);
   map.addLayer({ id: `${name}-line`, type: 'line', source: sourceId,
-    paint: { 'line-color': color, 'line-width': 1.6 },
+    paint: { 'line-color': color, 'line-width': 1.8 },
     filter: ['==', '$type', 'LineString'] });
   ids.push(`${name}-line`);
   map.addLayer({ id: `${name}-pt`, type: 'circle', source: sourceId,
-    paint: { 'circle-color': color, 'circle-radius': 3.5,
-             'circle-stroke-color': '#fff', 'circle-stroke-width': 0.6 },
+    paint: { 'circle-color': color, 'circle-radius': 3.6,
+             'circle-stroke-color': '#F5F0E8', 'circle-stroke-width': 1.0 },
     filter: ['==', '$type', 'Point'] });
   ids.push(`${name}-pt`);
   return ids;
@@ -217,8 +239,13 @@ function estimateAreaPriority(fc) {
 }
 
 // Translate a server-side style spec into MapLibre paint expressions and
-// apply them to the layer's fill / line / point sublayers. When `spec` is
-// falsy, reset to the default solid color.
+// apply them. Supports four channels:
+//   color   — spec.column/scale/palette (per-value fill/line/circle color)
+//   opacity — spec.opacity   = {column, range:[lo,hi]} (linear)
+//   size    — spec.size      = {column, range:[lo,hi]} (circle-radius only)
+//   stroke  — spec.stroke    = {column, range:[lo,hi]} (outline/line/point stroke width)
+// Mutates spec.palette in place when scale==='categorical' and no palette
+// was provided, so the legend reads back the auto-assigned mapping.
 function applyStyle(name, spec, defaultColor) {
   const info = dataLayers[name];
   if (!info) return;
@@ -227,59 +254,220 @@ function applyStyle(name, spec, defaultColor) {
   const line = `${name}-line`;
   const pt = `${name}-pt`;
 
-  // Default path — solid color, reset any prior styling.
-  if (!spec || !spec.column || !spec.palette) {
-    if (map.getLayer(fill)) map.setPaintProperty(fill, 'fill-color', defaultColor);
-    if (map.getLayer(outline)) map.setPaintProperty(outline, 'line-color', defaultColor);
-    if (map.getLayer(line)) map.setPaintProperty(line, 'line-color', defaultColor);
-    if (map.getLayer(pt)) map.setPaintProperty(pt, 'circle-color', defaultColor);
-    return;
+  const feats = info.data?.features || [];
+
+  // --- COLOR ---
+  let colorExpr = defaultColor;
+  if (spec && spec.column) {
+    if (spec.scale === 'linear' && Array.isArray(spec.palette) && spec.palette.length >= 2) {
+      const range = numericRange(feats, spec.column);
+      if (range) {
+        const [lo, hi] = range;
+        colorExpr = ['interpolate', ['linear'], ['to-number', ['get', spec.column]],
+                     lo, spec.palette[0], hi, spec.palette[spec.palette.length - 1]];
+      }
+    } else if (spec.scale === 'categorical' || spec.scale == null) {
+      // Auto-assign a categorical palette when none was supplied.
+      // Mutates spec.palette so the legend reflects the assignment.
+      if (!spec.palette || typeof spec.palette !== 'object' || Array.isArray(spec.palette)) {
+        const values = distinctValues(feats, spec.column);
+        const palette = {};
+        values.forEach((v, i) => { palette[String(v)] = COLORS[i % COLORS.length]; });
+        spec.palette = palette;
+      }
+      const pairs = [];
+      for (const [value, color] of Object.entries(spec.palette)) {
+        pairs.push(value, color);
+      }
+      if (pairs.length) {
+        colorExpr = ['match', ['to-string', ['get', spec.column]], ...pairs, defaultColor];
+      }
+    }
   }
 
-  let expr;
-  if (spec.scale === 'linear' && Array.isArray(spec.palette) && spec.palette.length >= 2) {
-    // Compute value range over the loaded data so the gradient covers what's present.
-    const values = (info.data?.features || [])
-      .map(f => f.properties?.[spec.column])
-      .filter(v => typeof v === 'number' && isFinite(v));
-    if (!values.length) {
-      // Nothing to interpolate — fall back to default.
-      return;
-    }
-    const lo = Math.min(...values), hi = Math.max(...values);
-    expr = ['interpolate', ['linear'], ['to-number', ['get', spec.column]],
-            lo, spec.palette[0], hi, spec.palette[spec.palette.length - 1]];
-  } else {
-    // Categorical: match expression with fallback to default color.
-    const pairs = [];
-    for (const [value, color] of Object.entries(spec.palette || {})) {
-      pairs.push(value, color);
-    }
-    expr = ['match', ['to-string', ['get', spec.column]], ...pairs, defaultColor];
-  }
+  setPaint(fill, 'fill-color', colorExpr);
+  setPaint(outline, 'line-color', colorExpr);
+  setPaint(line, 'line-color', colorExpr);
+  setPaint(pt, 'circle-color', colorExpr);
 
-  if (map.getLayer(fill)) map.setPaintProperty(fill, 'fill-color', expr);
-  if (map.getLayer(outline)) map.setPaintProperty(outline, 'line-color', expr);
-  if (map.getLayer(line)) map.setPaintProperty(line, 'line-color', expr);
-  if (map.getLayer(pt)) map.setPaintProperty(pt, 'circle-color', expr);
+  // --- OPACITY ---
+  const opacityFill = channelExpr(spec?.opacity, feats, 0.22);
+  const opacityLine = channelExpr(spec?.opacity, feats, 0.95);
+  const opacityPt = channelExpr(spec?.opacity, feats, 1.0);
+  setPaint(fill, 'fill-opacity', opacityFill);
+  setPaint(outline, 'line-opacity', opacityLine);
+  setPaint(line, 'line-opacity', opacityLine);
+  setPaint(pt, 'circle-opacity', opacityPt);
+
+  // --- SIZE (point radius only — meaningless for polygons/lines) ---
+  const sizeExpr = channelExpr(spec?.size, feats, 3.6);
+  setPaint(pt, 'circle-radius', sizeExpr);
+
+  // --- STROKE (polygon outline, line width, point stroke width) ---
+  const strokeOutline = channelExpr(spec?.stroke, feats, 1.3);
+  const strokeLine = channelExpr(spec?.stroke, feats, 1.8);
+  const strokePt = channelExpr(spec?.stroke, feats, 1.0);
+  setPaint(outline, 'line-width', strokeOutline);
+  setPaint(line, 'line-width', strokeLine);
+  setPaint(pt, 'circle-stroke-width', strokePt);
+}
+
+function setPaint(layerId, prop, value) {
+  if (map.getLayer(layerId)) map.setPaintProperty(layerId, prop, value);
+}
+
+// Build a linear-interpolate expression for a channel spec. Returns the
+// fallback value when the spec is missing or no numeric values are present
+// in the column.
+function channelExpr(chSpec, feats, fallback) {
+  if (!chSpec || !chSpec.column || !Array.isArray(chSpec.range)) return fallback;
+  const range = numericRange(feats, chSpec.column);
+  if (!range) return fallback;
+  const [lo, hi] = range;
+  return ['interpolate', ['linear'], ['to-number', ['get', chSpec.column]],
+          lo, chSpec.range[0], hi, chSpec.range[1]];
+}
+
+function numericRange(feats, col) {
+  let lo = Infinity, hi = -Infinity, n = 0;
+  for (const f of feats) {
+    const v = f.properties?.[col];
+    if (typeof v === 'number' && isFinite(v)) {
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+      n++;
+    }
+  }
+  if (!n || lo === hi) return n ? [lo, lo + 1e-9] : null;
+  return [lo, hi];
+}
+
+function distinctValues(feats, col) {
+  const seen = new Set();
+  const order = [];
+  for (const f of feats) {
+    const v = f.properties?.[col];
+    if (v == null || v === '') continue;
+    const k = String(v);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    order.push(v);
+  }
+  return order;
 }
 
 
 function renderLayerRow(name, color, meta, styleSpec) {
   const el = document.createElement('div');
   el.className = 'layer-row';
-  const styleNote = styleSpec && styleSpec.column
-    ? ` · <em>styled by ${escapeHtml(styleSpec.column)}</em>`
+  const notes = meta.notes
+    ? `<div class="meta-note"><em>${escapeHtml(meta.notes.slice(0,80))}${meta.notes.length>80?'…':''}</em></div>`
     : '';
+  const legend = renderLegend(name, color, styleSpec);
+  const authored = renderAuthored(meta);
   el.innerHTML = `
     <input type="checkbox" id="cb-${name}" checked data-layer="${name}"/>
     <label for="cb-${name}">
-      <div><strong style="color:${color}">${escapeHtml(name)}</strong></div>
-      <div class="meta">${meta.geometry_type ?? '(no geometry)'} · ${meta.feature_count} features${meta.notes ? ` · <em>${escapeHtml(meta.notes.slice(0,60))}${meta.notes.length>60?'…':''}</em>` : ''}${styleNote}</div>
+      <div class="layer-name">
+        <span class="layer-swatch" style="background:${color}"></span>
+        <span>${escapeHtml(name)}</span>
+      </div>
+      <div class="meta">${escapeHtml(meta.geometry_type ?? 'no geometry')} · ${meta.feature_count.toLocaleString()} features</div>
+      ${notes}
+      ${legend}
+      ${authored}
     </label>`;
   const cb = el.querySelector('input');
   cb.addEventListener('change', (e) => toggleLayer(name, e.target.checked));
   layersEl.appendChild(el);
+}
+
+// Render a compact legend for the layer's active style: color swatches
+// for categorical, gradient bar for linear, plus channel lines for any
+// active size/opacity/stroke channel.
+function renderLegend(name, color, styleSpec) {
+  if (!styleSpec) return '';
+  const parts = [];
+  const info = dataLayers[name];
+  const feats = info?.data?.features || [];
+
+  // --- color legend ---
+  if (styleSpec.column) {
+    parts.push(`<div class="legend-col-label">${escapeHtml(styleSpec.column)}</div>`);
+    if (styleSpec.scale === 'linear' && Array.isArray(styleSpec.palette)) {
+      const range = numericRange(feats, styleSpec.column) || [0, 1];
+      const [lo, hi] = range;
+      const loC = styleSpec.palette[0];
+      const hiC = styleSpec.palette[styleSpec.palette.length - 1];
+      parts.push(
+        `<div class="legend-gradient" style="background:linear-gradient(to right, ${loC}, ${hiC})"></div>
+         <div class="legend-range">
+           <span>${formatNum(lo)}</span><span>${formatNum(hi)}</span>
+         </div>`);
+    } else {
+      const palette = styleSpec.palette || {};
+      const entries = Object.entries(palette);
+      if (entries.length) {
+        parts.push('<ul class="legend-cats">');
+        for (const [value, c] of entries.slice(0, 24)) {
+          parts.push(`<li><span class="legend-swatch" style="background:${c}"></span>
+                        <span class="legend-val">${escapeHtml(value)}</span></li>`);
+        }
+        if (entries.length > 24) {
+          parts.push(`<li class="legend-more">+${entries.length - 24} more</li>`);
+        }
+        parts.push('</ul>');
+      }
+    }
+  }
+
+  // --- extra channels ---
+  const chans = [
+    ['size', 'size'], ['opacity', 'opacity'], ['stroke', 'stroke width'],
+  ];
+  for (const [key, label] of chans) {
+    const ch = styleSpec[key];
+    if (!ch || !ch.column || !Array.isArray(ch.range)) continue;
+    parts.push(
+      `<div class="legend-channel">
+         <span class="legend-channel-key">${label}</span>
+         <span class="legend-channel-val">${escapeHtml(ch.column)}
+         <span class="legend-channel-range">${formatNum(ch.range[0])} → ${formatNum(ch.range[1])}</span></span>
+       </div>`);
+  }
+
+  if (!parts.length) return '';
+  return `<div class="legend">${parts.join('')}</div>`;
+}
+
+// Column-attribution line (LLM-authored vs derived). Shown when the
+// server surfaces column_provenance in the layer summary.
+function renderAuthored(meta) {
+  const cp = meta.column_provenance;
+  if (!cp || typeof cp !== 'object') return '';
+  const byAuthor = {};
+  for (const [col, info] of Object.entries(cp)) {
+    const a = info?.authored_by || 'other';
+    (byAuthor[a] = byAuthor[a] || []).push(col);
+  }
+  const lines = [];
+  if (byAuthor.llm) {
+    lines.push(`<span class="auth-dot auth-llm"></span>LLM: ${
+      byAuthor.llm.map(escapeHtml).join(', ')}`);
+  }
+  if (byAuthor.derived) {
+    lines.push(`<span class="auth-dot auth-derived"></span>derived: ${
+      byAuthor.derived.map(escapeHtml).join(', ')}`);
+  }
+  if (!lines.length) return '';
+  return `<div class="authored">${lines.join(' · ')}</div>`;
+}
+
+function formatNum(v) {
+  if (typeof v !== 'number' || !isFinite(v)) return '—';
+  if (Math.abs(v) >= 10000) return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  if (Math.abs(v) >= 10) return v.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  return v.toLocaleString(undefined, { maximumFractionDigits: 3 });
 }
 
 function toggleLayer(name, visible) {
@@ -380,7 +568,7 @@ function onMapClick(e) {
     }
   }
 
-  const color = dataLayers[topName]?.color || '#6cf';
+  const color = dataLayers[topName]?.color || '#B05B3B';
   const props = topFeat.properties || {};
   const rows = Object.entries(props)
     .filter(([k, v]) => v !== null && v !== undefined && v !== '')
@@ -388,12 +576,15 @@ function onMapClick(e) {
     .map(([k, v]) => `<div class="row"><span class="k">${escapeHtml(k)}</span><span class="v">${escapeHtml(String(v))}</span></div>`)
     .join('');
   const otherHtml = other.length
-    ? `<div class="meta" style="margin-top:6px;opacity:0.7">Also at this point: ${escapeHtml(other.join(', '))}</div>`
+    ? `<div class="meta">Also here: ${escapeHtml(other.join(', '))}</div>`
     : '';
   const html = `
     <div class="feature-popup">
-      <div style="color:${color};font-weight:600;margin-bottom:4px">${escapeHtml(topName)}</div>
-      ${rows || '<div class="meta">(no non-empty properties)</div>'}
+      <div class="popup-title">
+        <span class="layer-swatch" style="background:${color}"></span>
+        <span>${escapeHtml(topName)}</span>
+      </div>
+      ${rows || '<div class="meta">No non-empty properties.</div>'}
       ${otherHtml}
     </div>`;
   if (currentPopup) currentPopup.remove();

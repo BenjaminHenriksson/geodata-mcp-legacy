@@ -224,6 +224,29 @@ _DESTRUCTIVE_MUTATION = ToolAnnotations(
 )
 
 
+# ---------------------------------------------------------------------------
+# Parameter aliases — accept a small set of likely-guessed synonyms for the
+# canonical names. Each alias appears in the tool's signature (so it shows up
+# in the tool schema that clients see) but is immediately coalesced into the
+# canonical name at the top of the tool body. ONE place to manage:
+#
+#   describe_dataset  ← id          = dataset_id
+#   load              ← id          = dataset_id
+#   load_many         ← ids, datasets = dataset_ids
+#
+# Add new aliases only when an LLM observably mis-guesses the canonical name.
+# Don't add speculative aliases — two names for one parameter is clutter.
+# ---------------------------------------------------------------------------
+
+
+def _pick(*vals):
+    """Return the first non-None value (for coalescing alias parameters)."""
+    for v in vals:
+        if v is not None:
+            return v
+    return None
+
+
 def _checkpoint_hint_for_layer(sess: Session, layer: str) -> str:
     """Tip the LLM about checkpoint state for this specific layer."""
     from .operations import _reversible_for_layer
@@ -372,7 +395,10 @@ def search_data(query: str = "", limit: int = 20, verbose: bool = False) -> dict
 
 
 @mcp.tool(annotations=_READ_ONLY)
-def describe_dataset(dataset_id: str) -> dict:
+def describe_dataset(
+    dataset_id: str | None = None,
+    id: str | None = None,  # alias for dataset_id
+) -> dict:
     """Full metadata for a single catalog dataset — id, descriptions, coverage,
     temporal range, geometry type, feature count, CRS, publisher, license, and
     the complete attribute schema (column name, type, bilingual description,
@@ -380,7 +406,13 @@ def describe_dataset(dataset_id: str) -> dict:
 
     Use this after `search_data` when you need to understand a dataset's
     columns before loading it.
+
+    Args:
+        dataset_id: catalog id (canonical). Also accepts `id` as an alias.
     """
+    dataset_id = _pick(dataset_id, id)
+    if not dataset_id:
+        return _server_error("missing_arg", "describe_dataset requires `dataset_id` (or alias `id`).")
     entry = CATALOG.get(dataset_id)
     if entry is None:
         return _server_error(
@@ -437,7 +469,8 @@ def geocode(
 
 @mcp.tool(annotations=_SAFE_MUTATION)
 def load(
-    dataset_id: str,
+    dataset_id: str | None = None,
+    id: str | None = None,  # alias for dataset_id
     bbox_3011: list[float] | None = None,
     limit: int | None = None,
     layer_name: str | None = None,
@@ -457,8 +490,14 @@ def load(
 
     Server-enforced cap: 100,000 features per load.
 
+    Args:
+        dataset_id: catalog id (canonical). Also accepts `id` as an alias.
+
     Returns layer summary: name, feature_count, bbox, attribute schema, provenance.
     """
+    dataset_id = _pick(dataset_id, id)
+    if not dataset_id:
+        return _server_error("missing_arg", "load requires `dataset_id` (or alias `id`).")
     entry = CATALOG.get(dataset_id)
     if entry is None:
         return _server_error(
@@ -902,7 +941,9 @@ def list_layers(ctx: Context | None = None) -> dict:
 
 @mcp.tool(annotations=_SAFE_MUTATION)
 def load_many(
-    dataset_ids: list[str],
+    dataset_ids: list[str] | None = None,
+    ids: list[str] | None = None,        # alias for dataset_ids
+    datasets: list[str] | None = None,   # alias for dataset_ids
     bbox_3011: list[float] | None = None,
     limit: int | None = None,
     ctx: Context | None = None,
@@ -912,8 +953,18 @@ def load_many(
     dataset in the list — use single `load` calls if you need per-dataset
     arguments.
 
+    Args:
+        dataset_ids: list of catalog ids (canonical). Also accepts `ids` or
+                     `datasets` as aliases.
+
     Returns: a list of summaries, plus a list of `errors` (per-dataset).
     """
+    dataset_ids = _pick(dataset_ids, ids, datasets)
+    if not dataset_ids:
+        return _server_error(
+            "missing_arg",
+            "load_many requires `dataset_ids` (or alias `ids` / `datasets`).",
+        )
     results = []
     errors = []
     bbox_tuple = tuple(bbox_3011) if bbox_3011 and len(bbox_3011) == 4 else None

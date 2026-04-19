@@ -114,6 +114,11 @@ class Session:
         self.conn.execute(f"SET temp_directory = '{SESSION_DB_TEMP_DIR}'")
         self.layers: dict[str, LayerMeta] = {}
         self.visible_layers: list[str] = []
+        # Optional per-layer style spec consumed by the viewer. Shape:
+        #   {layer_name: {"column": str, "scale": "categorical"|"linear",
+        #                 "palette": dict|list}}
+        # Set by the show() tool when the caller passes `style=...`.
+        self.visible_styles: dict[str, dict] = {}
         self.history: list[Operation] = []
         # Cursors for batch_iterate — cursor_id → iteration state.
         self.cursors: dict[str, dict] = {}

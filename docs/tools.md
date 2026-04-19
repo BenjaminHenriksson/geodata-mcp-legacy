@@ -1,17 +1,18 @@
 # MCP tool reference
 
-**29 tools** across four categories. Endpoint:
-`https://geo.benjaminhenriksson.com/mcp` (bearer auth). Every tool carries
-MCP `toolAnnotations` (`readOnlyHint`, `destructiveHint=false`) so clients
-like Claude Code / Desktop can auto-approve the safe ones without per-call
-prompts.
+**35 tools** across four categories + a macros tier. Endpoint:
+`https://geo.benjaminhenriksson.com/mcp` (OAuth 2.1 + PKCE via invite code
+for claude.ai; legacy shared bearer for Claude Code CLI). Every tool
+carries MCP `toolAnnotations` (`readOnlyHint`, `destructiveHint=false`)
+so clients can auto-approve the safe ones without per-call prompts.
 
 All spatial tools operate in **EPSG:3011** (SWEREF 99 18 00). Coordinates in
 tool arguments and return values use that CRS unless otherwise noted. The
 viewer reprojects to EPSG:4326 at the `/api/.../geojson` boundary. The
-server's `instructions` string (a ~5 KB workflow primer) is delivered to the
-MCP client at connection time — it covers CRS conventions, SCB footguns,
-the enrichment loop, and when the LLM should push back instead of ploughing on.
+server's `instructions` string (~9 KB workflow primer) is delivered to the
+MCP client at connection time — it covers CRS conventions, canonical SCB
+join keys, the bulk-enrichment loop, macro-tool preferences, and when the
+LLM should push back instead of ploughing on.
 
 ## Tool index
 
@@ -486,3 +487,120 @@ Structured response to the user-testing session friction points:
   annotate loop.
 - Stronger preference for `load_many` over repeated `load` calls.
 - Pointer to `describe_dataset(id)` for attribute schemas.
+
+---
+
+## Macro tools (post-feedback pass)
+
+Added to reduce round-trips under claude.ai's per-turn tool-call cap:
+
+### `top_n(layer, by, n=10, ascending=False, result_name=None)`
+
+filter + `ORDER BY` + `LIMIT` in one call. Produces a new layer with the
+top (or bottom) `n` rows. `by` is a SQL ordering expression — can be a
+column name, a function call, or a full expression. Provenance inherits
+from `layer`.
+
+### `baseline_stats(layer, expression, group_by=None)`
+
+Descriptive statistics (count / mean / median / p25 / p75 / min / max /
+stddev) for a SQL expression over a whole layer, optionally grouped.
+Returns `{stats: {...}}` for ungrouped or `{groups: [...]}` with
+group-by rows. Use for "compute city-wide median income as a baseline
+before comparing a subset."
+
+### `classify(layer, name, rules=[{when, then}], default=None)`
+
+CASE-WHEN-THEN shorthand. Adds a new column whose value is the `then`
+of the first matching rule. Reversible inside a covering checkpoint.
+Example:
+
+```
+classify("deso", "income_band", rules=[
+    {"when": "median < 300", "then": "low"},
+    {"when": "median BETWEEN 300 AND 500", "then": "mid"},
+    {"when": "median > 500", "then": "high"},
+], default="unknown")
+```
+
+### `export_and_cite(layer, format='gpkg')`
+
+`export(layer, format)` + `sources(layer)` in one call — URL + full
+markdown citations. One round-trip for the last step of every
+publishable workflow.
+
+### `export_many(layers, format='gpkg', merge_geojson=False)`
+
+Export several layers under one 24-h download token.
+
+- `format='gpkg'` (recommended): **one multi-layer `.gpkg` file** — each
+  input layer preserved as its own GPKG layer with its native geometry
+  and attributes. Opens cleanly in QGIS/ArcGIS.
+- `format='geojson'` + `merge_geojson=True`: single `.geojson` with a
+  merged FeatureCollection; every feature gets `_layer: "<name>"` so
+  downstream consumers can split back apart.
+- `format='geojson'|'csv'|'parquet'` (merge_geojson=False, default for
+  those): one file per layer under the same token dir. List of URLs
+  returned.
+
+HUGEINT columns (a common byproduct of DuckDB's `SUM(CAST(x AS BIGINT))`
+auto-promotion) are auto-coerced to BIGINT at export so GeoJSON's
+JSON-number serialization doesn't fail with the cryptic "precision up to
+19" error.
+
+---
+
+## Canonical join keys across every SCB table
+
+Every `scb_*` parquet now carries these columns in addition to the
+tabular raw:
+
+- `desokod` — DeSO code (9 chars), equals `region_code` when
+  `region_kind='deso'`. Join to `deso_2025.desokod` / `deso_2018.desokod`.
+- `desokod_2025` — 2025-grid equivalent of `desokod`. Bridges 2018 → 2025
+  via `deso_historical_changes`. Equals `desokod` when the DeSO is
+  unchanged since 2018.
+- `regsokod`, `regso_name` — parent RegSO. Joined via `deso_regso_mapping`.
+- `kommunkod`, `kommun_name` — parent kommun. Joined via
+  `deso_regso_mapping`.
+
+All six are NULL for non-DeSO rows (RegSO / kommun / country). Prefer
+them over the raw `region` column for joins — they're uniform across
+the 31 SCB tables.
+
+---
+
+## Richer default responses
+
+`load` / `filter` / `spatial` / `create_layer` / `top_n` / `classify` /
+`execute_sql` (layer mode) now return a `quick_stats` block and a 3-row
+`sample` by default, in addition to the existing feature_count / bbox /
+attributes / provenance. Skipped for layers above
+`GEODATA_QUICK_STATS_CAP` (200k features by default). Saves the typical
+"call stats() and inspect() after load" round-trip.
+
+---
+
+## `show` thematic styling
+
+`show(layers, style={...})` accepts a per-layer style spec:
+
+```
+show(["buildings"], style={
+    "buildings": {
+        "column": "era",
+        "scale": "categorical",
+        "palette": {
+            "pre-1900": "#6a3d9a",
+            "functionalist": "#1f78b4",
+            "post-war": "#33a02c",
+            "modern": "#ff7f00",
+        },
+    },
+})
+```
+
+Linear palettes: `"scale": "linear"` + `"palette": ["#lo", "#hi"]`.
+Unstyled layers keep their default solid color. Styles persist in
+session state and are consumed automatically by the viewer's 2 s
+auto-refresh poll.

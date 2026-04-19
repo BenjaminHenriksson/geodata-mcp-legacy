@@ -93,8 +93,21 @@ def load_dataset(
     src = dataset.absolute_path()
     if not src.exists():
         raise LoadError(f"Dataset file missing: {dataset.file_path}")
-    if where and ";" in where:
-        raise LoadError("`where` clause may not contain ';'")
+    if where:
+        # Parse-level check: reject only if the predicate is actually
+        # multi-statement, allow literal ';' inside quoted strings.
+        try:
+            import sqlglot
+            stmts = [s for s in sqlglot.parse(
+                f"SELECT 1 FROM _t WHERE ({where})", read="duckdb"
+            ) if s is not None]
+        except Exception as e:
+            raise LoadError(f"`where` is not a valid SQL predicate: {e}")
+        if len(stmts) != 1:
+            raise LoadError(
+                f"`where` must be a single SQL predicate "
+                f"(got {len(stmts)} statements)"
+            )
 
     name = session.unique_layer_name(layer_name or dataset.id)
     qname = _quote_ident(name)

@@ -34,7 +34,11 @@ from .operations import (
     drop_field as op_drop_field,
     drop_layer as op_drop_layer,
     execute_sql as op_execute_sql,
+    baseline_stats as op_baseline_stats,
+    classify as op_classify,
+    export_and_cite as op_export_and_cite,
     export_layer as op_export,
+    export_layers as op_export_layers,
     filter_layer,
     hide_layers as op_hide_layers,
     inspect_location as op_inspect_location,
@@ -48,6 +52,7 @@ from .operations import (
     spatial_buffer, spatial_centroid, spatial_clip, spatial_convex_hull,
     spatial_dissolve, spatial_intersect, spatial_select_by_location,
     stats as op_stats,
+    top_n as op_top_n,
     update_field as op_update_field,
 )
 from .session import REGISTRY, Session, SessionExpired
@@ -119,6 +124,42 @@ specific layers:
 Multiple checkpoints can be active simultaneously (on non-overlapping or
 overlapping scopes — a mutation snapshots for every active checkpoint that
 covers that layer). Snapshots are column-scoped (O(changed columns × rows)).
+
+## Macro tools — prefer these for common composite patterns
+
+These exist to save round-trips under claude.ai's per-turn tool cap:
+
+- `top_n(layer, by, n=10)` — filter + ORDER BY + LIMIT in one call.
+  Produces a new layer with the top (or bottom) N rows.
+- `baseline_stats(layer, expression, group_by=?)` — count/mean/median/
+  p25/p75/min/max/stddev for an expression over a whole layer (or
+  grouped). Skip the hand-rolled CTE.
+- `classify(layer, name, rules=[{when, then}], default=?)` — CASE-WHEN
+  shorthand that adds a categorical column. One call, checkpoint-aware,
+  logged.
+- `export_and_cite(layer, format='gpkg')` — single-call export +
+  provenance markdown.
+- `export_many(layers, format='gpkg')` — multi-layer export. `gpkg`
+  yields one file with every layer; geojson/csv/parquet yield one file
+  per layer; `merge_geojson=True` emits a single FeatureCollection with
+  a `_layer` property per feature.
+
+## Canonical join keys across every SCB table
+
+Every `scb_*` parquet now carries these columns (NULL when
+`region_kind != 'deso'`):
+
+  - `desokod` — DeSO code as found in the raw data. Join to
+    `deso_2025.desokod` / `deso_2018.desokod`.
+  - `desokod_2025` — 2025-grid equivalent. If the source table used
+    2018 codes and the DeSO changed between years, this bridges via
+    `deso_historical_changes`. Use this to join against `deso_2025`
+    polygons reliably.
+  - `regsokod`, `regso_name`, `kommunkod`, `kommun_name` — parent
+    RegSO and kommun, looked up via `deso_regso_mapping`.
+
+The raw `region` column is still there for provenance. Prefer the
+canonical columns for joins — they're uniform across all SCB tables.
 
 ## Bulk enrichment pattern (the canonical AI-native loop)
 
@@ -299,19 +340,31 @@ def _pick(*vals):
     return None
 
 
-def _checkpoint_hint_for_layer(sess: Session, layer: str) -> str:
-    """Tip the LLM about checkpoint state for this specific layer."""
+def _attach_hint(out: dict, sess: Session, layer: str) -> dict:
+    """Set `out["hint"]` from `_checkpoint_hint_for_layer`, dropping the key
+    entirely when no covering checkpoint exists (quieter responses)."""
+    h = _checkpoint_hint_for_layer(sess, layer)
+    if h:
+        out["hint"] = h
+    else:
+        out.pop("hint", None)
+    return out
+
+
+def _checkpoint_hint_for_layer(sess: Session, layer: str) -> str | None:
+    """Return a reversibility hint ONLY when a covering checkpoint exists.
+    Returns None otherwise — callers should drop the field so responses
+    aren't noisily reminding the LLM to checkpoint on every mutation.
+    The LLM can inspect `reversible` / `covering_checkpoints` in the
+    response if it wants to know explicitly."""
     from .operations import _reversible_for_layer
     covering = _reversible_for_layer(sess, layer)
-    if covering:
-        n = covering[0]
-        return (
-            f"Mutation on '{layer}' is reversible via checkpoint(s) {covering} — "
-            f"call rollback('{n}') to undo, commit('{n}') to make permanent."
-        )
+    if not covering:
+        return None
+    n = covering[0]
     return (
-        f"No checkpoint covers '{layer}' — this mutation is not reversible. "
-        "Call checkpoint('name') or checkpoint('name', layers=['" + layer + "']) first."
+        f"Mutation on '{layer}' is reversible via checkpoint(s) {covering} — "
+        f"call rollback('{n}') to undo, commit('{n}') to make permanent."
     )
 
 
@@ -391,9 +444,67 @@ def _dataset_summary(d: DatasetEntry, verbose: bool = True) -> dict:
     return base
 
 
+# Quick-stats cap. Layers larger than this skip the optional stats/sample
+# to keep the response cheap. Tune via env.
+_QUICK_STATS_CAP = int(_os.environ.get("GEODATA_QUICK_STATS_CAP", "200000"))
+
+
+def _quick_stats_and_sample(sess: Session, name: str, m) -> dict:
+    """Compute a tiny stats block (per-numeric column) + a 3-row sample of
+    non-geometry columns for `name`. Returns an empty dict when the layer
+    is too large, has no declared columns, or the probe fails. Never
+    raises — this is best-effort enrichment."""
+    if m.feature_count > _QUICK_STATS_CAP:
+        return {}
+    cols = [c for c in m.attributes if not c.startswith("__")]
+    if not cols:
+        return {}
+    geom_col = m.attributes.get("__geom_col__") or ""
+    attr_cols = [c for c in cols if c != geom_col]
+    numeric_types = {"INTEGER", "BIGINT", "DOUBLE", "FLOAT", "REAL",
+                     "DECIMAL", "HUGEINT", "TINYINT", "SMALLINT",
+                     "UINTEGER", "UBIGINT", "USMALLINT", "UTINYINT"}
+    out: dict = {}
+    qname = _qi(name)
+    # Per-numeric quick stats in one SELECT.
+    numeric_cols = [c for c in attr_cols
+                    if any(m.attributes[c].upper().startswith(t) for t in numeric_types)]
+    if numeric_cols:
+        parts = []
+        for c in numeric_cols:
+            q = _qi(c)
+            parts += [
+                f"COUNT({q}) AS \"{c}__count\"",
+                f"COUNT(*) - COUNT({q}) AS \"{c}__nulls\"",
+                f"MIN({q}) AS \"{c}__min\"",
+                f"AVG({q}) AS \"{c}__mean\"",
+                f"MAX({q}) AS \"{c}__max\"",
+            ]
+        sql = f"SELECT {', '.join(parts)} FROM {qname}"
+        try:
+            row = sess.conn.execute(sql).fetchone()
+            col_names = [d[0] for d in sess.conn.description]
+            stats: dict[str, dict] = {}
+            for k, v in zip(col_names, row):
+                col, _, key = k.partition("__")
+                stats.setdefault(col, {})[key] = v
+            out["quick_stats"] = stats
+        except Exception:
+            pass
+    # 3-row sample — non-geometry cols only.
+    if attr_cols:
+        sql = f"SELECT {', '.join(_qi(c) for c in attr_cols)} FROM {qname} LIMIT 3"
+        try:
+            rows = sess.conn.execute(sql).fetchall()
+            out["sample"] = [dict(zip(attr_cols, r)) for r in rows]
+        except Exception:
+            pass
+    return out
+
+
 def _layer_summary(sess: Session, name: str) -> dict:
     m = sess.layers[name]
-    return {
+    payload: dict = {
         "name": m.name,
         "feature_count": m.feature_count,
         "geometry_type": m.geometry_type,
@@ -409,6 +520,12 @@ def _layer_summary(sess: Session, name: str) -> dict:
             for s in m.provenance
         ],
     }
+    if m.notes:
+        payload["notes"] = m.notes
+    # Quick stats + sample so the LLM doesn't have to follow up with
+    # stats() and inspect() just to orient.
+    payload.update(_quick_stats_and_sample(sess, name, m))
+    return payload
 
 
 # ---------- tools ----------
@@ -742,6 +859,125 @@ def stats(
         return f"[server-side error from {_SERVER_ORIGIN}] {type(e).__name__}: {e}"
 
 
+# ---------- macro helpers: filter+order+limit, baseline_stats, classify,
+# export_and_cite. Each bundles a common multi-step workflow into a single
+# tool call so claude.ai's per-turn cap isn't burned on chained primitives.
+
+
+@mcp.tool(annotations=_SAFE_MUTATION)
+def top_n(
+    layer: str,
+    by: str,
+    n: int = 10,
+    ascending: bool = False,
+    result_name: str | None = None,
+    ctx: Context | None = None,
+) -> dict:
+    """filter + ORDER BY + LIMIT in one call. Produces a new layer with the
+    top (or bottom) `n` rows of `layer` sorted by the `by` expression.
+
+    Args:
+        layer: source layer.
+        by: SQL ordering expression (e.g. "population", "ST_Area(geom)",
+            "median_income DESC NULLS LAST").
+        n: row cap (default 10).
+        ascending: True → smallest first. Default False (largest first).
+        result_name: optional layer name; defaults to "<layer>_top<n>".
+
+    Provenance inherits from `layer`.
+    """
+    try:
+        sess = _session(ctx)
+        meta = op_top_n(sess, layer, by, n=n, ascending=ascending,
+                         result_name=result_name)
+    except Exception as e:
+        return _error_response(e)
+    return _layer_summary(sess, meta.name)
+
+
+@mcp.tool(annotations=_READ_ONLY)
+def baseline_stats(
+    layer: str,
+    expression: str,
+    group_by: list[str] | None = None,
+    ctx: Context | None = None,
+) -> dict:
+    """Descriptive statistics (count, mean, median, p25, p75, min, max,
+    stddev) for a SQL expression evaluated over a whole layer, optionally
+    grouped. Designed for "compute the city-wide median income as a
+    baseline for comparing a subset" — saves the hand-written CTE the
+    LLM would otherwise emit every time.
+
+    Args:
+        layer: source layer.
+        expression: SQL scalar expression on the layer's columns (e.g.
+                    "median_income", "ST_Area(geom) / 1e6").
+        group_by: optional list of columns to group by.
+    """
+    try:
+        return op_baseline_stats(_session(ctx), layer, expression,
+                                   group_by=group_by)
+    except Exception as e:
+        return _error_response(e)
+
+
+@mcp.tool(annotations=_SAFE_MUTATION)
+def classify(
+    layer: str,
+    name: str,
+    rules: list[dict],
+    default: str | None = None,
+    ctx: Context | None = None,
+) -> dict:
+    """Add a categorical column whose value is chosen from the first
+    matching rule in `rules`. Essentially a CASE WHEN ... THEN ... ELSE ...
+    expression wrapped as `add_field`.
+
+    Args:
+        layer: target layer.
+        name: new column name.
+        rules: list of `{"when": <sql predicate>, "then": <literal>}`.
+               Evaluated in order; first match wins.
+        default: value for rows matching no rule (optional; NULL if omitted).
+
+    Reversible inside a covering checkpoint. Stores the compiled CASE
+    expression in the operation log for provenance.
+
+    Example:
+        classify("deso", "income_band", rules=[
+            {"when": "median < 300", "then": "low"},
+            {"when": "median BETWEEN 300 AND 500", "then": "mid"},
+            {"when": "median > 500", "then": "high"},
+        ], default="unknown")
+    """
+    try:
+        sess = _session(ctx)
+        out = op_classify(sess, layer, name, rules=rules, default=default)
+        _attach_hint(out, sess, layer)
+        return out
+    except Exception as e:
+        return _error_response(e)
+
+
+@mcp.tool(annotations=_SAFE_MUTATION)
+def export_and_cite(
+    layer: str,
+    format: str = "gpkg",
+    ctx: Context | None = None,
+) -> dict:
+    """Shortcut for `export(layer, format)` + `sources(layer)`. Returns
+    everything the caller needs to ship a publishable artifact (URL + full
+    markdown citations) in a single call."""
+    try:
+        sess = _session(ctx)
+        out = op_export_and_cite(sess, layer, fmt=format)
+        if "url" in out:
+            out["url"] = _abs_url(out["url"])
+        return out
+    except Exception as e:
+        return _error_response(e)
+
+
 @mcp.tool(annotations=_SAFE_MUTATION)
 def execute_sql(
     sql: str,
@@ -872,6 +1108,43 @@ def export(
         return _error_response(e)
 
 
+@mcp.tool(annotations=_SAFE_MUTATION)
+def export_many(
+    layers: list[str],
+    format: str = "gpkg",
+    merge_geojson: bool = False,
+    ctx: Context | None = None,
+) -> dict:
+    """Export multiple layers together under one 24-h download token.
+
+    Format semantics:
+      - `format="gpkg"` (default, recommended) → one `.gpkg` file with
+        every layer inside. GeoPackage supports multi-layer natively, so
+        this produces a single artifact that opens cleanly in QGIS/ArcGIS
+        with each layer's geometry type and attributes preserved. One URL.
+      - `format="geojson"` with `merge_geojson=True` → one `.geojson`
+        file; a single FeatureCollection where every feature has a
+        `_layer` property naming its source. One URL. (Polygons, lines,
+        and points end up mixed — downstream consumers must tolerate
+        mixed geometry.)
+      - `format="geojson"` / `"csv"` / `"parquet"` (merge_geojson=False)
+        → one file per layer under the same token directory. List of URLs.
+
+    Provenance is the deduped union across all input layers, same shape
+    as single `export`.
+    """
+    try:
+        out = op_export_layers(_session(ctx), layers, fmt=format,
+                                merge_geojson=merge_geojson)
+        # Rewrite all URLs absolute.
+        for f in out.get("files", []):
+            if "url" in f:
+                f["url"] = _abs_url(f["url"])
+        return out
+    except Exception as e:
+        return _error_response(e)
+
+
 @mcp.tool(annotations=_READ_ONLY)
 def sources(layer: str | None = None, ctx: Context | None = None) -> str:
     """Return a structured provenance report (publisher, license, URL,
@@ -930,9 +1203,20 @@ def inspect(
 
     where_sql = ""
     if where:
-        if ";" in where:
+        # Parser-aware single-statement check — literal ';' inside quoted
+        # strings no longer false-triggers.
+        try:
+            import sqlglot
+            stmts = [s for s in sqlglot.parse(
+                f"SELECT 1 FROM _t WHERE ({where})", read="duckdb"
+            ) if s is not None]
+        except Exception as e:
             return (f"[server-side error from {_SERVER_ORIGIN}] "
-                    "WHERE expression cannot contain ';'")
+                    f"WHERE is not a valid SQL predicate: {e}")
+        if len(stmts) != 1:
+            return (f"[server-side error from {_SERVER_ORIGIN}] "
+                    f"WHERE must be a single predicate "
+                    f"(got {len(stmts)} statements)")
         where_sql = f" WHERE {where}"
     sql = (
         f"SELECT {', '.join(select_cols)} FROM {_qi(layer)}"
@@ -960,11 +1244,43 @@ def inspect(
 def show(
     layers: list[str],
     title: str | None = None,
+    style: dict | None = None,
     ctx: Context | None = None,
 ) -> dict:
     """Mark layers visible in the viewer and return their summaries + viewer URL.
 
     The text response is fully usable on its own — opening the viewer is optional.
+
+    Args:
+        layers: names of session layers to make visible.
+        title: optional title for the viewer (not currently rendered).
+        style: optional per-layer styling. Shape:
+
+            style = {
+                "<layer_name>": {
+                    "column": "<attribute_name>",
+                    "scale": "categorical" | "linear",
+                    "palette": {"val1": "#rrggbb", ...}       # categorical
+                             | ["#lo", "#hi"]                 # linear
+                }
+            }
+
+          Example — color buildings by LLM-classified era:
+            show(["buildings"], style={
+                "buildings": {
+                    "column": "era", "scale": "categorical",
+                    "palette": {
+                        "pre-1900": "#6a3d9a",
+                        "functionalist": "#1f78b4",
+                        "post-war": "#33a02c",
+                        "modern": "#ff7f00",
+                    },
+                },
+            })
+
+          Layers without a style entry fall back to their default color.
+          The style is stored in session state and consumed by the viewer
+          automatically on its next auto-refresh poll.
     """
     try:
         sess = _session(ctx)
@@ -978,12 +1294,23 @@ def show(
         else:
             missing.append(n)
     sess.visible_layers = [n for n in layers if n in sess.layers]
+    # Update styles — merge with any prior style (so you can call show twice
+    # without losing earlier styling), keep only entries whose layer is
+    # actually visible now.
+    if style:
+        for lname, spec in style.items():
+            if lname in sess.layers:
+                sess.visible_styles[lname] = spec
+    # Drop styles for layers that are no longer visible.
+    sess.visible_styles = {k: v for k, v in sess.visible_styles.items()
+                            if k in sess.visible_layers}
     sess.bump_version()
     return {
         "title": title,
         "viewer_url": _abs_url(f"/view/{sess.id}"),
         "visible_layers": summaries,
         "unknown_layers": missing,
+        "styles": sess.visible_styles,
     }
 
 
@@ -1078,7 +1405,7 @@ def add_field(
     try:
         sess = _session(ctx)
         out = op_add_field(sess, layer, name, expr, field_type=field_type)
-        out["hint"] = _checkpoint_hint_for_layer(sess, layer)
+        _attach_hint(out, sess, layer)
         return out
     except Exception as e:
         return _error_response(e)
@@ -1102,7 +1429,7 @@ def update_field(
     try:
         sess = _session(ctx)
         out = op_update_field(sess, layer, name, expr, where=where)
-        out["hint"] = _checkpoint_hint_for_layer(sess, layer)
+        _attach_hint(out, sess, layer)
         return out
     except Exception as e:
         return _error_response(e)
@@ -1115,7 +1442,7 @@ def drop_field(layer: str, name: str, ctx: Context | None = None) -> dict:
     try:
         sess = _session(ctx)
         out = op_drop_field(sess, layer, name)
-        out["hint"] = _checkpoint_hint_for_layer(sess, layer)
+        _attach_hint(out, sess, layer)
         return out
     except Exception as e:
         return _error_response(e)
@@ -1154,7 +1481,7 @@ def annotate(
     try:
         sess = _session(ctx)
         out = op_annotate(sess, layer, values, key_column=key_column)
-        out["hint"] = _checkpoint_hint_for_layer(sess, layer)
+        _attach_hint(out, sess, layer)
         return out
     except Exception as e:
         return _error_response(e)
@@ -1316,7 +1643,7 @@ def drop_layer(name: str, ctx: Context | None = None) -> dict:
     try:
         sess = _session(ctx)
         out = op_drop_layer(sess, name)
-        out["hint"] = _checkpoint_hint_for_layer(sess, name)
+        _attach_hint(out, sess, name)
         return out
     except Exception as e:
         return _error_response(e)
@@ -1328,7 +1655,7 @@ def rename_layer(old: str, new: str, ctx: Context | None = None) -> dict:
     try:
         sess = _session(ctx)
         out = op_rename_layer(sess, old, new)
-        out["hint"] = _checkpoint_hint_for_layer(sess, new)
+        _attach_hint(out, sess, new)
         return out
     except Exception as e:
         return _error_response(e)
@@ -1549,6 +1876,7 @@ def build_http_app() -> object:
             "version": s.version,
             "visible_layers": s.visible_layers,
             "layers": {n: _layer_summary(s, n) for n in s.visible_layers},
+            "styles": s.visible_styles,
         })
 
     async def api_version(request):

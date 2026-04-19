@@ -75,9 +75,10 @@ def audit() -> list[tuple[str, str, str]]:
     for d in catalog["datasets"]:
         if d["source_type"] != "parquet":
             continue
-        if "scb_deso/tables" not in d.get("file_path", "") and "scb/" not in d.get("file_path", ""):
-            # only check SCB stat tables
-            pass
+        # Only check SCB stat tables — the OSM and other-source parquets
+        # don't carry a `region` column.
+        if not d.get("file_path", "").startswith("data/normalized/scb/"):
+            continue
         file_path = ROOT / d["file_path"]
         if not file_path.exists():
             continue

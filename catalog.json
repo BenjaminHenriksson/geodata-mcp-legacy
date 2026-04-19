@@ -3401,6 +3401,76 @@
             "0180C5920",
             "0180C3570"
           ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C1960",
+            "0180C3410",
+            "0180C5920",
+            "0180C3570",
+            "0180C3620"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R018",
+            "0180R074",
+            "0180R061",
+            "0180R098",
+            "0180R066"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Liljeholmen",
+            "Enskededalen",
+            "Nälsta",
+            "Mariatorget",
+            "Lilla Essingen"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -3538,6 +3608,76 @@
             "0180C5691",
             "0180C5752"
           ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C5432",
+            "0180C5262",
+            "0180C5653",
+            "0180C5691",
+            "0180C5752"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C5432",
+            "0180C5262",
+            "0180C5653",
+            "0180C5691",
+            "0180C5752"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R077",
+            "0180R060",
+            "0180R084",
+            "0180R007",
+            "0180R046"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Tekniska Högskolan",
+            "Mariehäll",
+            "Stadshagen",
+            "Fruängen",
+            "Årsta"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -3654,6 +3794,76 @@
             "0180C5070",
             "0180C5060",
             "0180C6260"
+          ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C2390",
+            "0180C3030",
+            "0180C5070",
+            "0180C5060",
+            "0180C6260"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C2390",
+            "0180C3030",
+            "0180C5070",
+            "0180C5060",
+            "0180C6260"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R004",
+            "0180R032",
+            "0180R017",
+            "0180R079",
+            "0180R069"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Östra Sankt Göran",
+            "Liljeholmen",
+            "Västra Matteus",
+            "Enskede Gård",
+            "Nälsta"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
           ]
         }
       ],
@@ -3781,6 +3991,76 @@
             "0180C4810",
             "0180C4830"
           ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C4390",
+            "0180C3720",
+            "0180C4430",
+            "0180C4810",
+            "0180C4830"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C4390",
+            "0180C3720",
+            "0180C4430",
+            "0180C4810",
+            "0180C4830"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R014",
+            "0180R079",
+            "0180R076",
+            "0180R116",
+            "0180R015"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Djurgården",
+            "Skärholmen",
+            "Rinkeby",
+            "Södra Adolf Fredrik",
+            "Vinsta"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -3907,6 +4187,76 @@
             "0180C5640",
             "0180C1810"
           ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C5560",
+            "0180C5400",
+            "0180C5480",
+            "0180C5640",
+            "0180C1810"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C5560",
+            "0180C5400",
+            "0180C5480",
+            "0180C5640",
+            "0180C1810"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R015",
+            "0180R057",
+            "0180R060",
+            "0180R077",
+            "0180R069"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Sköndal",
+            "Liseberg",
+            "Långsjö",
+            "Råcksta",
+            "Traneberg"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -4028,6 +4378,76 @@
             "0180C3610",
             "Enskedefältet",
             "0180C2980"
+          ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C1990",
+            "0180C1810",
+            "0180C3610",
+            "0180C2980",
+            "0180C5560"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C1990",
+            "0180C1810",
+            "0180C3610",
+            "0180C5560",
+            "0180C5150"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R018",
+            "0180R069",
+            "0180R116",
+            "0180R057",
+            "0180R015"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Sköndal",
+            "Enskededalen",
+            "Norra Skarpnäcks Gård",
+            "Långsjö",
+            "Norra Ängby"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
           ]
         }
       ],
@@ -4151,6 +4571,76 @@
             "0180C1070",
             "0180C1080"
           ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C1010",
+            "0180C1020",
+            "0180C1030",
+            "0180C1070",
+            "0180C1080"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C1010",
+            "0180C1020",
+            "0180C1030",
+            "0180C1070",
+            "0180C1080"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R123",
+            "0180R112",
+            "0180R031",
+            "0180R028",
+            "0180R057"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Västra Farsta Strand-Farstanäset",
+            "Farsta",
+            "Sköndal",
+            "Hagsätra",
+            "Gubbängen"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -4270,6 +4760,76 @@
             "0180C2980",
             "0180C5520",
             "0180C2660"
+          ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C5900",
+            "0180C6330",
+            "0180C2980",
+            "0180C5520",
+            "0180C2660"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C5900",
+            "0180C6330",
+            "0180C5520",
+            "0180C2660",
+            "0180C4520"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R094",
+            "0180R053",
+            "0180R035",
+            "0180R008",
+            "0180R023"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Universitetet",
+            "Beckomberga",
+            "Bagarmossen",
+            "Kista",
+            "Liljeholmen"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
           ]
         }
       ],
@@ -4393,6 +4953,76 @@
             "0180C1100",
             "0180C1160"
           ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C1040",
+            "0180C1060",
+            "0180C1090",
+            "0180C1101",
+            "0180C1102"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C1020",
+            "0180C1070",
+            "0180C1080",
+            "0180C1160",
+            "0180C1180"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R123",
+            "0180R031",
+            "0180R028",
+            "0180R079",
+            "0180R069"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Östra Farsta Strand",
+            "Fagersjö",
+            "Rågsved",
+            "Hökarängen",
+            "Högdalen"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -4511,6 +5141,76 @@
             "0180C5480",
             "0180C3210",
             "0180C3220"
+          ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C5490",
+            "0180C5520",
+            "0180C5480",
+            "0180C3210",
+            "0180C3220"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C5490",
+            "0180C5520",
+            "0180C5480",
+            "0180C3210",
+            "0180C3201"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R007",
+            "0180R027",
+            "0180R077",
+            "0180R113",
+            "0180R040"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Södra Sofia",
+            "Östra Katarina",
+            "Beckomberga",
+            "Liljeholmen",
+            "Hjorthagen-Värtahamnen"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
           ]
         }
       ],
@@ -4641,6 +5341,76 @@
             "0180C3390",
             "0180C3380"
           ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C3410",
+            "0180C3420",
+            "0180C3450",
+            "0180C3390",
+            "0180C3380"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C3410",
+            "0180C3420",
+            "0180C3450",
+            "0180C3390",
+            "0180C3380"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R109",
+            "0180R098",
+            "0180R070",
+            "0180R060",
+            "0180R061"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Vällingby",
+            "Mariatorget",
+            "Östra Katarina",
+            "Norra Sofia",
+            "Norra Högalid"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -4758,6 +5528,76 @@
             "0180C5150",
             "0180C5070",
             "0180C3202"
+          ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C1810",
+            "0180C4510",
+            "0180C5150",
+            "0180C5070",
+            "0180C3202"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C1810",
+            "0180C4510",
+            "0180C5150",
+            "0180C5070",
+            "0180C3202"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R109",
+            "0180R069",
+            "0180R099",
+            "0180R060",
+            "0180R116"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Vällingby",
+            "Norra Skarpnäcks Gård",
+            "Sköndal",
+            "Norra Ängby",
+            "Traneberg"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
           ]
         }
       ],
@@ -4891,6 +5731,76 @@
             "0180C1050",
             "0180C1070"
           ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C1040",
+            "0180C1060",
+            "0180C1090",
+            "0180C1101",
+            "0180C1102"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C1010",
+            "0180C1020",
+            "0180C1030",
+            "0180C1050",
+            "0180C1070"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R021",
+            "0180R052",
+            "0180R020",
+            "0180R078",
+            "0180R080"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Västra Farsta Strand-Farstanäset",
+            "Farsta",
+            "Larsboda",
+            "Sköndal",
+            "Östra Skarpnäcks gård-Flaten-Skrubba"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -5012,6 +5922,76 @@
             "0180C5752",
             "0180C5751",
             "0180C5432"
+          ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C5652",
+            "0180C5651",
+            "0180C5692",
+            "0180C5431",
+            "0180C5422"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C5653",
+            "0180C5691",
+            "0180C5752",
+            "0180C5751",
+            "0180C5432"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R060",
+            "0180R077",
+            "0180R076",
+            "0180R046",
+            "0180R106"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Hjorthagen-Värtahamnen",
+            "Råcksta",
+            "Rinkeby",
+            "Sundby",
+            "Västra Matteus"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
           ]
         }
       ],
@@ -5144,6 +6124,76 @@
             "0180C5752",
             "0180C5691",
             "0180C5432"
+          ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C5653",
+            "0180C5751",
+            "0180C5752",
+            "0180C5691",
+            "0180C5432"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C5653",
+            "0180C5751",
+            "0180C5752",
+            "0180C5691",
+            "0180C5432"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R060",
+            "0180R077",
+            "0180R076",
+            "0180R099",
+            "0180R017"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Hjorthagen-Värtahamnen",
+            "Råcksta",
+            "Rinkeby",
+            "Sundby",
+            "Västra Matteus"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
           ]
         }
       ],
@@ -5278,6 +6328,76 @@
             "0180C5751",
             "0180C5432"
           ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C5653",
+            "0180C5691",
+            "0180C5752",
+            "0180C5751",
+            "0180C5432"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C5653",
+            "0180C5691",
+            "0180C5752",
+            "0180C5751",
+            "0180C5432"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R060",
+            "0180R077",
+            "0180R076",
+            "0180R084",
+            "0180R048"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Mariehäll",
+            "Tekniska Högskolan",
+            "Bällsta",
+            "Stadshagen",
+            "Kristineberg"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -5408,6 +6528,76 @@
             "0180C5752",
             "0180C5751",
             "0180C5690"
+          ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C5691",
+            "0180C5653",
+            "0180C5752",
+            "0180C5751",
+            "0180C5690"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C5691",
+            "0180C5653",
+            "0180C5752",
+            "0180C5751",
+            "0180C5432"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R060",
+            "0180R077",
+            "0180R076",
+            "0180R046",
+            "0180R084"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Hjorthagen-Värtahamnen",
+            "Råcksta",
+            "Rinkeby",
+            "Sundby",
+            "Västra Matteus"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
           ]
         }
       ],
@@ -5541,6 +6731,76 @@
             "0180C5751",
             "0180C5432"
           ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C5691",
+            "0180C5653",
+            "0180C5752",
+            "0180C5751",
+            "0180C5432"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C5691",
+            "0180C5653",
+            "0180C5752",
+            "0180C5751",
+            "0180C5432"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R060",
+            "0180R077",
+            "0180R076",
+            "0180R046",
+            "0180R084"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Hjorthagen-Värtahamnen",
+            "Råcksta",
+            "Rinkeby",
+            "Sundby",
+            "Västra Matteus"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -5658,6 +6918,76 @@
             "0180C2951",
             "0180C2782"
           ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C5751",
+            "0180C5900",
+            "0180C5262",
+            "0180C2951",
+            "0180C2782"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C5751",
+            "0180C5900",
+            "0180C5262",
+            "0180C2951",
+            "0180C2782"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R060",
+            "0180R106",
+            "0180R005",
+            "0180R032",
+            "0180R084"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Universitetet",
+            "Liljeholmen",
+            "Västra Matteus",
+            "Bagarmossen",
+            "Solberga"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -5772,6 +7102,76 @@
             "0180C4280",
             "0180C1330",
             "0180C2120"
+          ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C4970",
+            "0180C4250",
+            "0180C4280",
+            "0180C1330",
+            "0180C2120"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C2111",
+            "0180C4970",
+            "0180C4250",
+            "0180C4280",
+            "0180C1330"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R029",
+            "0180R048",
+            "0180R084",
+            "0180R046",
+            "0180R007"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Liseberg",
+            "Norra Ängby",
+            "Östra Sankt Göran",
+            "Gamla Enskede",
+            "Kärrtorp"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
           ]
         }
       ],
@@ -5905,6 +7305,76 @@
             "0180C1050",
             "0180C1070"
           ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C1010",
+            "0180C1020",
+            "0180C1030",
+            "0180C1050",
+            "0180C1070"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C1010",
+            "0180C1020",
+            "0180C1030",
+            "0180C1050",
+            "0180C1070"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R123",
+            "0180R112",
+            "0180R127",
+            "0180R031",
+            "0180R028"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Västra Farsta Strand-Farstanäset",
+            "Farsta",
+            "Larsboda",
+            "Sköndal",
+            "Östra Skarpnäcks gård-Flaten-Skrubba"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -6037,6 +7507,76 @@
             "0180C1101",
             "0180C1102"
           ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C1010",
+            "0180C1020",
+            "0180C1030",
+            "0180C1050",
+            "0180C1070"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C1010",
+            "0180C1020",
+            "0180C1030",
+            "0180C1050",
+            "0180C1070"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R123",
+            "0180R112",
+            "0180R127",
+            "0180R031",
+            "0180R028"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Västra Farsta Strand-Farstanäset",
+            "Farsta",
+            "Larsboda",
+            "Sköndal",
+            "Östra Skarpnäcks gård-Flaten-Skrubba"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -6152,6 +7692,76 @@
             "0180C2920",
             "0180C2930",
             "0180C2910"
+          ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C4970",
+            "0180C4940",
+            "0180C2920",
+            "0180C2930",
+            "0180C2910"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C4970",
+            "0180C4940",
+            "0180C2920",
+            "0180C2930",
+            "0180C2910"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R113",
+            "0180R029",
+            "0180R004",
+            "0180R066",
+            "0180R084"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Västra Matteus",
+            "Norra Ängby",
+            "Hägersten",
+            "Norra Johannes",
+            "Västra Katarina"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
           ]
         }
       ],
@@ -6295,6 +7905,76 @@
             "0180C2782",
             "0180C2951",
             "0180C3201"
+          ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R077",
+            "0180R060",
+            "0180R076",
+            "0180R109",
+            "0180R106"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Farsta",
+            "Sköndal",
+            "Solberga",
+            "Liljeholmen",
+            "Södra Sofia"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
           ]
         }
       ],
@@ -6440,6 +8120,76 @@
             "0180C2951",
             "0180C3201"
           ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R077",
+            "0180R060",
+            "0180R076",
+            "0180R123",
+            "0180R112"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Farsta",
+            "Sköndal",
+            "Solberga",
+            "Liljeholmen",
+            "Södra Sofia"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -6571,6 +8321,76 @@
             "0180C2951",
             "0180C3201"
           ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R077",
+            "0180R060",
+            "0180R076",
+            "0180R031",
+            "0180R027"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Farsta",
+            "Sköndal",
+            "Solberga",
+            "Liljeholmen",
+            "Södra Sofia"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -6700,6 +8520,76 @@
             "0180C2951",
             "0180C3201"
           ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R077",
+            "0180R060",
+            "0180R076",
+            "0180R079",
+            "0180R116"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Farsta",
+            "Sköndal",
+            "Solberga",
+            "Liljeholmen",
+            "Södra Sofia"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -6821,6 +8711,76 @@
             "0180C2782",
             "0180C2951",
             "0180C3201"
+          ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R077",
+            "0180R060",
+            "0180R076",
+            "0180R099",
+            "0180R106"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Farsta",
+            "Sköndal",
+            "Solberga",
+            "Liljeholmen",
+            "Södra Sofia"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
           ]
         }
       ],
@@ -6955,6 +8915,76 @@
             "0180C2951",
             "0180C3201"
           ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C2111",
+            "0180C2781",
+            "0180C2782",
+            "0180C2951",
+            "0180C3201"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R077",
+            "0180R060",
+            "0180R076",
+            "0180R106",
+            "0180R092"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Farsta",
+            "Sköndal",
+            "Solberga",
+            "Liljeholmen",
+            "Södra Sofia"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -7079,6 +9109,76 @@
             "0180C4810",
             "0180C4890"
           ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C4390",
+            "0180C3720",
+            "0180C4430",
+            "0180C4810",
+            "0180C4890"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C4390",
+            "0180C3720",
+            "0180C4430",
+            "0180C4810",
+            "0180C4890"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R014",
+            "0180R076",
+            "0180R079",
+            "0180R015",
+            "0180R048"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Djurgården",
+            "Rinkeby",
+            "Skärholmen",
+            "Husby",
+            "Höglandet"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
+          ]
         }
       ],
       "publisher": "Statistikmyndigheten SCB",
@@ -7202,6 +9302,76 @@
             "0180C5150",
             "0180C1810",
             "0180C5640"
+          ]
+        },
+        {
+          "name": "desokod",
+          "type": "VARCHAR",
+          "description_sv": "Kanonisk DeSO-kod (9 tecken). Identisk med region_code när region_kind='deso', annars NULL. Använd för join mot DeSO-polygonerna.",
+          "description_en": "Canonical DeSO code (9 chars). Equals region_code when region_kind='deso', NULL otherwise. Use for joins to the DeSO polygon layers.",
+          "sample_values": [
+            "0180C5560",
+            "0180C2660",
+            "0180C5150",
+            "0180C1810",
+            "0180C5640"
+          ]
+        },
+        {
+          "name": "desokod_2025",
+          "type": "VARCHAR",
+          "description_sv": "DeSO-kod i 2025 års indelning (via deso_historical_changes). Identisk med desokod när DeSO:n är oförändrad sedan 2018. Om en 2018-kod delades i flera 2025-koder väljs den första.",
+          "description_en": "DeSO code translated to the 2025 grid (via deso_historical_changes). Equals desokod when unchanged since 2018. If a 2018 code split into several 2025 codes, the first is chosen.",
+          "sample_values": [
+            "0180C5740",
+            "0180C1420",
+            "0180C2400",
+            "0180C2100",
+            "0180C5460"
+          ]
+        },
+        {
+          "name": "regsokod",
+          "type": "VARCHAR",
+          "description_sv": "RegSO-kod för DeSO:ns RegSO (via deso_regso_mapping). NULL när region_kind!='deso'.",
+          "description_en": "RegSO code for this DeSO's regional statistical area. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180R015",
+            "0180R032",
+            "0180R069",
+            "0180R057",
+            "0180R074"
+          ]
+        },
+        {
+          "name": "regso_name",
+          "type": "VARCHAR",
+          "description_sv": "Läsbart RegSO-namn. NULL när region_kind!='deso'.",
+          "description_en": "Human-readable RegSO name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Sköndal",
+            "Norra Ängby",
+            "Liseberg",
+            "Norra Skarpnäcks Gård",
+            "Långsjö"
+          ]
+        },
+        {
+          "name": "kommunkod",
+          "type": "VARCHAR",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "0180"
+          ]
+        },
+        {
+          "name": "kommun_name",
+          "type": "VARCHAR",
+          "description_sv": "Kommunnamn. NULL när region_kind!='deso'.",
+          "description_en": "Municipality name. NULL when region_kind!='deso'.",
+          "sample_values": [
+            "Stockholm"
           ]
         }
       ],

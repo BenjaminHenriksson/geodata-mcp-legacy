@@ -116,6 +116,33 @@ def normalize_scb() -> dict:
     import pandas as pd
     print(f"[scb] filtering 31 CSVs to Stockholm + '00 Riket' → {OUT_SCB}/")
     OUT_SCB.mkdir(parents=True, exist_ok=True)
+
+    # Precompute canonical join-key lookups used at the end of each table's
+    # normalize pass. Enables adding `desokod` / `desokod_2025` / `regsokod`
+    # / `regso_name` / `kommunkod` / `kommun_name` uniformly across every
+    # SCB parquet so LLM joins don't need per-table schema lookups.
+    mappings_dir = OUT / "mappings"
+    regso_map: dict[str, dict] = {}
+    if (mappings_dir / "deso_regso_mapping.parquet").exists():
+        dfm = pd.read_parquet(mappings_dir / "deso_regso_mapping.parquet")
+        for row in dfm.itertuples(index=False):
+            regso_map[row.desokod] = {
+                "regsokod": row.regsokod,
+                "regso_name": row.regso_name,
+                "kommunkod": row.kommunkod,
+                "kommun_name": row.kommunnamn,
+            }
+        print(f"[scb] loaded {len(regso_map):,} DeSO → RegSO/kommun entries")
+    # 2018 → 2025 bridge. Some 2018 codes split into several 2025 codes;
+    # we pick the first (deterministic by source order) and surface the
+    # full list on layer-level notes via the audit output.
+    bridge_2018_2025: dict[str, str] = {}
+    if (mappings_dir / "deso_historical_changes.parquet").exists():
+        dfh = pd.read_parquet(mappings_dir / "deso_historical_changes.parquet")
+        for row in dfh.itertuples(index=False):
+            bridge_2018_2025.setdefault(row.deso_2018, row.deso_2025)
+        print(f"[scb] loaded {len(bridge_2018_2025):,} DeSO 2018→2025 bridge entries")
+
     results = {}
     tabs = sorted(p for p in SCB_TABLES_DIR.iterdir() if p.is_dir())
     for i, tab_dir in enumerate(tabs, 1):
@@ -207,6 +234,31 @@ def normalize_scb() -> dict:
         df["region_kind"] = region.apply(_kind)
         df["region_code"] = region.apply(_code)
         df["region_name"] = region.apply(_name)
+
+        # Canonical join-key columns — populated only when region_kind='deso',
+        # NULL elsewhere. The raw region column stays intact for provenance.
+        is_deso_mask = df["region_kind"] == "deso"
+        df["desokod"] = df["region_code"].where(is_deso_mask, None)
+        # 2018 → 2025 bridge. If the DeSO code is already a 2025 code (no
+        # entry in the split table) or unchanged since 2018, desokod_2025
+        # equals desokod.
+        def _bridge(code):
+            if code is None:
+                return None
+            return bridge_2018_2025.get(code, code)
+        df["desokod_2025"] = df["desokod"].apply(_bridge)
+        # RegSO / kommun lookup via desokod.
+        def _regso(code, field):
+            if code is None:
+                return None
+            entry = regso_map.get(code)
+            if entry is None:
+                return None
+            return entry.get(field)
+        df["regsokod"]    = df["desokod"].apply(lambda c: _regso(c, "regsokod"))
+        df["regso_name"]  = df["desokod"].apply(lambda c: _regso(c, "regso_name"))
+        df["kommunkod"]   = df["desokod"].apply(lambda c: _regso(c, "kommunkod"))
+        df["kommun_name"] = df["desokod"].apply(lambda c: _regso(c, "kommun_name"))
 
         # Some SCB tables publish duplicate rows for the same dimension keys
         # (one with a suppressed/NaN value, one with the real value). Collapse

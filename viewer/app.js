@@ -112,6 +112,7 @@ async function syncSession(isFirstLoad) {
     `Session ${payload.session_id.slice(0,10)}… — ${payload.visible_layers.length} layer(s) · v${payload.version}`;
   layersEl.innerHTML = '';
 
+  const styles = payload.styles || {};
   let tightest = null;
   let i = 0;
   for (const name of payload.visible_layers) {
@@ -129,6 +130,8 @@ async function syncSession(isFirstLoad) {
         dataLayers[name] = { color, meta, layerIds, data: fc,
                              areaEst: estimateAreaPriority(fc) };
       }
+      // Apply any per-layer thematic styling (set via show(..., style=...)).
+      applyStyle(name, styles[name], color);
       // Re-sort layer draw order: smallest-area on top so they receive clicks.
       reorderLayers();
       const b = featureCollectionBounds(fc);
@@ -139,7 +142,7 @@ async function syncSession(isFirstLoad) {
     } catch (e) {
       console.error('layer load failed', name, e);
     }
-    renderLayerRow(name, color, meta);
+    renderLayerRow(name, color, meta, styles[name]);
   }
   if (isFirstLoad && tightest) {
     map.fitBounds(tightest.b, { padding: 60, duration: 600 });
@@ -213,14 +216,66 @@ function estimateAreaPriority(fc) {
   return (b[1][0] - b[0][0]) * (b[1][1] - b[0][1]);
 }
 
-function renderLayerRow(name, color, meta) {
+// Translate a server-side style spec into MapLibre paint expressions and
+// apply them to the layer's fill / line / point sublayers. When `spec` is
+// falsy, reset to the default solid color.
+function applyStyle(name, spec, defaultColor) {
+  const info = dataLayers[name];
+  if (!info) return;
+  const fill = `${name}-fill`;
+  const outline = `${name}-outline`;
+  const line = `${name}-line`;
+  const pt = `${name}-pt`;
+
+  // Default path — solid color, reset any prior styling.
+  if (!spec || !spec.column || !spec.palette) {
+    if (map.getLayer(fill)) map.setPaintProperty(fill, 'fill-color', defaultColor);
+    if (map.getLayer(outline)) map.setPaintProperty(outline, 'line-color', defaultColor);
+    if (map.getLayer(line)) map.setPaintProperty(line, 'line-color', defaultColor);
+    if (map.getLayer(pt)) map.setPaintProperty(pt, 'circle-color', defaultColor);
+    return;
+  }
+
+  let expr;
+  if (spec.scale === 'linear' && Array.isArray(spec.palette) && spec.palette.length >= 2) {
+    // Compute value range over the loaded data so the gradient covers what's present.
+    const values = (info.data?.features || [])
+      .map(f => f.properties?.[spec.column])
+      .filter(v => typeof v === 'number' && isFinite(v));
+    if (!values.length) {
+      // Nothing to interpolate — fall back to default.
+      return;
+    }
+    const lo = Math.min(...values), hi = Math.max(...values);
+    expr = ['interpolate', ['linear'], ['to-number', ['get', spec.column]],
+            lo, spec.palette[0], hi, spec.palette[spec.palette.length - 1]];
+  } else {
+    // Categorical: match expression with fallback to default color.
+    const pairs = [];
+    for (const [value, color] of Object.entries(spec.palette || {})) {
+      pairs.push(value, color);
+    }
+    expr = ['match', ['to-string', ['get', spec.column]], ...pairs, defaultColor];
+  }
+
+  if (map.getLayer(fill)) map.setPaintProperty(fill, 'fill-color', expr);
+  if (map.getLayer(outline)) map.setPaintProperty(outline, 'line-color', expr);
+  if (map.getLayer(line)) map.setPaintProperty(line, 'line-color', expr);
+  if (map.getLayer(pt)) map.setPaintProperty(pt, 'circle-color', expr);
+}
+
+
+function renderLayerRow(name, color, meta, styleSpec) {
   const el = document.createElement('div');
   el.className = 'layer-row';
+  const styleNote = styleSpec && styleSpec.column
+    ? ` · <em>styled by ${escapeHtml(styleSpec.column)}</em>`
+    : '';
   el.innerHTML = `
     <input type="checkbox" id="cb-${name}" checked data-layer="${name}"/>
     <label for="cb-${name}">
       <div><strong style="color:${color}">${escapeHtml(name)}</strong></div>
-      <div class="meta">${meta.geometry_type ?? '(no geometry)'} · ${meta.feature_count} features${meta.notes ? ` · <em>${escapeHtml(meta.notes.slice(0,60))}${meta.notes.length>60?'…':''}</em>` : ''}</div>
+      <div class="meta">${meta.geometry_type ?? '(no geometry)'} · ${meta.feature_count} features${meta.notes ? ` · <em>${escapeHtml(meta.notes.slice(0,60))}${meta.notes.length>60?'…':''}</em>` : ''}${styleNote}</div>
     </label>`;
   const cb = el.querySelector('input');
   cb.addEventListener('change', (e) => toggleLayer(name, e.target.checked));

@@ -1,28 +1,25 @@
 # Geodata MCP
 
-An MCP (Model Context Protocol) server that gives LLMs interactive access to
-Swedish open geodata — **65 datasets** of Stockholm Stadsbyggnadskontorets city
-map, SCB demographic statistical areas (DeSO 2018 + 2025), and SCB's DeSO-keyed
-statistical tables — with a companion viewer.
+**A municipal geodata stack designed for LLM-driven analysis, with enforced
+provenance and schema normalization.** Stockholm Stadsbyggnadskontorets city
+map, SCB demographic statistical areas (DeSO 2018 + 2025), SCB's DeSO-keyed
+statistical tables, and OpenStreetMap addresses — all pre-joined to
+canonical keys and exposed to any MCP client through a session-scoped
+DuckDB spatial backend. 66 datasets, one viewer, 35 tools shaped for how
+LLMs actually reason.
 
-> **Current state: public endpoint is OFFLINE.** The service was stopped and
-> disabled as part of a security review after an adversarial audit of
-> `execute_sql` surfaced reachable file-read / SSRF / DoS primitives. All
-> three mitigation layers (sqlglot denylist, DuckDB resource caps, systemd FS
-> sandbox) are implemented and tested in this repo; the service is paused
-> pending my review of whether to keep the bearer-auth-only exposure model or
-> lock the endpoint down further. **See [`docs/security.md`](docs/security.md)
-> for the full write-up**, and [`docs/deployment.md`](docs/deployment.md) for
-> the procedure to re-enable it.
->
-> `https://benjaminhenriksson.com` (the root domain / personal site) is
-> unaffected. Only `https://geo.benjaminhenriksson.com` is offline.
-
-- **When live:** `https://geo.benjaminhenriksson.com`
-- **MCP endpoint:** `POST /mcp` (bearer auth, streamable HTTP)
-- **Viewer:** MapLibre GL JS, dark Carto basemap, click popups, per-layer toggles, optional user basemap key
-- **License of underlying data:** CC0 1.0 (SCB) + CC0 1.0 (Stockholm SBK open-data variant) + CC BY 4.0 (Lantmäteriet — not currently ingested)
-- **Code license:** proprietary, all rights reserved (see `LICENSE`)
+- **Live:** `https://geo.benjaminhenriksson.com`
+- **MCP endpoint:** `POST /mcp` (streamable HTTP). OAuth 2.1 + PKCE via
+  invite code for claude.ai custom connectors; legacy shared bearer for
+  Claude Code CLI.
+- **Viewer:** MapLibre GL JS, dark Carto basemap, click-to-inspect popups,
+  per-layer toggles, auto-refresh on session state changes, thematic
+  styling via `show(..., style=...)`.
+- **License of underlying data:** CC0 1.0 (SCB + SBK Stadskarta open-data
+  variant) + ODbL 1.0 (OpenStreetMap — "© OpenStreetMap contributors"
+  attribution required on derived exports) + CC BY 4.0 (Lantmäteriet —
+  not currently ingested).
+- **Code license:** proprietary, all rights reserved (see `LICENSE`).
 
 ---
 

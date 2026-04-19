@@ -105,8 +105,32 @@ def _geom_col(meta: LayerMeta) -> str:
 
 
 def _no_semicolon(s: str, arg: str) -> None:
-    if ";" in s:
-        raise OpError(f"`{arg}` may not contain ';'")
+    """Legacy guard renamed to delegate to the parser-aware version. Kept as
+    a name because several callers reference it; the implementation is
+    sqlglot-based so semicolons inside quoted string literals no longer
+    false-trigger."""
+    # Late import to avoid circular defs — sqlglot is already loaded at
+    # module top, so this is effectively a no-op lookup.
+    _assert_predicate(s, arg)
+
+
+def _assert_predicate(s: str, arg: str) -> None:
+    """Parse `s` as a SQL predicate (WHERE-clause shape). Accept only
+    single-statement, whole-parse inputs. Lets expressions contain
+    literal `;` inside quoted strings, which the earlier substring ban
+    rejected spuriously."""
+    if s is None or s == "":
+        return
+    try:
+        stmts = sqlglot.parse(f"SELECT 1 FROM _t WHERE ({s})", read="duckdb")
+    except sqlglot.errors.ParseError as e:
+        raise OpError(f"`{arg}` is not a valid SQL predicate: {e}")
+    stmts = [x for x in stmts if x is not None]
+    if len(stmts) != 1:
+        raise OpError(
+            f"`{arg}` must be a single SQL predicate (got {len(stmts)} "
+            "statements after parsing)"
+        )
 
 
 # ---------- filter ----------
@@ -960,6 +984,108 @@ def _purge_expired_exports() -> int:
     return removed
 
 
+def _export_safe_select_list(
+    conn, layer: str, attr_cols: list[str], geom_col: str | None = None,
+    geom_transform: bool = False,
+) -> str:
+    """Build a SELECT list for a layer that's safe to feed into GDAL/GeoJSON/
+    CSV/Parquet COPY statements. Wraps HUGEINT columns in `CAST(... AS BIGINT)`
+    because GeoJSON's JSON-number serializer and GDAL's Integer64 field
+    type only go up to ~19 digits of precision (64 bits). HUGEINT commonly
+    arises from aggregate expressions: `SUM(CAST(x AS BIGINT))` auto-
+    promotes to HUGEINT in DuckDB, which then fails a non-descriptive
+    "For decimal field, only precision up to 19 is supported" at export.
+
+    Args:
+      conn: live DuckDB connection.
+      layer: quoted or unquoted table name (we requote internally).
+      attr_cols: attribute columns to select, IN ORDER.
+      geom_col: if set, append a geometry expression (ST_Transform to 4326
+                when geom_transform=True, else the column raw).
+      geom_transform: reproject 3011 → 4326 for the geom column.
+
+    Returns a SELECT list fragment (no leading "SELECT", no trailing FROM).
+    """
+    qlayer = _quote_ident(layer)
+    type_rows = conn.execute(f"DESCRIBE {qlayer}").fetchall()
+    col_types = {r[0]: r[1].upper() for r in type_rows}
+    parts: list[str] = []
+    for c in attr_cols:
+        qc = _quote_ident(c)
+        ctype = col_types.get(c, "")
+        if ctype == "HUGEINT" or ctype.startswith("HUGEINT"):
+            # Safe — if the value actually exceeds BIGINT range it'll
+            # surface as an explicit overflow, not a cryptic precision error.
+            parts.append(f"CAST({qc} AS BIGINT) AS {qc}")
+        elif ctype == "UHUGEINT" or ctype.startswith("UHUGEINT"):
+            parts.append(f"CAST({qc} AS UBIGINT) AS {qc}")
+        else:
+            parts.append(qc)
+    if geom_col:
+        qg = _quote_ident(geom_col)
+        if geom_transform:
+            parts.append(
+                f"ST_Transform({qg}, 'EPSG:3011', 'EPSG:4326', true) AS geom"
+            )
+        else:
+            parts.append(f"{qg} AS geom")
+    return ", ".join(parts) if parts else "1"
+
+
+def _write_single_layer(
+    session: Session, layer: str, dest: Path, fmt: str,
+) -> None:
+    """Emit one layer's COPY into `dest`. Shared by export_layer and
+    export_many for single-file-per-layer formats (geojson/csv/parquet)."""
+    meta = _require_layer(session, layer)
+    geom_col = meta.attributes.get("__geom_col__") or ""
+    attr_cols = [c for c in meta.attributes
+                 if not c.startswith("__") and c != geom_col]
+    qlayer = _quote_ident(layer)
+    safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in layer)
+
+    if fmt == "geojson":
+        if not geom_col:
+            raise OpError(f"layer '{layer}' has no geometry; cannot export as GeoJSON")
+        sel = _export_safe_select_list(
+            session.conn, layer, attr_cols,
+            geom_col=geom_col, geom_transform=True,
+        )
+        sql = (
+            f"COPY (SELECT {sel} FROM {qlayer}) "
+            f"TO '{dest}' (FORMAT GDAL, DRIVER 'GeoJSON', SRS 'EPSG:4326')"
+        )
+    elif fmt == "gpkg":
+        if not geom_col:
+            raise OpError(f"layer '{layer}' has no geometry; cannot export as GPKG")
+        sel = _export_safe_select_list(
+            session.conn, layer, attr_cols,
+            geom_col=geom_col, geom_transform=False,
+        )
+        sql = (
+            f"COPY (SELECT {sel} FROM {qlayer}) "
+            f"TO '{dest}' (FORMAT GDAL, DRIVER 'GPKG', "
+            f"LAYER_NAME '{safe_name}', SRS 'EPSG:3011')"
+        )
+    elif fmt == "csv":
+        if geom_col:
+            sel = _export_safe_select_list(session.conn, layer, attr_cols)
+            sel = (f"{sel + ',' if attr_cols else ''} "
+                   f"ST_AsText({_quote_ident(geom_col)}) AS geom_wkt")
+        else:
+            sel = _export_safe_select_list(session.conn, layer, attr_cols)
+        sql = f"COPY (SELECT {sel} FROM {qlayer}) TO '{dest}' (HEADER, DELIMITER ',')"
+    else:  # parquet
+        sel = _export_safe_select_list(session.conn, layer, attr_cols,
+                                        geom_col=geom_col, geom_transform=False)
+        sql = f"COPY (SELECT {sel} FROM {qlayer}) TO '{dest}' (FORMAT PARQUET, COMPRESSION ZSTD)"
+
+    try:
+        session.conn.execute(sql)
+    except Exception as e:
+        raise OpError(f"export failed for layer '{layer}': {type(e).__name__}: {e}")
+
+
 def export_layer(
     session: Session, layer: str, fmt: str = "geojson",
 ) -> dict:
@@ -977,7 +1103,6 @@ def export_layer(
             f"unsupported format '{fmt}'. Supported: {sorted(VALID_EXPORT_FORMATS)}"
         )
     meta = _require_layer(session, layer)
-    geom_col = meta.attributes.get("__geom_col__") or ""
 
     _purge_expired_exports()
     token = secrets.token_urlsafe(16)
@@ -988,43 +1113,7 @@ def export_layer(
     file_name = f"{safe_name}.{fmt}"
     dest = dest_dir / file_name
 
-    qlayer = _quote_ident(layer)
-    attr_cols = [c for c in meta.attributes
-                 if not c.startswith("__") and c != geom_col]
-    attr_select = ", ".join(_quote_ident(c) for c in attr_cols) or "1"
-
-    if fmt == "geojson":
-        if not geom_col:
-            raise OpError(f"layer '{layer}' has no geometry; cannot export as GeoJSON")
-        sql = (
-            f"COPY (SELECT {attr_select + ',' if attr_cols else ''} "
-            f"ST_Transform({_quote_ident(geom_col)}, 'EPSG:3011', 'EPSG:4326', true) "
-            f"AS geom FROM {qlayer}) "
-            f"TO '{dest}' (FORMAT GDAL, DRIVER 'GeoJSON', SRS 'EPSG:4326')"
-        )
-    elif fmt == "gpkg":
-        if not geom_col:
-            raise OpError(f"layer '{layer}' has no geometry; cannot export as GPKG")
-        sql = (
-            f"COPY (SELECT * FROM {qlayer}) "
-            f"TO '{dest}' (FORMAT GDAL, DRIVER 'GPKG', "
-            f"LAYER_NAME '{safe_name}', SRS 'EPSG:3011')"
-        )
-    elif fmt == "csv":
-        if geom_col:
-            sel = (f"SELECT {attr_select + ',' if attr_cols else ''} "
-                   f"ST_AsText({_quote_ident(geom_col)}) AS geom_wkt "
-                   f"FROM {qlayer}")
-        else:
-            sel = f"SELECT * FROM {qlayer}"
-        sql = f"COPY ({sel}) TO '{dest}' (HEADER, DELIMITER ',')"
-    else:  # parquet
-        sql = f"COPY (SELECT * FROM {qlayer}) TO '{dest}' (FORMAT PARQUET, COMPRESSION ZSTD)"
-
-    try:
-        session.conn.execute(sql)
-    except Exception as e:
-        raise OpError(f"export failed: {type(e).__name__}: {e}")
+    _write_single_layer(session, layer, dest, fmt)
 
     size_bytes = dest.stat().st_size
     expires_at = time.time() + EXPORT_TTL_S
@@ -1051,6 +1140,219 @@ def export_layer(
              "llm_source_description": s.llm_source_description}
             for s in meta.provenance
         ],
+    }
+
+
+def export_layers(
+    session: Session, layers: list[str], fmt: str = "gpkg",
+    merge_geojson: bool = False,
+) -> dict:
+    """Export multiple layers under a single 24-h download token.
+
+    Shapes:
+      - fmt='gpkg': one `.gpkg` file containing every layer (GeoPackage
+        supports multi-layer natively). One URL returned.
+      - fmt='geojson', merge_geojson=True: one `.geojson` file with a
+        single FeatureCollection; every feature has a `_layer` property.
+      - fmt='geojson'|'csv'|'parquet' (merge_geojson=False): one file per
+        layer, all under the same token directory. List of URLs returned.
+
+    Provenance is the deduped union of every source layer's SourceRefs.
+    """
+    fmt = fmt.lower()
+    if fmt not in VALID_EXPORT_FORMATS:
+        raise OpError(
+            f"unsupported format '{fmt}'. Supported: {sorted(VALID_EXPORT_FORMATS)}"
+        )
+    if not layers:
+        raise OpError("export_layers needs at least one layer")
+    # Validate all layers up front, fail fast.
+    metas = [_require_layer(session, l) for l in layers]
+
+    _purge_expired_exports()
+    token = secrets.token_urlsafe(16)
+    dest_dir = EXPORT_ROOT / token
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    def _safe(name: str) -> str:
+        return "".join(c if c.isalnum() or c in "-_." else "_" for c in name)
+
+    files: list[dict] = []
+
+    if fmt == "gpkg":
+        # Multi-layer GeoPackage. DuckDB's COPY-with-APPEND silently
+        # overwrites the file on GPKG, so the working recipe is:
+        #   1. emit each layer to its own <tmp>/<layer>.gpkg via DuckDB
+        #   2. merge with `ogr2ogr -update -append` into dest.
+        # ogr2ogr ships with the gdal-bin package; GDAL is already a
+        # runtime dep via the DuckDB spatial extension.
+        import subprocess, tempfile
+        from pathlib import Path as _P
+        file_name = "export.gpkg"
+        dest = dest_dir / file_name
+        with tempfile.TemporaryDirectory(prefix="gpkg_merge_") as tmp:
+            tmp_paths: list[tuple[str, _P]] = []
+            for layer in layers:
+                m = session.layers[layer]
+                geom_col = m.attributes.get("__geom_col__") or ""
+                if not geom_col:
+                    raise OpError(
+                        f"layer '{layer}' has no geometry; can't include in a GPKG export"
+                    )
+                attr_cols = [c for c in m.attributes
+                             if not c.startswith("__") and c != geom_col]
+                sel = _export_safe_select_list(
+                    session.conn, layer, attr_cols,
+                    geom_col=geom_col, geom_transform=False,
+                )
+                gdal_layer = _safe(layer)
+                tmp_path = _P(tmp) / f"{gdal_layer}.gpkg"
+                sql = (
+                    f"COPY (SELECT {sel} FROM {_quote_ident(layer)}) "
+                    f"TO '{tmp_path}' (FORMAT GDAL, DRIVER 'GPKG', "
+                    f"LAYER_NAME '{gdal_layer}', SRS 'EPSG:3011')"
+                )
+                try:
+                    session.conn.execute(sql)
+                except Exception as e:
+                    raise OpError(
+                        f"gpkg export failed on layer '{layer}': {type(e).__name__}: {e}"
+                    )
+                tmp_paths.append((gdal_layer, tmp_path))
+            # First layer: copy as the base file. Subsequent layers:
+            # ogr2ogr -update -append.
+            if tmp_paths:
+                first_name, first_path = tmp_paths[0]
+                import shutil as _sh
+                _sh.copyfile(first_path, dest)
+                for gdal_layer, tmp_path in tmp_paths[1:]:
+                    r = subprocess.run(
+                        ["ogr2ogr", "-f", "GPKG", "-update", "-append",
+                         "-nln", gdal_layer, str(dest), str(tmp_path)],
+                        capture_output=True, text=True,
+                    )
+                    if r.returncode != 0:
+                        raise OpError(
+                            f"gpkg merge failed on layer '{gdal_layer}': "
+                            f"{r.stderr.strip()[:300]}"
+                        )
+        files.append({
+            "layers": list(layers), "format": "gpkg",
+            "file_name": file_name, "url": f"/exports/{token}/{file_name}",
+            "size_bytes": dest.stat().st_size,
+        })
+
+    elif fmt == "geojson" and merge_geojson:
+        # Single merged FeatureCollection with a _layer property per feature.
+        # Build per-layer feature lists then assemble on disk to keep memory bounded.
+        file_name = "export.geojson"
+        dest = dest_dir / file_name
+        with open(dest, "w", encoding="utf-8") as f:
+            f.write('{"type":"FeatureCollection","features":[')
+            first = True
+            for layer in layers:
+                m = session.layers[layer]
+                geom_col = m.attributes.get("__geom_col__") or ""
+                if not geom_col:
+                    # Skip non-geometric layers in merged output with a warning
+                    # appended to the response rather than failing.
+                    continue
+                attr_cols = [c for c in m.attributes
+                             if not c.startswith("__") and c != geom_col]
+                # Probe each column's type so we only wrap HUGEINT in CAST.
+                type_rows = session.conn.execute(
+                    f"DESCRIBE {_quote_ident(layer)}"
+                ).fetchall()
+                col_types = {r[0]: r[1].upper() for r in type_rows}
+
+                def _prop_expr(c: str) -> str:
+                    qc = _quote_ident(c)
+                    t = col_types.get(c, "")
+                    if t == "HUGEINT" or t.startswith("HUGEINT"):
+                        return f"'{c}', CAST({qc} AS BIGINT)"
+                    if t == "UHUGEINT" or t.startswith("UHUGEINT"):
+                        return f"'{c}', CAST({qc} AS UBIGINT)"
+                    return f"'{c}', {qc}"
+
+                escaped_layer = layer.replace("'", "''")
+                if attr_cols:
+                    props_parts = ", ".join(_prop_expr(c) for c in attr_cols)
+                    props_expr = (
+                        f"json_object('_layer', '{escaped_layer}', {props_parts})"
+                    )
+                else:
+                    props_expr = f"json_object('_layer', '{escaped_layer}')"
+                per_feat_sql = (
+                    f"SELECT json_object("
+                    f"'type', 'Feature', "
+                    f"'properties', {props_expr}, "
+                    f"'geometry', ST_AsGeoJSON(ST_Transform("
+                    f"{_quote_ident(geom_col)}, 'EPSG:3011', 'EPSG:4326', true))::JSON"
+                    f")::VARCHAR "
+                    f"FROM {_quote_ident(layer)}"
+                )
+                cur = session.conn.execute(per_feat_sql)
+                while True:
+                    rows = cur.fetchmany(2000)
+                    if not rows:
+                        break
+                    for (feat,) in rows:
+                        if feat is None:
+                            continue
+                        if not first:
+                            f.write(",")
+                        first = False
+                        f.write(feat)
+            f.write("]}")
+        files.append({
+            "layers": list(layers), "format": "geojson", "merged": True,
+            "file_name": file_name, "url": f"/exports/{token}/{file_name}",
+            "size_bytes": dest.stat().st_size,
+        })
+
+    else:
+        # One file per layer, all under the same token dir.
+        for layer in layers:
+            safe_name = _safe(layer)
+            file_name = f"{safe_name}.{fmt}"
+            dest = dest_dir / file_name
+            _write_single_layer(session, layer, dest, fmt)
+            files.append({
+                "layer": layer, "format": fmt,
+                "file_name": file_name, "url": f"/exports/{token}/{file_name}",
+                "size_bytes": dest.stat().st_size,
+            })
+
+    # Merged provenance (dedup via key).
+    seen: dict[tuple, SourceRef] = {}
+    for m in metas:
+        for s in m.provenance:
+            key = (s.dataset_id, s.source_name, s.file_path, s.llm_sourced)
+            seen.setdefault(key, s)
+    prov = [
+        {"dataset_id": s.dataset_id, "source_name": s.source_name,
+         "publisher": s.publisher, "license": s.license, "url": s.url,
+         "retrieved": s.retrieved, "llm_sourced": s.llm_sourced,
+         "llm_source_description": s.llm_source_description}
+        for s in seen.values()
+    ]
+
+    expires_at = time.time() + EXPORT_TTL_S
+    session.log(Operation(
+        tool="export_many",
+        args={"layers": list(layers), "format": fmt,
+              "merge_geojson": merge_geojson},
+        result_layer=None,
+        summary=f"{fmt} × {len(files)} file(s)",
+        at=datetime.utcnow(),
+    ))
+    return {
+        "format": fmt,
+        "merge_geojson": merge_geojson,
+        "files": files,
+        "token": token,
+        "expires_at": datetime.utcfromtimestamp(expires_at).isoformat() + "Z",
+        "provenance": prov,
     }
 
 
@@ -1335,11 +1637,10 @@ def _normalize_field_type(t: str) -> str:
 
 def _sanity_check_expr(expr: str) -> None:
     """Expressions passed to add/update_field are inserted into CTAS/UPDATE
-    SQL. We run them through the same validator that gates execute_sql
-    (by embedding into a trivial SELECT) to catch file readers / URLs /
-    abs-paths / big literals. Semicolons are flat-rejected."""
-    if ";" in expr:
-        raise OpError("expression cannot contain ';'")
+    SQL. Parse to reject multi-statement input (literal ';' inside quoted
+    strings passes); then run the full sqlglot validator from execute_sql
+    to catch file readers / URLs / abs-paths / big numeric literals."""
+    _assert_predicate(expr, "expr")
     # Validate by embedding. Any issue the execute_sql validator would catch
     # is caught here too.
     _validate_sql(f"SELECT ({expr}) AS _x")
@@ -1440,8 +1741,7 @@ def update_field(
                       f"Available: {[c for c in meta.attributes if not c.startswith('__')]}")
     _sanity_check_expr(expr)
     if where:
-        if ";" in where:
-            raise OpError("`where` cannot contain ';'")
+        _assert_predicate(where, "where")
         _validate_sql(f"SELECT 1 FROM _t WHERE ({where})")
 
     _snapshot_column(session, layer, name)
@@ -1790,8 +2090,7 @@ def batch_iterate(
             if c != "rowid" and c not in declared:
                 raise OpError(f"unknown column '{c}' in layer '{layer}'. Available: {declared + ['rowid']}")
         if where:
-            if ";" in where:
-                raise OpError("`where` cannot contain ';'")
+            _assert_predicate(where, "where")
             _validate_sql(f"SELECT 1 FROM _t WHERE ({where})")
         import secrets as _secrets
         cursor = _secrets.token_urlsafe(12)
@@ -2102,3 +2401,194 @@ def hide_layers(session: Session, layers: list[str] | None = None) -> dict:
         "hidden": hidden,
         "still_visible": list(session.visible_layers),
     }
+
+
+# ======================================================================
+# Macro ops — common composite workflows in a single call. Each is a thin
+# shim over existing primitives, bundled to cut round-trips in clients
+# that hit per-turn tool-use caps (claude.ai web).
+# ======================================================================
+
+
+def top_n(
+    session: Session, layer: str, by: str,
+    n: int = 10, ascending: bool = False,
+    result_name: str | None = None,
+) -> LayerMeta:
+    """filter + ORDER BY + LIMIT in one call. Produces a new layer with the
+    top (or bottom) `n` rows of `layer` sorted by the `by` expression.
+
+    Args:
+        layer: source layer.
+        by: SQL ordering expression (e.g. "population", "ST_Area(geom)").
+        n: row cap (default 10).
+        ascending: True → smallest first. Default False (largest first).
+        result_name: optional layer name; defaults to "<layer>_top<n>".
+
+    Provenance inherits from `layer`.
+    """
+    meta = _require_layer(session, layer)
+    _assert_single_sql_expression(by, "by")
+    new_name = session.unique_layer_name(result_name or f"{layer}_top{n}")
+    direction = "ASC" if ascending else "DESC"
+    sql = (
+        f"CREATE TABLE {_quote_ident(new_name)} AS "
+        f"SELECT * FROM {_quote_ident(layer)} "
+        f"ORDER BY ({by}) {direction} NULLS LAST LIMIT {int(n)}"
+    )
+    try:
+        session.conn.execute(sql)
+    except Exception as e:
+        raise OpError(f"top_n failed: {type(e).__name__}: {e}")
+    out = _register_result(session, new_name, [layer], created_by="top_n")
+    session.log(Operation(
+        tool="top_n",
+        args={"layer": layer, "by": by, "n": n, "ascending": ascending,
+              "result_name": new_name},
+        result_layer=new_name, summary=f"top {n} of {layer} by {by}",
+        at=datetime.utcnow(),
+    ))
+    return out
+
+
+def baseline_stats(
+    session: Session, layer: str, expression: str,
+    group_by: list[str] | None = None,
+) -> dict:
+    """Compute baseline descriptive statistics for a SQL expression across
+    an entire layer. Returns count / mean / median / p25 / p75 / min / max
+    / stddev, optionally grouped. Intended for "compute the city-wide
+    median income as a baseline for comparing a subset" — saves a
+    hand-written CTE every time.
+    """
+    _require_layer(session, layer)
+    _assert_single_sql_expression(expression, "expression")
+    group_cols_sql = ""
+    group_select = ""
+    group_by_sql = ""
+    if group_by:
+        for g in group_by:
+            _assert_single_sql_expression(g, "group_by")
+        group_select = ", ".join(_quote_ident(g) for g in group_by) + ", "
+        group_by_sql = "GROUP BY " + ", ".join(_quote_ident(g) for g in group_by)
+
+    sql = (
+        f"SELECT {group_select}"
+        f"  COUNT(*) FILTER (WHERE ({expression}) IS NOT NULL) AS n,"
+        f"  AVG(({expression}))                                  AS mean,"
+        f"  MEDIAN(({expression}))                               AS median,"
+        f"  QUANTILE_CONT(({expression}), 0.25)                  AS p25,"
+        f"  QUANTILE_CONT(({expression}), 0.75)                  AS p75,"
+        f"  MIN(({expression}))                                  AS min,"
+        f"  MAX(({expression}))                                  AS max,"
+        f"  STDDEV(({expression}))                               AS stddev"
+        f" FROM {_quote_ident(layer)} {group_by_sql}"
+        f" ORDER BY n DESC LIMIT 1000"
+    )
+    try:
+        rows = session.conn.execute(sql).fetchall()
+        cols = [d[0] for d in session.conn.description]
+    except Exception as e:
+        raise OpError(f"baseline_stats failed: {type(e).__name__}: {e}")
+    groups = [dict(zip(cols, r)) for r in rows]
+    payload = {
+        "layer": layer,
+        "expression": expression,
+        "group_by": group_by,
+        "n_groups": len(groups),
+    }
+    if not group_by and groups:
+        payload["stats"] = groups[0]  # single global row
+    else:
+        payload["groups"] = groups
+    session.log(Operation(
+        tool="baseline_stats",
+        args={"layer": layer, "expression": expression, "group_by": group_by},
+        result_layer=None,
+        summary=f"{len(groups)} group(s)",
+        at=datetime.utcnow(),
+    ))
+    return payload
+
+
+def classify(
+    session: Session, layer: str, name: str,
+    rules: list[dict], default: str | None = None,
+) -> dict:
+    """Add a column to `layer` whose value is chosen from the first matching
+    rule in `rules`. Each rule is `{"when": <sql predicate>, "then": <literal>}`.
+    Essentially a CASE WHEN ... THEN ... ELSE ... END wrapped as add_field.
+
+    Use this for the canonical urban-analysis pattern of labeling features
+    based on N signals (e.g. 'gentrifying' | 'stable' | 'declining').
+    Reversible inside a covering checkpoint; stores the compiled expression
+    in the operation log for provenance.
+    """
+    if not rules:
+        raise OpError("classify requires at least one rule")
+    parts = ["CASE"]
+    for i, rule in enumerate(rules):
+        when = rule.get("when")
+        then = rule.get("then")
+        if when is None or then is None:
+            raise OpError(f"rule {i} missing 'when' or 'then'")
+        _assert_single_sql_expression(when, f"rules[{i}].when")
+        # `then` is a literal — embed as a SQL literal (string/number/bool).
+        parts.append(f"WHEN ({when}) THEN {_sql_literal(then)}")
+    if default is not None:
+        parts.append(f"ELSE {_sql_literal(default)}")
+    parts.append("END")
+    expr = " ".join(parts)
+    # add_field does the heavy lifting (snapshot, column add, update, log).
+    out = add_field(session, layer, name, expr)
+    out["rules_count"] = len(rules)
+    out["default"] = default
+    return out
+
+
+def _sql_literal(v) -> str:
+    """Render a Python scalar as a SQL literal. Used by classify()."""
+    if v is None:
+        return "NULL"
+    if isinstance(v, bool):
+        return "TRUE" if v else "FALSE"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    # String — single-quote-escape.
+    s = str(v).replace("'", "''")
+    return f"'{s}'"
+
+
+def export_and_cite(
+    session: Session, layer: str, fmt: str = "gpkg",
+) -> dict:
+    """Run `export_layer` and `sources(layer)` in one call. Saves the
+    last round-trip of every analysis workflow."""
+    exported = export_layer(session, layer, fmt=fmt)
+    citations = sources(session, layer=layer)
+    return {**exported, "citations_markdown": citations}
+
+
+# ----- shared helpers -----
+
+def _assert_single_sql_expression(s: str, arg: str) -> None:
+    """Reject strings that parse as multiple SQL statements. Replaces the
+    naïve `';' in s` substring check so expressions with literal
+    semicolons inside quoted strings stop triggering false positives.
+    Semantics: the argument must parse as a single scalar expression
+    or predicate when embedded into `SELECT ... FROM _t WHERE (...)`.
+    """
+    if s is None:
+        return
+    try:
+        stmts = sqlglot.parse(
+            f"SELECT 1 FROM _t WHERE ({s})", read="duckdb"
+        )
+    except sqlglot.errors.ParseError as e:
+        raise OpError(f"`{arg}` is not a valid SQL expression: {e}")
+    stmts = [x for x in stmts if x is not None]
+    if len(stmts) != 1:
+        raise OpError(
+            f"`{arg}` must be a single SQL expression (got {len(stmts)} "
+            "statements after parsing)"
+        )

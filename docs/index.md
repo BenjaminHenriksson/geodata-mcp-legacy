@@ -7,7 +7,7 @@ Model Context Protocol, with authoritative spatial computation, enforced
 provenance, and a session-scoped viewer.
 
 The site is an active artefact, not a frozen reference. What's written here
-is what's true today, 2026-04-19. Older commits tell older stories; the
+is what's true today, 2026-04-20. Older commits tell older stories; the
 source of truth is the code.
 
 ---

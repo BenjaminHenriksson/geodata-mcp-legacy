@@ -58,11 +58,15 @@ its own set of layers, and survives restarts.
 .duckdb/sessions/
     <session_id>.duckdb           — tables: layers + checkpoint snapshots
     <session_id>.meta.json        — Python-side metadata
+    <session_id>.audit.jsonl      — append-only SQL audit trail
 ```
 
-Two files per session. If either is deleted or corrupt, the other is
-discarded — we don't try to rebuild a broken session. Recovery is the
-LLM's job (via the history log that *was* saved).
+Three files per session. If `.duckdb` or `.meta.json` is deleted or
+corrupt, the other two are discarded — we don't try to rebuild a broken
+session. Recovery is the LLM's job (via the history log that *was*
+saved). The `.audit.jsonl` file is independent and append-only; missing
+or truncated audit lines just shorten the viewer's audit panel without
+affecting session integrity.
 
 ### What's in `<id>.duckdb`
 
@@ -83,11 +87,23 @@ Python-side state that DuckDB doesn't know about:
   provenance).
 - `visible_layers`, `visible_styles`, `visible_title` — viewer state.
 - `history` — every Operation logged, with tool name, args, summary,
-  timestamp. Used for `sources(layer)` and for LLM recovery.
+  timestamp, plus `correlation_id` / `description` / `status` /
+  `duration_ms` / `error` from the audit context. Used for
+  `sources(layer)` and for LLM recovery.
 - `cursors` — state for `batch_iterate` pagination.
 - `checkpoints` — checkpoint metadata: id, snapshot refs, scope. Note
   the actual snapshot *data* lives in DuckDB tables, not here.
 - `next_checkpoint_id`, `active_checkpoint`, `version`.
+
+### What's in `<id>.audit.jsonl`
+
+One JSON object per line, one line per SQL statement executed in the
+session — including internal probes (`DESCRIBE`, `COUNT`, bbox
+aggregates) tagged `internal=true`. Each record carries
+`correlation_id`, `tool`, `sql`, `started_at`, `duration_ms`, `status`,
+optional `error`, and the `internal` flag. Append-only; never
+rewritten. The viewer's audit panel renders from a server-side
+in-memory mirror replayed from this file on rehydrate.
 
 ---
 

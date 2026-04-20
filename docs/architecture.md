@@ -62,19 +62,38 @@ before the per-load cap (100 k features). Records provenance from the
 catalog entry. Everything is pre-projected to EPSG:3011; there's no
 CRS guessing at load time.
 
-### `operations.py` — the workhorse
+### `operations/` — the workhorse package
 
 All the verbs the MCP exposes — filter, spatial, stats, execute_sql,
 macro helpers, annotate, add_field, checkpoint/rollback/commit, exports,
 frequencies. Every function is session-scoped; there is no global DuckDB
 connection.
 
-Structure: thin SQL generators + parse-aware validation. `sqlglot` parses
-user-supplied predicates to reject multi-statement input, function calls
-to filesystem readers (`read_csv`, `read_text`, etc.), and a specific
-denylist of DuckDB intrinsics we don't want LLM-invoked. This is the
-server's primary defence against SQL-injection dressed as "friendly
-expression" input.
+Split into focused submodules so each file stays readable:
+
+- `_util.py` — provenance merging, predicate validation, unicode
+  normalization, shared SQL-cell formatting.
+- `sql.py` — `execute_sql` + `_validate_sql` (the sqlglot-backed sandbox).
+- `spatial.py` — clip, buffer, centroid, dissolve, convex_hull,
+  intersect, select_by_location.
+- `query.py` — filter, stats, frequencies, baseline_stats, top_n,
+  classify, batch_iterate.
+- `layers.py` — create_layer, drop_layer, rename_layer, list_layers,
+  set_notes, hide_layers.
+- `fields.py` — add_field, update_field, drop_field, annotate.
+- `export.py` — export_layer, export_layers, export_and_cite.
+- `checkpoint.py` — checkpoint, rollback, commit, snapshot helpers.
+- `inspect.py` — inspect_location(s), reverse_geocode, sources.
+
+`operations/__init__.py` re-exports every public name so `from
+geodata_mcp.operations import …` keeps working unchanged.
+
+Structure pattern across submodules: thin SQL generators + parse-aware
+validation. `sqlglot` parses user-supplied predicates to reject
+multi-statement input, function calls to filesystem readers (`read_csv`,
+`read_text`, etc.), and a specific denylist of DuckDB intrinsics we
+don't want LLM-invoked. This is the server's primary defence against
+SQL-injection dressed as "friendly expression" input.
 
 ### `session.py` — per-client state
 
@@ -83,12 +102,24 @@ layer metadata, visible styles, operation history, cursors, and
 checkpoints. The `SessionRegistry` manages lifecycle: create, rehydrate
 from disk, idle close, hard TTL delete, flush on shutdown.
 
-Persistence is two-file per session:
+The DuckDB connection is wrapped in `_AuditedConnection` — a thin proxy
+that intercepts every `execute()` to record a timestamped, status-
+tagged `AuditRecord`. Combined with `Session.audit_context(tool,
+description)` (a contextvars-scoped block opened by the `_audited`
+tool decorator), this gives every SQL statement a `correlation_id` tying
+it to the LLM operation that issued it. Records stream to a JSONL
+sidecar; the `/api/<sid>/audit_log` endpoint serves them to the
+viewer's audit panel.
+
+Persistence is three files per session:
 
 - `<id>.duckdb` — the DuckDB file with tables (layers + checkpoint
   snapshots);
 - `<id>.meta.json` — Python-side metadata that DuckDB doesn't know about
-  (LayerMeta, visible_styles, history, etc.).
+  (LayerMeta, visible_styles, history, etc.);
+- `<id>.audit.jsonl` — append-only stream of every SQL statement
+  executed in the session, including internal probes; replayed into
+  memory on rehydrate.
 
 See [Sessions](sessions) for the lifecycle in detail.
 
@@ -97,17 +128,34 @@ See [Sessions](sessions) for the lifecycle in detail.
 Each tool is a thin `@mcp.tool`-decorated function that:
 
 1. Resolves the session from the MCP context.
-2. Calls into `operations.py` or `loader.py`.
+2. Calls into `operations.*` or `loader.py`.
 3. Attaches a checkpoint hint if the target layer is under one.
 4. Handles `SessionExpired` and other structured errors.
+
+Mutating tools are additionally wrapped with `@_audited("tool_name")` so
+their body runs inside `Session.audit_context(...)` — this attaches a
+`correlation_id` and the user-supplied `description` to every SQL
+statement and `Operation` produced. The user sees both in the viewer's
+audit panel.
 
 Tools are annotated (`_READ_ONLY`, `_SAFE_MUTATION`,
 `_IDEMPOTENT_MUTATION`) so MCP clients can auto-approve the safe ones
 without per-call permission prompts.
 
-The server also mounts the viewer API (`/api/<sid>/...`), the static
-viewer (`/view/<sid>`), the landing page (`/`), the docs
-(`/docs`, `/docs/<slug>`), and the OAuth flow.
+### `http_app.py` — the viewer + OAuth + docs HTTP layer
+
+The Starlette composition (build_http_app + middleware classes) lives
+in its own module so server.py stays focused on the MCP tool surface.
+Imported lazily from `server.main()` only when `--http` is passed, so
+stdio mode never pulls in Starlette. Routes mounted include the viewer
+(`/view/<sid>`), viewer API (`/api/<sid>/visible_layers`,
+`/api/<sid>/version`, `/api/<sid>/audit_log`,
+`/api/<sid>/layer/<layer>/geojson`), file exports, the landing page
+(`/`), the docs (`/docs`, `/docs/<slug>`), and the OAuth flow.
+
+The middleware stack (outside-in): `RateLimitMiddleware` →
+`SecurityHeadersMiddleware` (CSP + framing) → `OAuthAuthMiddleware`
+(bearer/OAuth on `/mcp/*` only) → Starlette routes.
 
 ### `oauth.py` — invite-code-gated OAuth 2.1 + PKCE
 

@@ -1,6 +1,6 @@
 # MCP tool reference
 
-**38 tools** across four categories + a macros tier. Endpoint:
+**38 tools** across five categories. Endpoint:
 `https://geo.benjaminhenriksson.com/mcp` (OAuth 2.1 + PKCE via invite code
 for claude.ai; legacy shared bearer for Claude Code CLI). Every tool
 carries MCP `toolAnnotations` (`readOnlyHint`, `destructiveHint=false`)
@@ -9,28 +9,61 @@ so clients can auto-approve the safe ones without per-call prompts.
 All spatial tools operate in **EPSG:3011** (SWEREF 99 18 00). Coordinates in
 tool arguments and return values use that CRS unless otherwise noted. The
 viewer reprojects to EPSG:4326 at the `/api/.../geojson` boundary. The
-server's `instructions` string (~9 KB workflow primer) is delivered to the
+server's `instructions` string (~10 KB workflow primer) is delivered to the
 MCP client at connection time — it covers CRS conventions, canonical SCB
-join keys, the bulk-enrichment loop, macro-tool preferences, and when the
-LLM should push back instead of ploughing on.
+join keys, the bulk-enrichment loop, macro-tool preferences, the
+auditability nudge, and when the LLM should push back instead of
+ploughing on.
 
 ## Tool index
 
-**Discovery / read-only** (`readOnlyHint=true`): `search_data`,
-`describe_dataset`, `geocode`, `inspect`, `stats`, `sources`, `list_layers`,
-`batch_iterate`, `inspect_location`, `inspect_locations`.
+**Discovery / read-only** (`readOnlyHint=true`, 14 tools): `search_data`,
+`describe_dataset`, `geocode`, `bbox_from`, `inspect`, `stats`,
+`frequencies`, `baseline_stats`, `sources`, `list_layers`,
+`batch_iterate`, `reverse_geocode`, `inspect_location`, `inspect_locations`.
 
-**Layer creation / session state** (`destructiveHint=false`): `load`,
-`load_many`, `filter`, `spatial`, `execute_sql`, `create_layer`, `export`,
-`show`, `hide`, `set_notes`.
+**Layer creation / session state**: `load`, `load_many`, `filter`,
+`spatial`, `top_n`, `classify`, `execute_sql`, `create_layer`,
+`export`, `export_many`, `export_and_cite`, `render_map`, `show`,
+`hide`, `set_notes`.
 
-**In-place layer mutation** (`destructiveHint=false`, reversible inside a
-checkpoint): `add_field`, `update_field`, `drop_field`, `annotate`,
-`drop_layer`, `rename_layer`.
+**In-place layer mutation** (reversible inside a checkpoint):
+`add_field`, `update_field`, `drop_field`, `annotate`, `drop_layer`,
+`rename_layer`.
 
 **Transaction control**: `checkpoint`, `rollback`, `commit`. Checkpoints
 accept an optional `layers=[...]` scope, and multiple can be active
 simultaneously on overlapping or disjoint scopes.
+
+---
+
+## Auditability — `description` on every mutating tool
+
+Every tool that creates, modifies, or destroys session state — every
+tool in the latter four categories above — accepts a `description: str
+= ""` keyword argument. The user sees this in their viewer's audit
+panel together with the actual SQL the tool generated, and can decide
+whether to trust the LLM's work without reading code.
+
+The decorator behind every mutating tool opens an audit context that:
+
+- mints a per-call `correlation_id`,
+- captures every SQL statement executed inside the tool body
+  (including internal helper queries like `DESCRIBE`, bbox aggregates,
+  `COUNT`s),
+- records timing + status,
+- attaches the `description` to the resulting `Operation` record.
+
+Records mirror to `<sid>.audit.jsonl` (append-only) and serve at
+`GET /api/<sid>/audit_log`. Operations called without a description
+appear in the panel flagged "no description provided" — a visible
+nudge that the LLM should be filling them in.
+
+Treat the description like a commit message: short, specific, in the
+user's frame ("filter to schools within 500 m of metro stops, per
+user request"), not yours ("call ST_DWithin on layer foo"). The doc
+sections below omit the `description` argument from every signature
+to keep them readable, but it's accepted on every mutating tool.
 
 ---
 
@@ -223,6 +256,32 @@ with geometry (`geom_wkt` column). `where` optional SQL predicate, no `;`.
 Mark layers visible in the viewer; return their summaries and the viewer URL.
 Viewer pulls `/api/{session_id}/layer/{name}/geojson` per visible layer and
 auto-styles by geometry type.
+
+---
+
+---
+
+## Other tools (brief)
+
+A handful of tools that fit a category above but warrant only a one-line
+description here — full docstrings live in `server.py`:
+
+- `bbox_from(name)` — resolve a Stadsdel / Distrikt / Kvarter name to its
+  bounding box in EPSG:3011. One call instead of geocode → spatial
+  intersection → bbox extraction.
+- `frequencies(layer, column, top=20)` — value-frequency table for one
+  attribute (count + percentage + cumulative percentage), sorted DESC.
+  The "show me the distribution of X" call.
+- `reverse_geocode(x_3011, y_3011)` — what Stadsdel / Distrikt /
+  Kvarter contains this point? Returns the matched admin polygons by
+  name. Use this rather than guessing place names from raw coordinates.
+- `inspect_locations(points, radius_m=100, layers?, columns?, per_layer_limit=5)`
+  — batch variant of `inspect_location`. Up to 500 points per call.
+- `render_map(layers, title?, width_px=1600, height_px=1000)` —
+  server-side PNG render. Editorial paper-toned backdrop, scale bar,
+  legend honoring the active `show()` style. Output URL valid for 24 h.
+  Use when you want a self-contained image for a slide / report rather
+  than the interactive viewer.
 
 ---
 

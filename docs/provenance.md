@@ -204,6 +204,32 @@ internal review of outputs), this is enough.
 
 ---
 
+## Operation-level audit (per-call SQL trail)
+
+Layer- and column-level provenance say "where did this column / dataset
+come from". The audit log says "what SQL did the LLM actually run, in
+which tool call, and what was its description". Together they answer
+both "is this data trustworthy at its source?" and "do I trust the
+specific transformation the LLM applied?".
+
+Every mutating MCP tool runs inside `Session.audit_context(tool,
+description)`, which mints a `correlation_id` and propagates it to:
+
+- every SQL statement executed inside the tool body (captured by the
+  `_AuditedConnection` proxy around the DuckDB connection);
+- the `Operation` record logged for that call.
+
+The user-supplied `description` argument flows through to the resulting
+`Operation` and shows up in the viewer's audit panel together with the
+captured SQL. Operations without a description are flagged "no
+description provided" — a visible nudge.
+
+Records are mirrored to `<sid>.audit.jsonl` (append-only) and served
+to the viewer at `GET /api/<sid>/audit_log`. See [Sessions](sessions)
+and [Viewer](viewer) for the on-disk format and panel UX respectively.
+
+---
+
 ## Trade-offs
 
 ### Every op carries provenance plumbing

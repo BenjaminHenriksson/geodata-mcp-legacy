@@ -3,6 +3,9 @@ name = "geodata-mcp"
 version = "0.1.0"
 description = "MCP server for Swedish open geodata (Stockholm)"
 requires-python = ">=3.12"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{name = "Benjamin Henriksson"}]
 dependencies = [
     "fastmcp>=2.0",
     "duckdb>=1.1",

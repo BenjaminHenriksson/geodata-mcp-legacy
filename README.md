@@ -19,7 +19,10 @@ LLMs actually reason.
   variant) + ODbL 1.0 (OpenStreetMap — "© OpenStreetMap contributors"
   attribution required on derived exports) + CC BY 4.0 (Lantmäteriet —
   not currently ingested).
-- **Code license:** proprietary, all rights reserved (see `LICENSE`).
+- **Code license:** GNU Affero General Public License v3.0 or later
+  (see `LICENSE`). The AGPL's network-use clause applies: running a
+  modified version of the server as a public service obliges you to
+  offer the modified source to its users.
 
 ---
 

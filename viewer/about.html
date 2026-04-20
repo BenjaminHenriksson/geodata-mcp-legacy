@@ -341,22 +341,22 @@
 
     <p>
       <strong>MCP</strong> stands for <em>Model Context Protocol</em>. It
-      is an open specification, originally proposed by Anthropic and now
-      supported across the industry, that lets a chat-based AI call
-      structured tools and read structured data while the user is talking
-      to it. Think of it as a standard plug: the model learned how the
-      plug works once, and now it can connect to any server that offers
-      one.
+      is an open specification — vendor-neutral and supported across the
+      industry — that lets a chat-based AI call structured tools and
+      read structured data while the user is talking to it. Think of it
+      as a standard plug: any model that understands MCP can connect to
+      any server that offers one.
     </p>
 
     <p>
-      MCP-capable clients today include claude.ai and the Claude desktop
-      and Claude Code apps; ChatGPT (custom connectors); Google's Gemini
-      apps; Qwen Chat; and a growing list of open-source clients. This
-      server doesn't care which one you use — the protocol is identical.
-      The setup examples on the landing page lead with claude.ai
-      because that is what was tested first, but the same endpoint URL
-      drops into any of the others.
+      MCP-capable clients today include ChatGPT (custom connectors),
+      Claude (claude.ai, Claude Desktop, Claude Code), Google Gemini,
+      Qwen Chat, and a growing list of open-source clients — the
+      protocol is genuinely vendor-neutral, and this server doesn't
+      know or care which one is on the other end. The connect-flow
+      examples on the landing page show claude.ai first because that
+      is what was tested first, but the same endpoint URL drops
+      cleanly into any other MCP-capable app.
     </p>
 
     <p>
@@ -365,17 +365,17 @@
 
     <div class="flow">You  ↔  Your AI app (MCP client)  ↔  MCP server  ↔  Tools, data
                ↕
-        The model (Claude, ChatGPT, Gemini, …)</div>
+            The model (any LLM — ChatGPT, Claude, Gemini, …)</div>
 
     <p>
       A small but load-bearing distinction: <strong>the model</strong>
-      (the LLM itself — Claude, ChatGPT, Gemini, Qwen, whichever you use)
-      is not the same thing as the <strong>app</strong> you type into.
-      The model runs on its provider's servers. The app is the software
-      on your computer or in your browser: the claude.ai or chatgpt.com
-      website, a desktop app, or a terminal program. In the Model
-      Context Protocol's vocabulary, that app is called the
-      <strong>MCP client</strong>.
+      (the LLM itself — whichever one you use, ChatGPT or Claude or
+      Gemini or Qwen or another) is not the same thing as the
+      <strong>app</strong> you type into. The model runs on its
+      provider's servers. The app is the software on your computer or
+      in your browser: the chatgpt.com or claude.ai website, a desktop
+      app, or a terminal program. In the Model Context Protocol's
+      vocabulary, that app is called the <strong>MCP client</strong>.
     </p>
 
     <p>
@@ -440,9 +440,10 @@
     </p>
 
     <ol class="steps">
-      <li>You open your AI app (claude.ai, ChatGPT, Gemini, Claude
-        Desktop / Code, whichever you use) and connect to this server
-        once, entering an invite code. That setup step is one-off.</li>
+      <li>You open your AI app (ChatGPT, claude.ai, Gemini, Claude
+        Desktop or Code, or any other MCP-capable client) and connect
+        to this server once, entering an invite code. That setup step
+        is one-off.</li>
       <li>You ask a question in plain Swedish or English. Something
         like: <em>Vilka fem DeSO:n i Stockholm har högst medianinkomst,
         och hur ser bebyggelsen runt omkring ut?</em></li>
@@ -574,16 +575,16 @@
         not carry anything forward.
       </p>
       <p>
-        Separately, on training: most consumer chat plans (Anthropic's,
-        OpenAI's, Google's) may use conversations to improve future
-        models unless you are on a plan that opts out (most enterprise
-        and API tiers do). Whether that matters for your work depends
-        on what you discuss and which provider you are using. The data
-        this MCP exposes is public municipal data, so nothing
-        confidential leaves your organisation through the chat, but if
-        you paste internal documents into the prompt, that is a
-        different question. Check the specifics of your AI plan if you
-        are not sure.
+        Separately, on training: most consumer chat plans — across
+        providers (OpenAI, Anthropic, Google, Alibaba, …) — may use
+        conversations to improve future models unless you are on a
+        plan that opts out (most enterprise and API tiers do). Whether
+        that matters for your work depends on what you discuss and
+        which provider you are using. The data this MCP exposes is
+        public municipal data, so nothing confidential leaves your
+        organisation through the chat, but if you paste internal
+        documents into the prompt, that is a different question.
+        Check the specifics of your AI plan if you are not sure.
       </p>
       <p>
         Nothing the MCP server stores (session state, exported files)
@@ -604,11 +605,12 @@
       </p>
       <p>
         The server tracks this. Every in-session column carries
-        provenance: <em>LLM-authored via annotate by model
-        gpt-5 on 2026-04-19</em> or <em>… by claude-opus-4-7</em>, or
-        <em>derived via add_field with this SQL expression</em>. The
-        viewer and <code>sources()</code> tool surface the
-        distinction, regardless of which model wrote the column.
+        provenance: <em>LLM-authored via annotate by model gpt-5 on
+        2026-04-19</em>, or <em>… by claude-opus-4-7</em>, or <em>… by
+        gemini-2.5-pro</em>, or <em>derived via add_field with this
+        SQL expression</em>. The viewer and <code>sources()</code> tool
+        surface the distinction regardless of which model wrote the
+        column — the audit trail is provider-agnostic.
       </p>
       <div class="callout">
         <strong>Check before you trust.</strong> If a column's values
@@ -724,9 +726,10 @@
       Access is invite-only. If you do not have a code, ask; the list
       of people with codes is currently small. With a code, the set-up
       is the same as adding any other custom MCP connector to your AI
-      app — claude.ai, ChatGPT, Gemini, or another MCP-capable client:
+      app — ChatGPT, claude.ai, Gemini, or another MCP-capable client:
       a one-time paste of the endpoint URL, a confirmation screen, and
-      the invite code.
+      the invite code. Each app's connector dialog looks slightly
+      different, but the protocol underneath is identical.
     </p>
     <p>
       The full connect flow and tool catalogue are on the

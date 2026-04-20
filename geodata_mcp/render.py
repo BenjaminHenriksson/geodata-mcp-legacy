@@ -1,21 +1,23 @@
 """Server-side map rendering. Produces an editorial PNG of one-or-more
-session layers on a paper-toned backdrop, honouring the same style spec
-(color/opacity/size/stroke channels) the viewer uses for `show()`.
+session layers over a Carto Positron basemap, honouring the same style
+spec (color/opacity/size/stroke channels) the viewer uses for `show()`.
 
 Design principle: Claude can't fetch tiles, reproject them, or composite
 a styled vector overlay, so we render it here and hand back a URL. We
 don't build a PDF layout around it — Claude can assemble that itself
 once it has the map image.
 
-No tiled basemap: the systemd sandbox denies egress, and the editorial
-palette reads better on solid ivory than over a raster anyway. Scale
-bar and "North" indicator are added to keep the map legible as a
-standalone artefact.
+The basemap is read from a local tile cache under
+`data/basemap/positron/`. The service runs with outbound egress denied,
+so runtime fetches aren't an option; `scripts/fetch_basemap.py` pre-warms
+the cache offline. If the cache is missing, the renderer falls back to a
+paper-only backdrop (the old behaviour).
 """
 from __future__ import annotations
 
 import io
 import json
+import math
 import secrets
 from pathlib import Path
 
@@ -26,9 +28,21 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch, Rectangle
 from matplotlib.collections import PatchCollection, LineCollection
 from matplotlib.patches import Polygon as MplPolygon
+from PIL import Image
+from pyproj import Transformer
 from shapely.geometry import shape as shapely_shape
 
 from .session import Session
+
+_BASEMAP_DIR = (Path(__file__).resolve().parents[1]
+                / "data" / "basemap" / "positron")
+_TILE_SIZE = 256
+# Zooms for which we have cached tiles — must match fetch_basemap.py.
+_AVAILABLE_ZOOMS = (10, 11, 12, 13)
+
+# Cached reprojection transformer. pyproj is thread-safe once constructed.
+_T_3011_TO_4326 = Transformer.from_crs(3011, 4326, always_xy=True)
+_T_4326_TO_3011 = Transformer.from_crs(4326, 3011, always_xy=True)
 
 # --- palette --------------------------------------------------------------
 
@@ -367,20 +381,23 @@ def render_map_png(
     ax.set_aspect("equal", adjustable="box")
     ax.axis("off")
 
-    # Grid reminiscent of the homepage's quiet backdrop.
     for spine in ax.spines.values():
         spine.set_visible(False)
-    # faint cartographer-style grid
-    step = _grid_step(xmax - xmin)
-    import math as _m
-    gx = _m.floor(xmin / step) * step
-    while gx < xmax:
-        ax.axvline(gx, color=INK, alpha=0.04, linewidth=0.5, zorder=0)
-        gx += step
-    gy = _m.floor(ymin / step) * step
-    while gy < ymax:
-        ax.axhline(gy, color=INK, alpha=0.04, linewidth=0.5, zorder=0)
-        gy += step
+
+    # Carto Positron basemap from the local tile cache. Falls back to a
+    # faint cartographer grid on an ivory backdrop when the cache isn't
+    # available (first run after clone, or extent outside kommun 0180).
+    basemap_ok = _draw_basemap(ax, xmin, ymin, xmax, ymax)
+    if not basemap_ok:
+        step = _grid_step(xmax - xmin)
+        gx = math.floor(xmin / step) * step
+        while gx < xmax:
+            ax.axvline(gx, color=INK, alpha=0.04, linewidth=0.5, zorder=0)
+            gx += step
+        gy = math.floor(ymin / step) * step
+        while gy < ymax:
+            ax.axhline(gy, color=INK, alpha=0.04, linewidth=0.5, zorder=0)
+            gy += step
 
     # Draw layers in supplied order.
     styles = sess.visible_styles or {}
@@ -401,6 +418,15 @@ def render_map_png(
     _scale_bar(ax, xmin + (xmax - xmin) * 0.04,
                ymin + (ymax - ymin) * 0.06, xmax - xmin)
 
+    # Basemap attribution, per Carto + OSM licence terms.
+    if basemap_ok:
+        fig.text(
+            0.99, 0.02,
+            "© OpenStreetMap contributors · © CARTO",
+            fontsize=7, color=INK_FAINT,
+            family="sans-serif", ha="right", va="bottom",
+        )
+
     # Legend, right-hand column
     if legend:
         _draw_legend(fig, per_layer, styles)
@@ -418,6 +444,99 @@ def render_map_png(
         "height": height_px,
         "bbox_3011": [xmin, ymin, xmax, ymax],
     }
+
+
+# --- basemap tile compositing -------------------------------------------
+
+def _deg2tile(lat_deg: float, lon_deg: float, zoom: int) -> tuple[int, int]:
+    lat_rad = math.radians(lat_deg)
+    n = 2 ** zoom
+    x = int((lon_deg + 180.0) / 360.0 * n)
+    y = int((1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n)
+    return x, y
+
+
+def _tile2deg(x: int, y: int, zoom: int) -> tuple[float, float]:
+    n = 2 ** zoom
+    lon = x / n * 360.0 - 180.0
+    lat = math.degrees(math.atan(math.sinh(math.pi * (1.0 - 2.0 * y / n))))
+    return lat, lon
+
+
+def _pick_zoom(lon_span_deg: float) -> int:
+    """Pick the smallest cached zoom such that the extent spans at
+    least ~4 tiles horizontally (so detail is visible) but not more
+    than a few dozen (to cap compositing cost)."""
+    for z in _AVAILABLE_ZOOMS:
+        tiles_across = (lon_span_deg / 360.0) * (2 ** z)
+        if tiles_across >= 2.0:
+            # Prefer the next zoom up if we're still well under ~10 tiles.
+            if tiles_across < 5 and z + 1 in _AVAILABLE_ZOOMS:
+                return z + 1
+            return z
+    return _AVAILABLE_ZOOMS[-1]
+
+
+def _draw_basemap(ax, xmin, ymin, xmax, ymax) -> bool:
+    """Composite cached Carto Positron tiles as the map background.
+    Returns True on success, False when the cache is missing or doesn't
+    cover the requested extent (caller falls back to paper backdrop)."""
+    if not _BASEMAP_DIR.exists():
+        return False
+
+    # Convert the 3011 extent to WGS84 to pick tiles.
+    lon_min, lat_min = _T_3011_TO_4326.transform(xmin, ymin)
+    lon_max, lat_max = _T_3011_TO_4326.transform(xmax, ymax)
+    if not (lon_min < lon_max and lat_min < lat_max):
+        return False
+
+    zoom = _pick_zoom(lon_max - lon_min)
+    x0, y0 = _deg2tile(lat_max, lon_min, zoom)   # NW
+    x1, y1 = _deg2tile(lat_min, lon_max, zoom)   # SE
+    if x1 < x0 or y1 < y0:
+        return False
+
+    cols = x1 - x0 + 1
+    rows = y1 - y0 + 1
+    # Guardrail: don't composite more than ~64 tiles for one render.
+    if cols * rows > 64:
+        return False
+
+    big = Image.new("RGB", (cols * _TILE_SIZE, rows * _TILE_SIZE),
+                    (245, 240, 232))
+    any_tile = False
+    for ix, x in enumerate(range(x0, x1 + 1)):
+        for iy, y in enumerate(range(y0, y1 + 1)):
+            path = _BASEMAP_DIR / str(zoom) / str(x) / f"{y}.png"
+            if not path.exists():
+                continue
+            try:
+                tile = Image.open(path).convert("RGB")
+                big.paste(tile, (ix * _TILE_SIZE, iy * _TILE_SIZE))
+                any_tile = True
+            except Exception:
+                continue
+    if not any_tile:
+        return False
+
+    # Composite bounds in WGS84 come from the tile edges.
+    nw_lat, nw_lon = _tile2deg(x0, y0, zoom)
+    se_lat, se_lon = _tile2deg(x1 + 1, y1 + 1, zoom)
+    # Reproject the composite's four corners to 3011 and use as imshow
+    # extent. Between 3011 and the Mercator tile projection there's a
+    # small sub-percent distortion over the kommun; visually acceptable
+    # for an editorial artefact.
+    px_min, py_max = _T_4326_TO_3011.transform(nw_lon, nw_lat)
+    px_max, py_min = _T_4326_TO_3011.transform(se_lon, se_lat)
+    ax.imshow(
+        big,
+        extent=(px_min, px_max, py_min, py_max),
+        origin="upper",
+        zorder=0,
+        alpha=0.9,  # mute slightly so vector overlay reads cleanly
+        interpolation="bilinear",
+    )
+    return True
 
 
 def _grid_step(dx):

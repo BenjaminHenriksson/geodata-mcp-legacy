@@ -14,6 +14,18 @@ const POLL_MS = 2000;
 // verdigris, raw umber. All desaturated, all warm-biased, all at a similar
 // value so no single layer dominates. Reads as annotations on paper rather
 // than dashboard accents.
+// Zoom-responsive point radius. Keeps points readable without having them
+// merge into a city-wide blob at low zoom or becoming a single pixel at
+// high zoom. Used as the fallback for the size channel in applyStyle.
+const DEFAULT_POINT_RADIUS_EXPR = [
+  'interpolate', ['linear'], ['zoom'],
+  8,  1.0,
+  11, 2.2,
+  13, 3.0,
+  15, 3.8,
+  18, 6.0,
+];
+
 const COLORS = ['#B05B3B',  // terra (primary accent, shared with site)
                 '#7A4A35',  // burnt umber
                 '#8C6A3E',  // raw sienna / ochre
@@ -199,7 +211,10 @@ function addLayer(name, fc, color) {
     filter: ['==', '$type', 'LineString'] });
   ids.push(`${name}-line`);
   map.addLayer({ id: `${name}-pt`, type: 'circle', source: sourceId,
-    paint: { 'circle-color': color, 'circle-radius': 3.6,
+    paint: { 'circle-color': color,
+             // Zoom-interp so points shrink when zoomed out instead of
+             // covering the whole city as overlapping blobs.
+             'circle-radius': DEFAULT_POINT_RADIUS_EXPR,
              'circle-stroke-color': '#F5F0E8', 'circle-stroke-width': 1.0 },
     filter: ['==', '$type', 'Point'] });
   ids.push(`${name}-pt`);
@@ -300,7 +315,9 @@ function applyStyle(name, spec, defaultColor) {
   setPaint(pt, 'circle-opacity', opacityPt);
 
   // --- SIZE (point radius only — meaningless for polygons/lines) ---
-  const sizeExpr = channelExpr(spec?.size, feats, 3.6);
+  // Fallback is the zoom-interp expression so points stay legible at any
+  // zoom. An explicit size channel overrides with a data-driven radius.
+  const sizeExpr = channelExpr(spec?.size, feats, DEFAULT_POINT_RADIUS_EXPR);
   setPaint(pt, 'circle-radius', sizeExpr);
 
   // --- STROKE (polygon outline, line width, point stroke width) ---
@@ -588,8 +605,29 @@ function onMapClick(e) {
       ${otherHtml}
     </div>`;
   if (currentPopup) currentPopup.remove();
+  // Snap the popup to the feature's actual coordinate when a point wins.
+  // queryRenderedFeatures uses a 4px hit box, so the cursor lngLat can be
+  // a few metres away from the point — visually fine at city zoom, but
+  // a sizable offset at street zoom. Polygon/line winners still anchor
+  // at the click point (inside the geometry) because there's no single
+  // "feature lngLat" that makes sense.
+  let popupLngLat = e.lngLat;
+  const g = topFeat.geometry;
+  if (g && g.type === 'Point') {
+    popupLngLat = g.coordinates;
+  } else if (g && g.type === 'MultiPoint' && Array.isArray(g.coordinates)) {
+    // Anchor to the nearest sub-point of the multi-point feature.
+    let best = null, bestD = Infinity;
+    for (const c of g.coordinates) {
+      const dx = c[0] - e.lngLat.lng;
+      const dy = c[1] - e.lngLat.lat;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) { bestD = d; best = c; }
+    }
+    if (best) popupLngLat = best;
+  }
   currentPopup = new maplibregl.Popup({ closeOnClick: true, maxWidth: '320px' })
-    .setLngLat(e.lngLat)
+    .setLngLat(popupLngLat)
     .setHTML(html)
     .addTo(map);
 }

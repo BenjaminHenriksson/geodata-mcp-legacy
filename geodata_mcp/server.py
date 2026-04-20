@@ -2038,6 +2038,76 @@ class OAuthAuthMiddleware:
         return await self.app(scope, receive, send)
 
 
+_CSP_HTML = (
+    # script-src: self (inline app.js is cache-busted, loaded from
+    # /static), plus unpkg for the pinned MapLibre (SRI-protected).
+    # 'unsafe-inline' is load-bearing for the landing-page copy button,
+    # the docs code-highlighting script, and the OAuth consent form;
+    # without it those pages break.
+    "default-src 'self'; "
+    "script-src 'self' https://unpkg.com 'unsafe-inline'; "
+    "style-src 'self' https://fonts.googleapis.com https://unpkg.com 'unsafe-inline'; "
+    "font-src 'self' https://fonts.gstatic.com data:; "
+    # img-src is intentionally broad (https:) — the viewer loads tiles
+    # from user-pasted basemap URLs in addition to the default Carto CDN.
+    "img-src 'self' data: https:; "
+    # connect-src broad for the same reason: MapLibre's style/sprite
+    # fetches target arbitrary origins when a custom basemap is pasted.
+    "connect-src 'self' https:; "
+    "frame-ancestors 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'"
+)
+
+
+class SecurityHeadersMiddleware:
+    """Attach CSP and a handful of defensive headers to HTML responses.
+
+    MCP (JSON-RPC), API JSON endpoints, file downloads, and well-known
+    metadata bypass this — CSP on those would be inert noise. The
+    middleware only decorates responses whose Content-Type starts with
+    text/html.
+    """
+
+    _SKIP_PREFIXES = ("/mcp", "/api/", "/exports/", "/static/",
+                      "/.well-known/")
+    _SKIP_PATHS = {"/oauth/token", "/oauth/register"}
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        path = scope.get("path", "")
+        if path in self._SKIP_PATHS or any(
+            path == p or path.startswith(p) for p in self._SKIP_PREFIXES
+        ):
+            return await self.app(scope, receive, send)
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                is_html = any(
+                    k.lower() == b"content-type" and b"text/html" in v
+                    for k, v in headers
+                )
+                if is_html:
+                    headers.append(
+                        (b"content-security-policy", _CSP_HTML.encode())
+                    )
+                    headers.append((b"x-content-type-options", b"nosniff"))
+                    headers.append((b"x-frame-options", b"DENY"))
+                    headers.append(
+                        (b"referrer-policy",
+                         b"strict-origin-when-cross-origin")
+                    )
+                    message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
+
+
 class RateLimitMiddleware:
     """Token-bucket rate limiter per client IP. Applies to all routes except
     /static/*. Generous defaults — this is belt-and-braces, not a production DDoS guard."""
@@ -2228,14 +2298,26 @@ def build_http_app() -> object:
             return JSONResponse({"error": "not_found"}, status_code=404)
         # Check expiry — anything older than EXPORT_TTL is refused and cleaned up.
         import time as _time
-        if _time.time() - path.stat().st_mtime > EXPORT_TTL_S:
+        try:
+            mtime = path.stat().st_mtime
+        except FileNotFoundError:
+            # Raced with a concurrent expiry cleanup.
+            return JSONResponse({"error": "expired"}, status_code=410)
+        if _time.time() - mtime > EXPORT_TTL_S:
             try:
                 path.unlink()
                 path.parent.rmdir()
             except OSError:
                 pass
             return JSONResponse({"error": "expired"}, status_code=410)
-        return FileResponse(path, filename=filename)
+        # FileResponse opens the file lazily; if another request's
+        # expiry sweep deletes it between here and the send, Starlette
+        # raises. Pre-open so we hold an fd that survives unlink on
+        # POSIX, and fall back to 410 if the file is already gone.
+        try:
+            return FileResponse(path, filename=filename)
+        except FileNotFoundError:
+            return JSONResponse({"error": "expired"}, status_code=410)
 
     async def api_layer_geojson(request):
         """Emit a layer as a GeoJSON FeatureCollection.
@@ -2345,6 +2427,7 @@ def build_http_app() -> object:
         routes=routes, lifespan=lifespan,
         exception_handlers={404: not_found},
     )
+    app = SecurityHeadersMiddleware(app)
     app = OAuthAuthMiddleware(app)
     # Wrap with a simple per-IP token bucket (120 req/min, burst 40).
     return RateLimitMiddleware(app)

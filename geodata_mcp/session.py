@@ -9,9 +9,9 @@ state if desired.
 from __future__ import annotations
 
 import json
+import secrets
 import threading
 import time
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -195,7 +195,11 @@ class Session:
     """
 
     def __init__(self, session_id: str | None = None) -> None:
-        self.id = session_id or uuid.uuid4().hex[:12]
+        # 128 bits of entropy via secrets.token_urlsafe(16) → 22 URL-safe
+        # chars (a-z A-Z 0-9 - _). Earlier versions used uuid4.hex[:12]
+        # (48 bits) which was brute-forceable: the viewer API is gated
+        # only by the session id, so enumeration equals auth bypass.
+        self.id = session_id or secrets.token_urlsafe(16)
         self.created_at = datetime.utcnow()
         self.last_active = self.created_at
         SESSION_DB_DIR.mkdir(parents=True, exist_ok=True)

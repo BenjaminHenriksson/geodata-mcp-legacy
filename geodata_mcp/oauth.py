@@ -122,23 +122,51 @@ def _reap(store: dict) -> None:
 
 def _load_store() -> None:
     """Load persisted clients + tokens from disk. Expired tokens are
-    dropped during the load. Safe to call at import."""
+    dropped during the load. Safe to call at import.
+
+    Load failures (missing file, corrupt JSON) are non-fatal: the server
+    comes up with an empty store and users re-authorise on next use. We
+    log the condition so an operator can tell the difference between
+    "clean first boot" and "the file went missing".
+    """
+    import sys as _sys
     if not _OAUTH_STORE_PATH.exists():
+        # Silent on first boot; loud if a restart is supposed to
+        # preserve state but can't find the file.
+        if _clients or _access_tokens or _refresh_tokens:
+            print(f"[oauth] store {_OAUTH_STORE_PATH} is missing; "
+                  f"starting with empty state (users will re-auth).",
+                  file=_sys.stderr)
         return
     try:
-        data = json.loads(_OAUTH_STORE_PATH.read_text(encoding="utf-8"))
-    except Exception:
+        raw = _OAUTH_STORE_PATH.read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except Exception as e:
+        print(f"[oauth] failed to parse {_OAUTH_STORE_PATH}: "
+              f"{type(e).__name__}: {e}. Starting with empty state; "
+              f"users will re-auth.",
+              file=_sys.stderr)
         return
     now = _now()
+    dropped_expired = 0
     with _lock:
         for cid, cmeta in (data.get("clients") or {}).items():
             _clients[cid] = cmeta
         for t, entry in (data.get("access_tokens") or {}).items():
             if entry.get("exp", 0) > now:
                 _access_tokens[t] = entry
+            else:
+                dropped_expired += 1
         for t, entry in (data.get("refresh_tokens") or {}).items():
             if entry.get("exp", 0) > now:
                 _refresh_tokens[t] = entry
+            else:
+                dropped_expired += 1
+    print(f"[oauth] loaded {len(_clients)} clients, "
+          f"{len(_access_tokens)} access tokens, "
+          f"{len(_refresh_tokens)} refresh tokens "
+          f"(dropped {dropped_expired} expired) from {_OAUTH_STORE_PATH}",
+          file=_sys.stderr)
 
 
 def _save_store_locked() -> None:
@@ -611,17 +639,30 @@ async def token(request: Request) -> JSONResponse:
         client_id = form.get("client_id") or ""
         with _lock:
             _reap(_refresh_tokens)
-            entry = _refresh_tokens.get(rt)
+            entry = _refresh_tokens.pop(rt, None)   # single-use: consume it.
             if entry is None or entry["client_id"] != client_id:
+                # If the RT existed and we just popped it, it's now
+                # invalid — a well-behaved client won't retry with the
+                # same RT. If a legit request races with an attacker
+                # replaying the same RT, the loser gets invalid_grant;
+                # neither can keep using the stolen token past its
+                # one-use moment.
                 return JSONResponse({"error": "invalid_grant"}, status_code=400)
+            # OAuth 2.1 BCP: rotate the refresh token on each use so a
+            # leaked RT is good for exactly one exchange, not a 30-day
+            # window. Access token lifetime is unchanged.
             access = "at_" + _random_token(32)
+            new_rt = "rt_" + _random_token(32)
             _access_tokens[access] = {"client_id": client_id,
                                        "exp": _now() + ACCESS_TOKEN_TTL_S}
+            _refresh_tokens[new_rt] = {"client_id": client_id,
+                                        "exp": _now() + REFRESH_TOKEN_TTL_S}
             _save_store_locked()
         return JSONResponse({
             "access_token": access,
             "token_type": "Bearer",
             "expires_in": ACCESS_TOKEN_TTL_S,
+            "refresh_token": new_rt,
             "scope": "mcp",
         })
 

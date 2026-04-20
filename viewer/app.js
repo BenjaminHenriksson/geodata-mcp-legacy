@@ -179,7 +179,10 @@ async function syncSession(isFirstLoad) {
     renderLayerRow(name, color, meta, styles[name]);
   }
   if (isFirstLoad && tightest) {
-    map.fitBounds(tightest.b, { padding: 60, duration: 600 });
+    // maxZoom cap so a small-bbox "tightest" layer (e.g. a single point
+    // or one stadsdel) doesn't zoom to street level. 13 keeps the
+    // neighbourhood in frame while still showing streets + buildings.
+    map.fitBounds(tightest.b, { padding: 60, maxZoom: 13, duration: 600 });
   }
   if (isFirstLoad) map.on('click', onMapClick);
 }
@@ -590,7 +593,7 @@ function onMapClick(e) {
   const rows = Object.entries(props)
     .filter(([k, v]) => v !== null && v !== undefined && v !== '')
     .slice(0, 12)
-    .map(([k, v]) => `<div class="row"><span class="k">${escapeHtml(k)}</span><span class="v">${escapeHtml(String(v))}</span></div>`)
+    .map(([k, v]) => `<div class="row"><span class="k">${escapeHtml(k)}</span><span class="v">${escapeHtml(fmtValue(v))}</span></div>`)
     .join('');
   const otherHtml = other.length
     ? `<div class="meta">Also here: ${escapeHtml(other.join(', '))}</div>`
@@ -635,6 +638,30 @@ function onMapClick(e) {
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// Format a popup attribute value. Numbers get trimmed to a sensible
+// precision (≈10 m resolution for coord-sized values, 2 decimals for
+// everything else, 2 significant figures for very small values) and
+// their trailing zeros stripped. Non-numbers pass through unchanged.
+function fmtValue(v) {
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    if (Number.isInteger(v)) return String(v);
+    const abs = Math.abs(v);
+    // Coordinate / area magnitudes: 1-m precision is overkill already;
+    // round to integer so "6579781.23" doesn't clutter the popup.
+    if (abs >= 10000) return Math.round(v).toString();
+    // Small non-zero values: preserve significant digits so things like
+    // 0.0012 don't collapse to "0".
+    if (abs > 0 && abs < 0.01) {
+      return Number(v.toPrecision(2)).toString();
+    }
+    // Default: at most 2 decimals, strip any trailing zeros.
+    let s = v.toFixed(2);
+    if (s.includes('.')) s = s.replace(/0+$/, '').replace(/\.$/, '');
+    return s;
+  }
+  return String(v);
 }
 
 // -- bounds helpers --

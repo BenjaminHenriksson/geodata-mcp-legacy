@@ -19,8 +19,8 @@ of them can, by themselves:
 
 So `render_map` exists. Give it a list of visible layers; it returns a
 PNG URL valid for 24 hours. The model takes that URL and embeds the
-image in whatever document it composes — no PDF-layout tool needed on
-our side, regardless of which client (claude.ai, ChatGPT, Gemini, …)
+image in whatever document it composes. No PDF-layout tool needed on
+our side, regardless of which client (claude.ai, ChatGPT, Gemini, etc.)
 is driving.
 
 This follows the [AI-native principle](design): build the render (hard

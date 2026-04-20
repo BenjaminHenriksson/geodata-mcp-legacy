@@ -340,18 +340,18 @@
     </div>
 
     <p>
-      <strong>MCP</strong> stands for <em>Model Context Protocol</em>. It
-      is an open specification — vendor-neutral and supported across the
-      industry — that lets a chat-based AI call structured tools and
-      read structured data while the user is talking to it. Think of it
-      as a standard plug: any model that understands MCP can connect to
-      any server that offers one.
+      MCP stands for Model Context Protocol. It is an open
+      specification, vendor-neutral and supported across the industry,
+      that lets a chat-based AI call structured tools and read
+      structured data while the user is talking to it. Think of it as a
+      standard plug: any model that understands MCP can connect to any
+      server that offers one.
     </p>
 
     <p>
       MCP-capable clients today include ChatGPT (custom connectors),
       Claude (claude.ai, Claude Desktop, Claude Code), Google Gemini,
-      Qwen Chat, and a growing list of open-source clients — the
+      Qwen Chat, and a growing list of open-source clients. The
       protocol is genuinely vendor-neutral, and this server doesn't
       know or care which one is on the other end. The connect-flow
       examples on the landing page show claude.ai first because that
@@ -365,17 +365,17 @@
 
     <div class="flow">You  ↔  Your AI app (MCP client)  ↔  MCP server  ↔  Tools, data
                ↕
-            The model (any LLM — ChatGPT, Claude, Gemini, …)</div>
+            The model (any LLM, e.g. ChatGPT, Claude, Gemini)</div>
 
     <p>
-      A small but load-bearing distinction: <strong>the model</strong>
-      (the LLM itself — whichever one you use, ChatGPT or Claude or
-      Gemini or Qwen or another) is not the same thing as the
-      <strong>app</strong> you type into. The model runs on its
-      provider's servers. The app is the software on your computer or
-      in your browser: the chatgpt.com or claude.ai website, a desktop
-      app, or a terminal program. In the Model Context Protocol's
-      vocabulary, that app is called the <strong>MCP client</strong>.
+      A small but load-bearing distinction: the model (the LLM itself,
+      whichever one you use, whether ChatGPT or Claude or Gemini or
+      Qwen or another) is not the same thing as the app you type into.
+      The model runs on its provider's servers. The app is the software
+      on your computer or in your browser: the chatgpt.com or
+      claude.ai website, a desktop app, or a terminal program. In the
+      Model Context Protocol's vocabulary, that app is called the MCP
+      client.
     </p>
 
     <p>
@@ -575,8 +575,8 @@
         not carry anything forward.
       </p>
       <p>
-        Separately, on training: most consumer chat plans — across
-        providers (OpenAI, Anthropic, Google, Alibaba, …) — may use
+        Separately, on training: most consumer chat plans (across
+        providers like OpenAI, Anthropic, Google, Alibaba) may use
         conversations to improve future models unless you are on a
         plan that opts out (most enterprise and API tiers do). Whether
         that matters for your work depends on what you discuss and
@@ -610,7 +610,7 @@
         gemini-2.5-pro</em>, or <em>derived via add_field with this
         SQL expression</em>. The viewer and <code>sources()</code> tool
         surface the distinction regardless of which model wrote the
-        column — the audit trail is provider-agnostic.
+        column. The audit trail is provider-agnostic.
       </p>
       <div class="callout">
         <strong>Check before you trust.</strong> If a column's values
@@ -726,7 +726,7 @@
       Access is invite-only. If you do not have a code, ask; the list
       of people with codes is currently small. With a code, the set-up
       is the same as adding any other custom MCP connector to your AI
-      app — ChatGPT, claude.ai, Gemini, or another MCP-capable client:
+      app (ChatGPT, claude.ai, Gemini, or another MCP-capable client):
       a one-time paste of the endpoint URL, a confirmation screen, and
       the invite code. Each app's connector dialog looks slightly
       different, but the protocol underneath is identical.

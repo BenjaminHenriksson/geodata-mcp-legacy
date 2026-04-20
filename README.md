@@ -83,8 +83,8 @@ Full tool reference: **[`docs/tools.md`](docs/tools.md)**, plus the
 published docs at [`geo.benjaminhenriksson.com/docs`](https://geo.benjaminhenriksson.com/docs)
 (design rationale, architecture, data model, sessions, viewer,
 provenance, rendering, roadmap). The server also publishes top-level
-`instructions` at connection time — a ~10 KB workflow primer the model
-(Claude, ChatGPT, Gemini, Qwen, …) reads before the first tool call.
+`instructions` at connection time, a ~10 KB workflow primer the model
+(Claude, ChatGPT, Gemini, Qwen, etc.) reads before the first tool call.
 
 ---
 
@@ -128,11 +128,11 @@ Two connection paths: an OAuth flow for web clients, and a bearer
 token for CLI / desktop clients that haven't shipped OAuth 2.1 + PKCE
 support yet.
 
-### 1. Web custom-connector flow (preferred — claude.ai, ChatGPT, Gemini, …)
+### 1. Web custom-connector flow (preferred; claude.ai, ChatGPT, Gemini, etc.)
 
 Open your AI app's connector settings, choose Add custom connector
-(naming varies — "Custom connector" in claude.ai, similar in ChatGPT
-and Gemini), and paste:
+(naming varies; it's "Custom connector" in claude.ai, similar in
+ChatGPT and Gemini), and paste:
 
 ```
 https://geo.benjaminhenriksson.com/mcp
@@ -141,13 +141,13 @@ https://geo.benjaminhenriksson.com/mcp
 You'll be redirected to a consent form that shows the callback host
 and asks for an invite code. Type the code (shared out-of-band) and
 you're in. The same endpoint URL works for every MCP-capable web
-client — the protocol is identical, only the connector dialog UI
+client. The protocol is identical, only the connector dialog UI
 differs.
 
 Get the invite code from the host operator; it lives in
 `/etc/credstore/geodata-mcp.invite` (root-readable only).
 
-### 2. Claude Code CLI (legacy shared bearer — example)
+### 2. Claude Code CLI (legacy shared bearer, example)
 
 ```bash
 TOKEN=$(ssh geo-vps 'sudo cat /etc/credstore/geodata-mcp.token')
@@ -157,8 +157,8 @@ claude mcp add --transport http geodata \
 ```
 
 Restart the client. The 38 tools appear automatically. The same
-bearer-on-`/mcp` pattern works for any CLI-style MCP client — Codex,
-custom scripts, in-house tools — only the `add` command syntax
+bearer-on-`/mcp` pattern works for any CLI-style MCP client (Codex,
+custom scripts, in-house tools); only the `add` command syntax
 differs.
 
 ### 3. Desktop apps via the `mcp-remote` shim (Claude Desktop example)
@@ -313,7 +313,7 @@ uv sync
 uv run --with pandas --with pyarrow --with openpyxl \
   python scripts/normalize.py
 
-# run locally (stdio — plug into any MCP client config; example below
+# run locally (stdio; plug into any MCP client config; example below
 # uses Claude Code, but the same stdio entry point works for ChatGPT
 # Desktop, Codex, in-house MCP clients, etc.)
 uv run python -m geodata_mcp
@@ -383,6 +383,6 @@ geodata-mcp/
 - **Street + house-number geocoding** pairs via 250 m spatial join between the street-label point and the nearest address-number point. Some pairs are off-by-one-building.
 - **SCB privacy suppression** — small-population DeSOs have NULL values in statistical tables. Catalog descriptions warn about this; queries must `WHERE value IS NOT NULL` to skip them.
 - **38 catalog warnings** — SBK cartographic columns (TEXTFONT, TEXT_ANGLE, etc.) exist in the data without catalog attribute entries. Flagged by audit, low risk.
-- **CLI clients still use a shared bearer** — the legacy bearer flow is fine for any scripted/CLI MCP client (Claude Code, Claude Desktop, Codex, custom scripts). Web custom-connector flows (claude.ai, ChatGPT, Gemini, etc.) use the OAuth 2.1 + PKCE path described above. Either flow gates on the same invite code.
+- **CLI clients still use a shared bearer.** The legacy bearer flow is fine for any scripted/CLI MCP client (Claude Code, Claude Desktop, Codex, custom scripts). Web custom-connector flows (claude.ai, ChatGPT, Gemini, etc.) use the OAuth 2.1 + PKCE path described above. Either flow gates on the same invite code.
 - **No Lantmäteriet data** — would add nationwide topographic context. Intentionally skipped for disk and scope.
 

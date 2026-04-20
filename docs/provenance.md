@@ -69,7 +69,7 @@ authoring record:
 ```
 
 The `model` field is whatever string the calling client passes to
-`annotate(model=...)` — `claude-opus-4-7`, `gpt-5`, `gemini-2.5-pro`,
+`annotate(model=...)`: `claude-opus-4-7`, `gpt-5`, `gemini-2.5-pro`,
 `qwen3-max`, anything. The server doesn't validate it; it just records
 it so the downstream reviewer can see which model wrote which column.
 
@@ -227,7 +227,7 @@ description)`, which mints a `correlation_id` and propagates it to:
 The user-supplied `description` argument flows through to the resulting
 `Operation` and shows up in the viewer's audit panel together with the
 captured SQL. Operations without a description are flagged "no
-description provided" — a visible nudge.
+description provided", a visible nudge.
 
 Records are mirrored to `<sid>.audit.jsonl` (append-only) and served
 to the viewer at `GET /api/<sid>/audit_log`. See [Sessions](sessions)

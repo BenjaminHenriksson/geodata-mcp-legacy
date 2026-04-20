@@ -2,7 +2,7 @@
 
 **38 tools** across five categories. Endpoint:
 `https://geo.benjaminhenriksson.com/mcp` (OAuth 2.1 + PKCE via invite
-code for web custom-connector flows — claude.ai, ChatGPT, Gemini, and
+code for web custom-connector flows like claude.ai, ChatGPT, Gemini, and
 the rest; legacy shared bearer for CLI / desktop clients that haven't
 shipped OAuth yet). Every tool carries MCP `toolAnnotations`
 (`readOnlyHint`, `destructiveHint=false`) so any MCP-capable client
@@ -41,8 +41,8 @@ simultaneously on overlapping or disjoint scopes.
 
 ## Auditability — `description` on every mutating tool
 
-Every tool that creates, modifies, or destroys session state — every
-tool in the latter four categories above — accepts a `description: str
+Every tool that creates, modifies, or destroys session state (every
+tool in the latter four categories above) accepts a `description: str
 = ""` keyword argument. The user sees this in their viewer's audit
 panel together with the actual SQL the tool generated, and can decide
 whether to trust the LLM's work without reading code.
@@ -58,7 +58,7 @@ The decorator behind every mutating tool opens an audit context that:
 
 Records mirror to `<sid>.audit.jsonl` (append-only) and serve at
 `GET /api/<sid>/audit_log`. Operations called without a description
-appear in the panel flagged "no description provided" — a visible
+appear in the panel flagged "no description provided", a visible
 nudge that the LLM should be filling them in.
 
 Treat the description like a commit message: short, specific, in the
@@ -266,7 +266,7 @@ auto-styles by geometry type.
 ## Other tools (brief)
 
 A handful of tools that fit a category above but warrant only a one-line
-description here — full docstrings live in `server.py`:
+description here. Full docstrings live in `server.py`:
 
 - `bbox_from(name)` — resolve a Stadsdel / Distrikt / Kvarter name to its
   bounding box in EPSG:3011. One call instead of geocode → spatial

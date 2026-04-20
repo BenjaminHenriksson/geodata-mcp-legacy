@@ -10,7 +10,7 @@ absent.
 
 *Expose only what the LLM cannot do on its own.*
 
-Frontier LLMs (Claude, ChatGPT, Gemini, Qwen, and the rest — this
+Frontier LLMs (Claude, ChatGPT, Gemini, Qwen, and the rest; this
 server is model-agnostic and any MCP-capable client works) can already:
 
 - Generate prose, narrative, explanation.
@@ -54,8 +54,8 @@ On top of that, we track **per-column provenance**: when `annotate`,
 `add_field`, or `update_field` writes a column, the session remembers
 who wrote it, with what expression, and optionally what model. So an
 exported attribute can be traced to "LLM-written on 2026-04-19 by
-`annotate(model='gpt-5')`" — or `claude-opus-4-7`, or any other model
-identifier the calling client passes — distinct from "loaded from
+`annotate(model='gpt-5')`" (or `claude-opus-4-7`, or any other model
+identifier the calling client passes), distinct from "loaded from
 `sbk_admin_polygons.gpkg`".
 
 Why this matters:

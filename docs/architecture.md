@@ -103,7 +103,7 @@ layer metadata, visible styles, operation history, cursors, and
 checkpoints. The `SessionRegistry` manages lifecycle: create, rehydrate
 from disk, idle close, hard TTL delete, flush on shutdown.
 
-The DuckDB connection is wrapped in `_AuditedConnection` — a thin proxy
+The DuckDB connection is wrapped in `_AuditedConnection`, a thin proxy
 that intercepts every `execute()` to record a timestamped, status-
 tagged `AuditRecord`. Combined with `Session.audit_context(tool,
 description)` (a contextvars-scoped block opened by the `_audited`
@@ -134,7 +134,7 @@ Each tool is a thin `@mcp.tool`-decorated function that:
 4. Handles `SessionExpired` and other structured errors.
 
 Mutating tools are additionally wrapped with `@_audited("tool_name")` so
-their body runs inside `Session.audit_context(...)` — this attaches a
+their body runs inside `Session.audit_context(...)`. This attaches a
 `correlation_id` and the user-supplied `description` to every SQL
 statement and `Operation` produced. The user sees both in the viewer's
 audit panel.
@@ -265,7 +265,7 @@ liability for data-hoarding claims against Swedish open-data licences.
 An invite gate is the cheapest reliable filter.
 
 **Why OAuth around it.** Web custom-connector flows (claude.ai,
-ChatGPT, Gemini, …) want OAuth 2.1 + PKCE — that's the pattern the
+ChatGPT, Gemini, etc.) want OAuth 2.1 + PKCE; that's the pattern the
 Model Context Protocol standardised on for browser-side clients.
 Making the invite code a pre-flight gate in the consent form means we
 get both: the protocol-standard auth ceremony and the invite-level

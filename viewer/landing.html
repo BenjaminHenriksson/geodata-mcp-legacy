@@ -453,7 +453,7 @@
       Municipal geodata for LLM-driven analysis. SCB DeSO, SBK Stadskarta
       and OSM addresses over a session-scoped DuckDB spatial backend,
       with enforced provenance and normalized join keys. Works with any
-      MCP-capable assistant — Claude, ChatGPT, Gemini, Qwen, and others.
+      MCP-capable assistant (Claude, ChatGPT, Gemini, Qwen, and others).
     </p>
     <div class="hero-coords">
       EPSG:3011 <span class="divider">·</span> SWEREF 99 18 00
@@ -494,7 +494,7 @@
 
     <p class="client-title">For ChatGPT, Gemini, and other web clients</p>
     <p class="prose">
-      Same endpoint URL — paste it into the equivalent custom-connector
+      Same endpoint URL. Paste it into the equivalent custom-connector
       flow in ChatGPT, Gemini, or whichever MCP-capable client you use.
       Each app's connector dialog is slightly different, but the OAuth
       2.1 + PKCE handshake and invite-code prompt are identical. The
@@ -508,7 +508,7 @@
       <code>Authorization: Bearer &lt;token&gt;</code> on every request to
       <code>/mcp</code>. The OAuth flow above is preferred; the bearer
       path exists for clients that do not yet implement OAuth 2.1 with
-      PKCE — most current CLI / desktop MCP clients fall into this bucket.
+      PKCE, which covers most current CLI and desktop MCP clients.
     </p>
   </section>
 </div>

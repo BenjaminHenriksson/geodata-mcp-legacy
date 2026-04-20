@@ -62,7 +62,7 @@ its own set of layers, and survives restarts.
 ```
 
 Three files per session. If `.duckdb` or `.meta.json` is deleted or
-corrupt, the other two are discarded — we don't try to rebuild a broken
+corrupt, the other two are discarded; we don't try to rebuild a broken
 session. Recovery is the LLM's job (via the history log that *was*
 saved). The `.audit.jsonl` file is independent and append-only; missing
 or truncated audit lines just shorten the viewer's audit panel without
@@ -98,7 +98,7 @@ Python-side state that DuckDB doesn't know about:
 ### What's in `<id>.audit.jsonl`
 
 One JSON object per line, one line per SQL statement executed in the
-session — including internal probes (`DESCRIBE`, `COUNT`, bbox
+session, including internal probes (`DESCRIBE`, `COUNT`, bbox
 aggregates) tagged `internal=true`. Each record carries
 `correlation_id`, `tool`, `sql`, `started_at`, `duration_ms`, `status`,
 optional `error`, and the `internal` flag. Append-only; never

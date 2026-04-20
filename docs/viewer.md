@@ -205,7 +205,7 @@ For each operation (newest first):
 - Tool name → result layer with status + duration (e.g. `filter →
   sthlm_deso  ok · 14:32:11 · 46 ms`).
 - The LLM-supplied `description` in italic. Operations called without a
-  description show a terra-edged "no description provided" line — a
+  description show a terra-edged "no description provided" line, a
   visible nudge that the LLM should be filling these in.
 - A collapsible "N sql statements" block listing the captured SQL with
   per-statement duration. Internal probes (`DESCRIBE`, bbox aggregates,
@@ -213,7 +213,7 @@ For each operation (newest first):
   checkbox surfaces them.
 
 Data source: `GET /api/<sid>/audit_log[?include_internal=1]`. Refreshed
-on the same 2 s version-poll the rest of the viewer uses — no
+on the same 2 s version-poll the rest of the viewer uses; no
 additional polling cadence.
 
 The full record (every SQL statement, with timing and status) is also
@@ -230,7 +230,7 @@ panel rehydrates correctly after a server restart.
 - **Below 720 px:** Layer panel becomes a bottom-anchored sheet spanning
   full width, `max-height: 45vh`, with scrolling. Basemap settings
   migrate to the top-right and collapse by default. The audit panel is
-  hidden — viewing audit history on phone-narrow widths isn't useful;
+  hidden; viewing audit history on phone-narrow widths isn't useful,
   open the viewer on a desktop for that.
 
 There's no "hide panel" toggle for the layers and basemap. The map

@@ -66,15 +66,15 @@ happen if it fell, and whether a public-fork operator can remove it.
 
 Attached by `SecurityHeadersMiddleware` on HTML responses only:
 
-- **Content-Security-Policy** — blocks inline script injection even
+- **Content-Security-Policy.** Blocks inline script injection even
   if an XSS somehow slipped through the viewer's `escapeHtml` /
   `textContent` paths. Script sources limited to `self` + pinned
   `unpkg` CDN for MapLibre (SRI-integrity-checked). Style sources
   include Google Fonts.
-- **X-Content-Type-Options: nosniff** — stops browsers from
+- **X-Content-Type-Options: nosniff.** Stops browsers from
   MIME-sniffing a response.
-- **X-Frame-Options: DENY** — no embedding.
-- **Referrer-Policy: strict-origin-when-cross-origin** — viewer URLs
+- **X-Frame-Options: DENY.** No embedding.
+- **Referrer-Policy: strict-origin-when-cross-origin.** Viewer URLs
   (48-bit session ids, now widened to 128-bit) don't leak to
   third-party origins on click.
 
@@ -93,7 +93,7 @@ MapLibre JS + CSS from `unpkg.com` pinned at 4.7.1, loaded with
 `integrity="sha384-..."` `crossorigin="anonymous"`. If unpkg ever
 serves a mutated asset the browser refuses to execute it.
 
-- **Google Fonts CSS intentionally has no SRI** — the CSS body varies
+- **Google Fonts CSS intentionally has no SRI.** The CSS body varies
   per-User-Agent (serves woff vs woff2), so SRI would break across
   browsers. CSP scopes what the fonts CSS can load (`font-src` is
   gstatic-only), which closes the same compromise path.
@@ -104,12 +104,12 @@ serves a mutated asset the browser refuses to execute it.
 - **Protects**: unauthenticated MCP access.
 - `/oauth/authorize` renders a consent form that requires an
   invite code (shared secret, delivered via credstore). The
-  code is compared with `hmac.compare_digest` — constant-time.
+  code is compared with `hmac.compare_digest`, constant-time.
 - Authorization codes are single-use (`_auth_codes.pop()`), 5-minute
   TTL.
 - PKCE S256 verified with constant-time compare.
 - Access tokens: 7-day TTL. Refresh tokens: 30-day TTL, **rotated on
-  each use** (OAuth 2.1 BCP — a leaked refresh token is good for one
+  each use** (OAuth 2.1 BCP; a leaked refresh token is good for one
   exchange, not the full window).
 - Tokens persist to `.duckdb/oauth.json` (mode 0600, atomic write)
   so a service restart doesn't force re-authorisation.
@@ -146,7 +146,7 @@ serves a mutated asset the browser refuses to execute it.
   context and parses, catching multi-statement payloads.
 - `_quote_ident` on every identifier interpolation (layer/column
   names).
-- `_EPSG_RE = r"EPSG:\d{4,6}"` — strict whitelist on CRS strings;
+- `_EPSG_RE = r"EPSG:\d{4,6}"`: strict whitelist on CRS strings;
   remediates the 2026-04-18 HIGH finding against `create_layer`.
 - `decode_unicode_escapes` on free-text user fields (title, notes,
   annotate values) to decode the over-escaped `\uXXXX` some MCP
@@ -202,10 +202,10 @@ See the unit at `/etc/systemd/system/geodata-mcp.service`:
 
 Deliberately omitted:
 
-- `SystemCallFilter=@system-service` — allowlist too strict; DuckDB
+- `SystemCallFilter=@system-service`: allowlist too strict; DuckDB
   spatial breaks under it. Denylist is the pragmatic choice.
-- `ProcSubset=pid` — GDAL's `/proc/cpuinfo` SIMD probe breaks.
-- `MemoryDenyWriteExecute=true` — Python ctypes / GDAL JIT needs it.
+- `ProcSubset=pid`: GDAL's `/proc/cpuinfo` SIMD probe breaks.
+- `MemoryDenyWriteExecute=true`: Python ctypes / GDAL JIT needs it.
 
 #### Docker parity (planned, see `docker-deployment-plan.md`)
 
@@ -217,7 +217,7 @@ Deliberately omitted:
 | `PrivateTmp` + `ProtectHome=tmpfs` | `tmpfs: [/tmp]`, no `/home` in image |
 | `ReadWritePaths=` | explicit volume mounts at specific paths, nothing else |
 | `IPAddressDeny=any` + `IPAddressAllow=localhost` | custom network with `internal: true` (no default route); DNS still works inside the bridge |
-| `SystemCallFilter=~@mount @swap …` | `security_opt: [seccomp:./seccomp.json]` — custom JSON mirrors the denylist |
+| `SystemCallFilter=~@mount @swap …` | `security_opt: [seccomp:./seccomp.json]`; custom JSON mirrors the denylist |
 | `CapabilityBoundingSet=` | `cap_drop: [ALL]` |
 | `LoadCredential=` | compose `secrets:` block, `CREDENTIALS_DIRECTORY=/run/secrets` (existing `_load_secret()` picks them up without code change) |
 | `RestrictAddressFamilies=` | seccomp profile blocks other address families |
@@ -226,7 +226,7 @@ Deliberately omitted:
 
 Two honest differences:
 
-1. **`MemoryDenyWriteExecute`** — still off in Docker for the same
+1. **`MemoryDenyWriteExecute`.** Still off in Docker for the same
    Python / GDAL reason.
 2. **`ProtectProc=invisible`** has no 1:1 Docker directive; the
    container's `/proc` is masked by Docker defaults which are close
@@ -238,17 +238,17 @@ A public-fork operator asking "which of these can I drop safely?"
 has a partial ordering. Drop in reverse order of security impact:
 
 1. `ProtectClock`, `ProtectHostname`, `LockPersonality`,
-   `RestrictRealtime` — niche kernel surfaces; minimal loss.
-2. `PrivateDevices`, `RestrictNamespaces` — hardening against a
+   `RestrictRealtime`: niche kernel surfaces; minimal loss.
+2. `PrivateDevices`, `RestrictNamespaces`: hardening against a
    compromised-root exploit; the non-root user makes these
    mostly redundant.
-3. `InaccessiblePaths` — helpful defense-in-depth; if
+3. `InaccessiblePaths`: helpful defense-in-depth; if
    `ProtectSystem=strict` + `ReadWritePaths=` is honoured, the
    extra blackhole list is duplicative.
-4. `ProtectKernelTunables/Modules/Logs`, `ProtectControlGroups` —
+4. `ProtectKernelTunables/Modules/Logs`, `ProtectControlGroups`:
    only meaningful if the attacker gains some privileged capability.
    With `CapabilityBoundingSet=` empty, these rarely fire.
-5. `ProtectProc=invisible` — helpful but not load-bearing.
+5. `ProtectProc=invisible`: helpful but not load-bearing.
 6. **Keep** `ProtectSystem=strict`, `ProtectHome=tmpfs`,
    `ReadWritePaths=`, non-root user, `NoNewPrivileges=true`,
    `CapabilityBoundingSet=` empty, the seccomp filter,
@@ -318,17 +318,17 @@ well short of host compromise.
 All findings addressed in commits leading up to this doc:
 
 - **MEDIUM: session id entropy 48 → 128 bits** (session.py).
-- **MEDIUM: refresh-token rotation** — OAuth 2.1 BCP. Each refresh
+- **MEDIUM: refresh-token rotation.** OAuth 2.1 BCP. Each refresh
   grants a new RT and invalidates the old one.
 - **MEDIUM: CSP + security headers middleware** on HTML responses.
 - **MEDIUM: SRI on MapLibre CDN assets**.
-- **LOW: TOCTOU on export serve** — file-race returns 410 instead of
+- **LOW: TOCTOU on export serve.** File-race returns 410 instead of
   500.
 - **LOW: OAuth store load failures are now logged** to stderr.
 
 Previous HIGH fixed earlier this cycle:
 
-- SQL injection in `create_layer`'s `crs` parameter — regex whitelist
+- SQL injection in `create_layer`'s `crs` parameter: regex whitelist
   (commit 36bf3cb).
 
 No HIGH or MEDIUM findings remain.
@@ -351,7 +351,7 @@ Minimum viable hardened deployment on a fresh Linux VPS:
       scripts (`scripts/fetch_basemap.py`, `scripts/normalize.py`)
       run in a separate one-shot context with temporary egress.
 - [ ] Invite code and legacy bearer delivered through a credential
-      manager (systemd `LoadCredential=`, Docker secrets) — **not**
+      manager (systemd `LoadCredential=`, Docker secrets), **not**
       via environment variables.
 - [ ] `.duckdb/oauth.json` and `.duckdb/sessions/` are on persistent
       storage that survives container / service restarts.

@@ -24,16 +24,16 @@ various source portals land in `data/raw/`, get cleaned up, and write to
 
 Three primary source families:
 
-- **SCB (Statistics Sweden)** — demographic and economic tables on DeSO
+- **SCB (Statistics Sweden).** Demographic and economic tables on DeSO
   (*demografiska statistikområden*, the standard Swedish small-area
   geography). Population, income, age structure, household composition,
   education, employment. All tabular; join on `desokod` or its 2025
   equivalent.
-- **SBK Stadskarta (Stockholm City Planning Office)** — city plan
+- **SBK Stadskarta (Stockholm City Planning Office).** City plan
   vector layers: admin polygons (stadsdel/kvarter), buildings,
   installations, roads, lines, points, and a name-label layer used for
   geocoding. Mostly polygons; some lines and points.
-- **OSM (OpenStreetMap)** — addresses, ingested via Geofabrik's Sweden
+- **OSM (OpenStreetMap).** Addresses, ingested via Geofabrik's Sweden
   PBF extract, filtered to kommunkod 0180 and normalized to point
   geometries + address components.
 
@@ -83,18 +83,18 @@ The single most impactful normalization decision.
 Every SCB table carries these join columns, populated where the row's
 `region_kind == 'deso'` and NULL otherwise:
 
-- `desokod` — the DeSO code from the 2018 boundary set (the common join
+- `desokod`: the DeSO code from the 2018 boundary set (the common join
   axis).
-- `desokod_2025` — the 2025-boundary equivalent, looked up via
+- `desokod_2025`: the 2025-boundary equivalent, looked up via
   `deso_historical_changes.parquet`. If the 2018 code maps to multiple
   2025 codes (a split), we pick the first and annotate in the audit
   log how many rows were bridged vs left alone.
-- `regsokod` — RegSO code (aggregates DeSOs into slightly larger areas),
+- `regsokod`: RegSO code (aggregates DeSOs into slightly larger areas),
   from `deso_regso_mapping.parquet`.
-- `regso_name` — human-readable RegSO name.
-- `kommunkod` — municipality code (always `'0180'` since we pre-filter,
+- `regso_name`: human-readable RegSO name.
+- `kommunkod`: municipality code (always `'0180'` since we pre-filter,
   but kept for multi-kommun extensions).
-- `kommun_name` — human-readable municipality name (always `'Stockholm'`).
+- `kommun_name`: human-readable municipality name (always `'Stockholm'`).
 
 The raw source columns (`region`, `region_code`, `region_name`) are kept
 alongside as provenance. The canonical columns are additive.
@@ -168,7 +168,7 @@ UX.
 
 DuckDB types are preserved through normalization and loading. For the LLM's
 benefit, types are reported alongside column names in `describe_dataset`
-and `_layer_summary` — so the LLM can pick correctly between `COUNT(x)`
+and `_layer_summary`, so the LLM can pick correctly between `COUNT(x)`
 and `SUM(x)` without probing.
 
 Geometry columns use DuckDB's `GEOMETRY` type (via the spatial extension).
@@ -192,7 +192,7 @@ Swedish, free-form or closed-set, without them.
 
 With them, the LLM sees:
 ```
-KATEGORI: VARCHAR — Stadsdel, Kvarter, Distrikt, Bostadsfastighet, ...
+KATEGORI: VARCHAR: Stadsdel, Kvarter, Distrikt, Bostadsfastighet, ...
 ```
 and can write the right WHERE clause first try.
 
@@ -216,13 +216,13 @@ character encoding quirks make it a bad archive format.
 
 Every `SourceRef` carries a licence string. Major sources:
 
-- **SCB data** — usually *CC BY 4.0* or equivalent open licences (varies
+- **SCB data:** usually *CC BY 4.0* or equivalent open licences (varies
   per table; the canonical per-table licence is captured in the catalog).
-- **SBK Stadskarta** — *CC0 1.0* (public domain dedication via Stockholm's
+- **SBK Stadskarta:** *CC0 1.0* (public domain dedication via Stockholm's
   open-data portal).
-- **OSM** — *ODbL 1.0*. Requires attribution + share-alike for derived
+- **OSM:** *ODbL 1.0*. Requires attribution + share-alike for derived
   products; `sources(layer)` surfaces this.
-- **DeSO boundaries** — *CC0 1.0* from SCB.
+- **DeSO boundaries:** *CC0 1.0* from SCB.
 
 Mixing these is usually fine for non-commercial and public-sector use,
 but OSM's ODbL share-alike means anything derived from OSM has to be

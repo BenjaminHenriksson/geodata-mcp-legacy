@@ -129,8 +129,8 @@ For each layer, in caller order:
     Emit batched scatter for all points in this layer
 ```
 
-Polygons are drawn as two overlapping patches — one with a 0.5-multiplied
-alpha for the fill, one stroke-only for the outline — so outlines stay
+Polygons are drawn as two overlapping patches, one with a 0.5-multiplied
+alpha for the fill, one stroke-only for the outline, so outlines stay
 crisp even when the fill is translucent. Matches the viewer's treatment.
 
 ---
@@ -141,7 +141,7 @@ Algorithm:
 
 1. Compute the plot's horizontal data range `dx` in metres.
 2. Target bar length ≈ 18 % of `dx`.
-3. Round target down to the nearest 1/2/5/10 × 10^n — so the bar reads
+3. Round target down to the nearest 1/2/5/10 × 10^n, so the bar reads
    `100 m`, `500 m`, `5 km`, etc., not `847 m`.
 4. Draw the bar bottom-left with end-caps and a text label above.
 
@@ -158,7 +158,7 @@ Column on the right, 18 % of figure width. For each layer:
   sans-serif).
 - Value swatches for categorical (10 pt body, truncated at 22 chars
   with an ellipsis).
-- Gradient swatch for linear (single hi-colour square — a proper
+- Gradient swatch for linear (single hi-colour square; a proper
   gradient bar is future work).
 - One line per extra channel showing "size `<column>`, lo→hi".
 
@@ -200,7 +200,7 @@ the PNG lands inside.
 The usual 24-hour export TTL applies. After that the file is cleaned up
 and the URL returns 410 Gone.
 
-Path traversal is blocked at `serve_export` — tokens have to be
+Path traversal is blocked at `serve_export`: tokens have to be
 alphanumeric (+ `-`, `_`), filenames cannot contain `/` or `..`, and
 the resolved path must stay inside `EXPORT_ROOT`.
 

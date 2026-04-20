@@ -1,4 +1,4 @@
-# Deployment — `geo.benjaminhenriksson.com`
+# Deployment: `geo.benjaminhenriksson.com`
 
 How the Phase 1 MCP server runs in production. Captured 2026-04-18.
 
@@ -42,7 +42,7 @@ The Python app binds **only** to `127.0.0.1`, so Caddy is the only thing that ca
 | `/etc/caddy/Caddyfile` → `/home/ben/personal-homepage/Caddyfile` | `ben` | Caddy site configs (symlinked) |
 | `/var/lib/caddy/.local/share/caddy/certificates/acme-v02…/geo.benjaminhenriksson.com/` | `caddy` | Auto-provisioned LE cert |
 
-Caddy no longer reads the shared bearer — auth moved into the app once OAuth 2.1 landed. The previous `EnvironmentFile=/etc/geodata-mcp.env` drop-in for Caddy has been removed.
+Caddy no longer reads the shared bearer; auth moved into the app once OAuth 2.1 landed. The previous `EnvironmentFile=/etc/geodata-mcp.env` drop-in for Caddy has been removed.
 
 ### `geodata-mcp.service`
 
@@ -112,7 +112,7 @@ WantedBy=multi-user.target
 ```
 
 The authoritative version is the one on the host at
-`/etc/systemd/system/geodata-mcp.service` — always prefer reading that over
+`/etc/systemd/system/geodata-mcp.service`; always prefer reading that over
 trusting this snippet.
 
 Enabled at boot. The process exec's the project venv directly
@@ -152,7 +152,7 @@ Disallow: /
 }
 ```
 
-Caddy has no service-unit drop-in for this site anymore — the previous
+Caddy has no service-unit drop-in for this site anymore; the previous
 `/etc/systemd/system/caddy.service.d/geodata-token.conf` was removed once
 Caddy stopped reading `GEODATA_MCP_TOKEN`.
 
@@ -161,7 +161,7 @@ Caddy stopped reading `GEODATA_MCP_TOKEN`.
 ## DNS + TLS
 
 - Cloudflare DNS record: `geo  A  <VPS IP>`, **proxy ON** (orange cloud). IP is the same as the root-domain A record; Cloudflare anycasts everything.
-- Cloudflare SSL/TLS mode: same as root (`Full` or `Full (strict)`) — Caddy terminates TLS on the origin with a real LE cert.
+- Cloudflare SSL/TLS mode: same as root (`Full` or `Full (strict)`). Caddy terminates TLS on the origin with a real LE cert.
 - Caddy's automatic HTTPS tries `tls-alpn-01` first → fails (Cloudflare proxy can't forward the `acme-tls/1` ALPN) → falls back to `http-01` → Cloudflare transparently proxies `/.well-known/acme-challenge/*` on port 80 → cert issued. Renewals happen automatically.
 
 A single failed-then-succeeded pair of lines per 60-day renewal cycle is normal; the fallback does the job. If you want a tidy log, pin `http-01` in the site block:
@@ -180,19 +180,19 @@ tls {
 
 Two auth paths, both enforced by the app (not Caddy):
 
-- **OAuth 2.1 + PKCE via invite code** — `claude.ai` custom connectors and
+- **OAuth 2.1 + PKCE via invite code.** `claude.ai` custom connectors and
   other OAuth-capable clients. The app publishes RFC 9728
   `/.well-known/oauth-protected-resource` + RFC 8414 metadata + RFC 7591
   dynamic client registration. User enters the shared invite code on the
   server-rendered consent form (which displays the `redirect_uri` host
   prominently plus a phishing warning). Returns authorization code →
   PKCE-verified token exchange → bearer for `/mcp/*`.
-- **Legacy shared bearer** — Claude Code CLI users pass the
+- **Legacy shared bearer.** Claude Code CLI users pass the
   `GEODATA_MCP_TOKEN` value directly in `Authorization: Bearer …`. Kept
   for back-compat; prefer the OAuth path for new coworkers.
 
-Viewer + API (`/view/*`, `/api/*`, `/static/*`) are open on the session id
-— knowing the session UUID is the only access control. Fine for a single
+Viewer + API (`/view/*`, `/api/*`, `/static/*`) are open on the session id;
+knowing the session UUID is the only access control. Fine for a single
 operator's own session, not safe to share URLs publicly.
 
 ### Retrieve the current secrets
@@ -224,7 +224,7 @@ The restart wipes any already-issued OAuth access tokens (in-memory
 store), so coworkers who had connected pre-rotation must re-click
 *Connect* and enter the new invite code.
 
-(Legacy `/etc/geodata-mcp.env`-style rotation — below — is retained as a
+(Legacy `/etc/geodata-mcp.env`-style rotation, below, is retained as a
 reference for older revisions of this doc; the env file and Caddy drop-in
 were removed when OAuth landed.)
 
@@ -318,32 +318,32 @@ curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" \
 The MCP exposes a DuckDB SQL surface to LLM-driven callers, so defense assumes
 an adversarial prompt. Three layers of defense:
 
-### Layer 1 — sqlglot allowlist + denylist on `execute_sql`
+### Layer 1: sqlglot allowlist + denylist on `execute_sql`
 In `geodata_mcp/operations.py::_validate_sql`:
 - **Statement type**: only `SELECT` / `WITH` / `UNION` / `Subquery`. Rejects `INSERT`/`UPDATE`/`DELETE`/`CREATE`/`DROP`/`ALTER`/`MERGE`/`COPY`/`ATTACH`/`DETACH` anywhere in the tree.
 - **Function denylist**: rejects calls to any filesystem/network/extension function: `read_csv`, `read_parquet`, `read_json`, `read_blob`, `read_text`, `glob`, `parquet_scan`, `parquet_schema`, `json_scan`, `csv_sniffer`, `load_extension`, `install_extension`, `httpfs_register_secret`, etc. (full list in `_DISALLOWED_FUNCTIONS`).
 - **String-literal checks**: rejects any string literal starting with `http://`, `https://`, `ftp://`, `file://`, `s3://`, `gs://`, `azure://`, etc. Also rejects absolute paths into `/etc`, `/home`, `/root`, `/var`, `/proc`, `/sys`, `/boot`, `/usr`, `/opt`, `/srv`, `/run`, `/tmp`.
 - **DoS caps**: rejects any numeric literal > 10 million (blocks `repeat('a', 1e10)`, `generate_series(0, 1e10)` before DuckDB allocates).
 
-### Layer 2 — DuckDB per-session resource limits
+### Layer 2: DuckDB per-session resource limits
 - `memory_limit='256MB'`, `threads=2` set at every session start.
 - 30-second wall-clock timeout per `execute_sql` via `threading.Timer` + `conn.interrupt()`.
 
-### Layer 3 — systemd sandbox (identity, filesystem, egress, syscalls)
+### Layer 3: systemd sandbox (identity, filesystem, egress, syscalls)
 The service runs as a **dedicated `geodata-mcp` system user** (no shell, no
 home) in a restricted mount namespace, with cgroup-BPF egress filtering and
 a seccomp syscall denylist:
 
 - **Identity.** `User/Group=geodata-mcp`, `SupplementaryGroups=` (no
-  inherited groups). Source code owned `ben:ben` read-only to the service —
+  inherited groups). Source code owned `ben:ben` read-only to the service;
   RCE inside the process cannot patch its own code. `ben` is in the
   `geodata-mcp` group so dev workflow on the host still works.
-- **Filesystem.** `ProtectHome=tmpfs` + `BindPaths=/home/ben/geodata-mcp` —
+- **Filesystem.** `ProtectHome=tmpfs` + `BindPaths=/home/ben/geodata-mcp`:
   only the project dir is visible under `/home`. `ProtectSystem=strict`
   with minimal `ReadWritePaths`. `InaccessiblePaths` for `/etc/ssh`,
   `/etc/ssl/private`, `/etc/shadow`, `/etc/caddy`, `/etc/credstore`,
   `/etc/systemd`, `/root`, `/var/log`.
-- **Egress.** `IPAddressDeny=any` + `IPAddressAllow=localhost` — kernel
+- **Egress.** `IPAddressDeny=any` + `IPAddressAllow=localhost`: kernel
   cgroup-BPF filter restricts outbound to `127.0.0.0/8` / `::1`. Blocks
   SSRF against `169.254.169.254`, HTTPS exfiltration, DuckDB extension
   registry fetches.
@@ -351,7 +351,7 @@ a seccomp syscall denylist:
   ABI. `SystemCallFilter=~@mount @swap @reboot @debug @module @raw-io
   @cpu-emulation @obsolete bpf ptrace perf_event_open process_vm_readv
   process_vm_writev userfaultfd keyctl add_key request_key kexec_load
-  kexec_file_load` — denylist blocking container-escape, cross-process
+  kexec_file_load`: denylist blocking container-escape, cross-process
   memory snooping, keyring access, live kernel replacement. Verified not
   to break DuckDB spatial (see security.md smoke test).
 - **Process.** `PrivateTmp`, `PrivateDevices`, `ProtectKernel{Tunables,Modules,Logs,ControlGroups}`,
@@ -380,13 +380,13 @@ await c.call_tool("execute_sql", {"sql": "SELECT * FROM read_csv('/etc/hostname'
 
 ### Deliberately omitted hardening (breaks DuckDB-spatial)
 
-- `SystemCallFilter=@system-service` (allowlist form) — DuckDB spatial's
+- `SystemCallFilter=@system-service` (allowlist form): DuckDB spatial's
   GDAL/PROJ loader hit a denied syscall and segfaulted. Replaced with the
   **denylist** form (`SystemCallFilter=~...`) above, which targets exploit
   primitives without breaking the spatial extension.
-- `ProtectProc=invisible` + `ProcSubset=pid` — broke library initialization
+- `ProtectProc=invisible` + `ProcSubset=pid`: broke library initialization
   that reads `/proc/cpuinfo`.
-- `MemoryDenyWriteExecute=true` — incompatible with Python's ctypes/JIT
+- `MemoryDenyWriteExecute=true`: incompatible with Python's ctypes/JIT
   paths.
 
 Roadmap for further hardening: OAuth 2.1 + PKCE in place of the shared

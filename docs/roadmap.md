@@ -28,10 +28,10 @@ of scope. Honesty over ambition.
 Honest inventory of feature gaps, ranked by how often they block a
 practical question.
 
-### Tier 1 — blocks a whole category of questions
+### Tier 1: blocks a whole category of questions
 
 - **Raster / elevation.** No DEM, no orthophoto, no Lidar. Slope,
-  viewshed, rooftop-solar, urban-heat, sightline analysis — all
+  viewshed, rooftop-solar, urban-heat, sightline analysis, all
   unreachable. DuckDB spatial has limited raster support; nothing is
   loaded. One DEM + two tools (`elevation_at`, `slope_aspect`) would
   unblock the slope/terrain class of questions. Not hard to add;
@@ -45,7 +45,7 @@ practical question.
   haven't ingested them. This is the core SBK workflow data gap, and
   it needs a bespoke normalization pipeline to handle schema drift.
 
-### Tier 2 — blocks common but specific needs
+### Tier 2: blocks common but specific needs
 
 - **Geometry editing / digitization.** Can't draw a proposed building
   footprint, split a feature, snap to an edge, edit a vertex. Needs a
@@ -61,10 +61,10 @@ practical question.
   they all have one now), but having first-class tools would shorten
   the loop.
 - **Fastighetsregister (property ownership).** Ownership + lot numbers
-  + legal descriptions. Data is Lantmäteriet, licensed — not open. Would
+  + legal descriptions. Data is Lantmäteriet, licensed, not open. Would
   need a separate licensing arrangement.
 
-### Tier 3 — nice to have
+### Tier 3: nice to have
 
 - **WMS/WFS consumption.** Pull in a Lantmäteriet WMS layer without
   re-ingesting. Current egress policy blocks this; would need either
@@ -77,7 +77,7 @@ practical question.
   to a separate log, independent of the session history. Noted in docs
   as pending.
 
-### Tier 4 — explicit non-goals
+### Tier 4: explicit non-goals
 
 - **SaaS multi-tenancy.** The system is designed for a small set of
   trusted users with a shared invite code. Making it tenant-safe is a
@@ -147,10 +147,10 @@ demands:
 
 ## What the docs don't cover
 
-- **Operational runbook** — token rotation, backup, service restart,
+- **Operational runbook.** Token rotation, backup, service restart,
   how to diagnose an OOM. Lives in private docs in the repo
   (`_deployment.md`).
-- **Security findings and mitigations** — the post-OAuth audit results,
+- **Security findings and mitigations.** The post-OAuth audit results,
   the systemd hardening details, credstore rotation. Lives in private
   docs (`_security.md`).
 - **Implementation details below the public API.** The

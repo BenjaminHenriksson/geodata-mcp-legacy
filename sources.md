@@ -21,7 +21,7 @@ data tables: https://www.scb.se/hitta-statistik/regional-statistik-och-kartor/re
 # SCB DeSO – Data sources
 
 Bulk CSV downloads of every table in **Statistikdatabasen (SSD)** that uses the
-**Demografiska statistikområden (DeSO)** classification — Sweden's nationwide
+**Demografiska statistikområden (DeSO)** classification, Sweden's nationwide
 small-area demographic grid (~6,160 areas in DeSO 2025).
 
 - **Publisher:** Statistikmyndigheten SCB (Statistics Sweden)
@@ -66,14 +66,14 @@ small-area demographic grid (~6,160 areas in DeSO 2025).
 
 | # | Title | Period | PxWeb table | Bulk CSV (zip) |
 |---|---|---|---|---|
-| 12 | Antal lägenheter efter region (DeSO 2018/RegSO 2020) och upplåtelseform — *not updated* | 2015–2023 | [BO0104T10N](https://www.statistikdatabasen.scb.se/pxweb/sv/ssd/START__BO__BO0104__BO0104X/BO0104T10N/) | <https://www.statistikdatabasen.scb.se/Resources/PX/bulk/ssd/sv/TAB6258_sv.zip> |
+| 12 | Antal lägenheter efter region (DeSO 2018/RegSO 2020) och upplåtelseform, *not updated* | 2015–2023 | [BO0104T10N](https://www.statistikdatabasen.scb.se/pxweb/sv/ssd/START__BO__BO0104__BO0104X/BO0104T10N/) | <https://www.statistikdatabasen.scb.se/Resources/PX/bulk/ssd/sv/TAB6258_sv.zip> |
 | 13 | Antal lägenheter efter region (DeSO/RegSO 2025) och upplåtelseform | 2024 | [BO0104T01N2](https://www.statistikdatabasen.scb.se/pxweb/sv/ssd/START__BO__BO0104__BO0104X/BO0104T01N2/) | <https://www.statistikdatabasen.scb.se/Resources/PX/bulk/ssd/sv/TAB6638_sv.zip> |
 
 ## Fordonsstatistik
 
 | # | Title | Period | PxWeb table | Bulk CSV (zip) |
 |---|---|---|---|---|
-| 14 | Personbilar efter status och region — *not updated* | 2015–2023 | [PersBilarDeso](https://www.statistikdatabasen.scb.se/pxweb/sv/ssd/START__TK__TK1001__TK1001Z/PersBilarDeso/) | <https://www.statistikdatabasen.scb.se/Resources/PX/bulk/ssd/sv/TAB6091_sv.zip> |
+| 14 | Personbilar efter status och region, *not updated* | 2015–2023 | [PersBilarDeso](https://www.statistikdatabasen.scb.se/pxweb/sv/ssd/START__TK__TK1001__TK1001Z/PersBilarDeso/) | <https://www.statistikdatabasen.scb.se/Resources/PX/bulk/ssd/sv/TAB6091_sv.zip> |
 | 15 | Personbilar efter status och region | 2024 | [PersBilarDesoN](https://www.statistikdatabasen.scb.se/pxweb/sv/ssd/START__TK__TK1001__TK1001Z/PersBilarDesoN/) | <https://www.statistikdatabasen.scb.se/Resources/PX/bulk/ssd/sv/TAB6589_sv.zip> |
 
 ## Hushållens ekonomi
@@ -99,9 +99,9 @@ small-area demographic grid (~6,160 areas in DeSO 2025).
 | 22 | Förvärvsarbetande nattbefolkning 16+ år efter region och bransch (SNI07) | 2018 | [NattDeSoBra](https://www.statistikdatabasen.scb.se/pxweb/sv/ssd/START__AM__AM0207__AM0207I/NattDeSoBra/) | <https://www.statistikdatabasen.scb.se/Resources/PX/bulk/ssd/sv/TAB660_sv.zip> |
 | 23 | Förvärvsarbetande nattbefolkning 16+ år efter region, sektor och kön | 2018 | [NattDeSoSekt](https://www.statistikdatabasen.scb.se/pxweb/sv/ssd/START__AM__AM0207__AM0207I/NattDeSoSekt/) | <https://www.statistikdatabasen.scb.se/Resources/PX/bulk/ssd/sv/TAB682_sv.zip> |
 | 24 | Befolkningen 16–64 år efter region, sysselsättning och kön | 2018 | [BefDeSoSyss](https://www.statistikdatabasen.scb.se/pxweb/sv/ssd/START__AM__AM0207__AM0207I/BefDeSoSyss/) | <https://www.statistikdatabasen.scb.se/Resources/PX/bulk/ssd/sv/TAB683_sv.zip> |
-| 25 | Befolkningen 16–64 år efter region, sysselsättning och kön — new time series | 2019– | [BefDeSoSyssN](https://www.statistikdatabasen.scb.se/pxweb/sv/ssd/START__AM__AM0207__AM0207I/BefDeSoSyssN/) | <https://www.statistikdatabasen.scb.se/Resources/PX/bulk/ssd/sv/TAB5880_sv.zip> |
-| 26 | Förvärvsarbetande nattbefolkning 16–74 år efter region och bransch (SNI07) — new time series | 2019– | [NattDeSoBraN](https://www.statistikdatabasen.scb.se/pxweb/sv/ssd/START__AM__AM0207__AM0207I/NattDeSoBraN/) | <https://www.statistikdatabasen.scb.se/Resources/PX/bulk/ssd/sv/TAB5842_sv.zip> |
-| 27 | Förvärvsarbetande nattbefolkning 16–74 år efter region, sektor och kön — new time series | 2019– | [NattDeSoSektN](https://www.statistikdatabasen.scb.se/pxweb/sv/ssd/START__AM__AM0207__AM0207I/NattDeSoSektN/) | <https://www.statistikdatabasen.scb.se/Resources/PX/bulk/ssd/sv/TAB5843_sv.zip> |
+| 25 | Befolkningen 16–64 år efter region, sysselsättning och kön, new time series | 2019– | [BefDeSoSyssN](https://www.statistikdatabasen.scb.se/pxweb/sv/ssd/START__AM__AM0207__AM0207I/BefDeSoSyssN/) | <https://www.statistikdatabasen.scb.se/Resources/PX/bulk/ssd/sv/TAB5880_sv.zip> |
+| 26 | Förvärvsarbetande nattbefolkning 16–74 år efter region och bransch (SNI07), new time series | 2019– | [NattDeSoBraN](https://www.statistikdatabasen.scb.se/pxweb/sv/ssd/START__AM__AM0207__AM0207I/NattDeSoBraN/) | <https://www.statistikdatabasen.scb.se/Resources/PX/bulk/ssd/sv/TAB5842_sv.zip> |
+| 27 | Förvärvsarbetande nattbefolkning 16–74 år efter region, sektor och kön, new time series | 2019– | [NattDeSoSektN](https://www.statistikdatabasen.scb.se/pxweb/sv/ssd/START__AM__AM0207__AM0207I/NattDeSoSektN/) | <https://www.statistikdatabasen.scb.se/Resources/PX/bulk/ssd/sv/TAB5843_sv.zip> |
 
 ## Miljö – Land- och vattenarealer
 

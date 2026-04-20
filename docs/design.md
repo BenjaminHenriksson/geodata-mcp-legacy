@@ -46,8 +46,8 @@ Every layer that enters a session carries one or more `SourceRef` records
 describing where its rows came from: dataset id, publisher, licence,
 retrieved-on date. Derived layers (from `filter`, `spatial`, `execute_sql`,
 macro helpers) inherit the union of their parents' source refs. A layer
-that comes out of `create_layer(..., llm_sourced=True)` — geometry built
-from model-generated coordinates — is flagged so `sources(layer)` can
+that comes out of `create_layer(..., llm_sourced=True)`, geometry built
+from model-generated coordinates, is flagged so `sources(layer)` can
 surface "this was made up by the model" as a first-class fact.
 
 On top of that, we track **per-column provenance**: when `annotate`,
@@ -86,17 +86,17 @@ that can be rolled back independently.
     # ... annotate, add_field, classify ...
     rollback("before_enrichment")   # undo just the buildings work
 
-Checkpoints capture *column snapshots* — pre-images of the columns about
-to be mutated — rather than whole-layer copies. Storage cost is
+Checkpoints capture *column snapshots* (pre-images of the columns about
+to be mutated) rather than whole-layer copies. Storage cost is
 proportional to what's changed, not to the size of the layer. A
 checkpoint on a 79k-building layer that only rewrites two columns stores
 two 79k-row columns, not 158k rows of full-layer duplicates.
 
 Two scoping modes:
 
-- `checkpoint("x")` (no scope) — covers every mutation on every layer
+- `checkpoint("x")` (no scope): covers every mutation on every layer
   until `commit` or `rollback`.
-- `checkpoint("x", layers=["a", "b"])` — covers only mutations on those
+- `checkpoint("x", layers=["a", "b"])`: covers only mutations on those
   layers; other work is irreversible relative to this checkpoint.
 
 Multiple checkpoints can be active concurrently, with overlapping or
@@ -143,7 +143,7 @@ This was chosen for two reasons:
    product.
 2. **Shareability.** A paper-toned map reads as a field-journal excerpt.
    It sits comfortably next to text in a doc or a slide. Dark-mode
-   dashboards read as surveillance tooling — wrong register for municipal
+   dashboards read as surveillance tooling, wrong register for municipal
    planning work.
 
 The layer colour palette is deliberately desaturated: cartographer's inks
@@ -187,21 +187,21 @@ for the human debugging the flow.
 
 And these are the capabilities the principle specifically motivates:
 
-- **Spatial ops** (`spatial`, `filter`, macro helpers) — authoritative
+- **Spatial ops** (`spatial`, `filter`, macro helpers): authoritative
   CRS-aware geometry work over a DuckDB spatial backend.
-- **Provenance tracking** (layer + column) — trust infrastructure that
+- **Provenance tracking** (layer + column): trust infrastructure that
   survives export.
-- **Viewer with auto-refresh** — a live rendering surface that the LLM
+- **Viewer with auto-refresh.** A live rendering surface that the LLM
   can update by calling `show()` again without the user touching
   anything.
-- **Checkpoints** — a transactional workspace the LLM can experiment in.
-- **PNG rendering** (`render_map`) — editorial map artefacts the LLM can
+- **Checkpoints.** A transactional workspace the LLM can experiment in.
+- **PNG rendering** (`render_map`): editorial map artefacts the LLM can
   embed.
-- **Persistence** — survives restart so paused analyses resume.
+- **Persistence.** Survives restart so paused analyses resume.
 - **Canonical join keys** (added to every SCB table in the normalization
-  pipeline) — removes a class of join-column-name-guessing the LLM
+  pipeline): removes a class of join-column-name-guessing the LLM
   otherwise pays a tax on.
-- **Bilingual schema** (Swedish + English per column description) — the
+- **Bilingual schema** (Swedish + English per column description): the
   LLM works well in either but we can afford to give it both.
 
 Every one of these is a thing the LLM couldn't accomplish with just text

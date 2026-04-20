@@ -81,9 +81,9 @@ source (no in-session authoring). The `annotate`, `add_field`,
 
 The two levels answer two different questions:
 
-- **"Where did this table come from?"** — layer-level. Answered by
+- **"Where did this table come from?"** Layer-level. Answered by
   `provenance: list[SourceRef]`.
-- **"Who wrote this specific column?"** — column-level. Answered by
+- **"Who wrote this specific column?"** Column-level. Answered by
   `column_provenance: dict`.
 
 A layer loaded from `sbk_admin_polygons`, filtered to KATEGORI =
@@ -146,7 +146,7 @@ layer's loaded sources above):
 ```
 
 The viewer reads `column_provenance` and renders an "authored" line per
-layer — so the user seeing the map knows which columns to be suspicious
+layer, so the user seeing the map knows which columns to be suspicious
 of.
 
 ---
@@ -172,7 +172,7 @@ provenance lives in the tool response, which the LLM can embed in its
 message.
 
 Column-level provenance is surfaced in the response but not embedded
-in the file format itself — GeoPackage supports `gpkg_metadata` tables
+in the file format itself. GeoPackage supports `gpkg_metadata` tables
 for this but wiring them is future work. The current path: the LLM
 records the per-column authoring in its narrative around the download
 link.
@@ -189,7 +189,7 @@ link.
 - Survives transformations (filter → spatial → macro → export) because
   provenance is inherited at every step.
 - Gives the reviewer a reproducibility trail even if session state is
-  later lost — `history` + `provenance` + `column_provenance` are
+  later lost. `history` + `provenance` + `column_provenance` are
   enough to rebuild the analysis from the original datasets.
 
 ### What provenance does not do
@@ -248,7 +248,7 @@ cost.
 ### Column-provenance overwrites on re-annotate
 
 If an LLM annotates a column, then another LLM re-annotates the same
-column, the second authoring wins — the old record is lost. We don't
+column, the second authoring wins; the old record is lost. We don't
 keep a revision history at the column level. For debugging, the
 operation history has the full sequence; for trust, the current
 authoring is what matters.

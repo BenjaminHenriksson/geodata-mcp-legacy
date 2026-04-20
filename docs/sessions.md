@@ -74,7 +74,7 @@ Every table the session has created:
 
 - Layer tables (from `load`, `filter`, `spatial`, `execute_sql`, macros)
   with their geometry columns.
-- `_snap_<checkpoint_id>_<layer>_<column>` tables — pre-image snapshots
+- `_snap_<checkpoint_id>_<layer>_<column>` tables: pre-image snapshots
   captured at checkpoint time, used by `rollback`.
 - DuckDB's own catalog metadata (column types, constraints).
 
@@ -82,16 +82,16 @@ Every table the session has created:
 
 Python-side state that DuckDB doesn't know about:
 
-- `layers` — per-layer `LayerMeta` (feature count, geometry type, bbox,
+- `layers`: per-layer `LayerMeta` (feature count, geometry type, bbox,
   attributes dict, provenance SourceRefs, parent layers, notes, column
   provenance).
-- `visible_layers`, `visible_styles`, `visible_title` — viewer state.
-- `history` — every Operation logged, with tool name, args, summary,
+- `visible_layers`, `visible_styles`, `visible_title`: viewer state.
+- `history`: every Operation logged, with tool name, args, summary,
   timestamp, plus `correlation_id` / `description` / `status` /
   `duration_ms` / `error` from the audit context. Used for
   `sources(layer)` and for LLM recovery.
-- `cursors` — state for `batch_iterate` pagination.
-- `checkpoints` — checkpoint metadata: id, snapshot refs, scope. Note
+- `cursors`: state for `batch_iterate` pagination.
+- `checkpoints`: checkpoint metadata (id, snapshot refs, scope). Note
   the actual snapshot *data* lives in DuckDB tables, not here.
 - `next_checkpoint_id`, `active_checkpoint`, `version`.
 
@@ -142,7 +142,7 @@ async with _inner_lifespan(app):
 
 `flush_all` walks every live session, calls `s.close()` (which flushes
 then closes the handle), and empties the registry. This makes
-graceful service restart safe — nothing is lost.
+graceful service restart safe; nothing is lost.
 
 For ungraceful kill (`SIGKILL`, OOM, power loss), we lose up to one GC
 interval. The 60-second cadence is tuned to this.
@@ -189,7 +189,7 @@ workspace.
 
 The only "you've lost your session" case is: the session's files were
 hard-TTL-deleted (14 days without a touch), and the LLM tries to use
-the same id. Returns a fresh session with the same id — the LLM may be
+the same id. Returns a fresh session with the same id; the LLM may be
 momentarily confused but adapts.
 
 A more pedantic implementation would raise `SessionExpired` in this
@@ -202,16 +202,16 @@ way and the exception path adds no recoverable information.
 
 Each DuckDB connection is capped:
 
-- `SET memory_limit = '256MB'` — a greedy ORDER BY or hash join that
+- `SET memory_limit = '256MB'`: a greedy ORDER BY or hash join that
   would blow past this instead spills to
   `.duckdb/tmp/<pid>-<hash>.tmp`. Degraded but correct.
-- `SET threads = 2` — keeps a single session from consuming all CPU.
-- `SET temp_directory = '.duckdb/tmp'` — keeps spill inside
+- `SET threads = 2`: keeps a single session from consuming all CPU.
+- `SET temp_directory = '.duckdb/tmp'`: keeps spill inside
   `ReadWritePaths`.
 
 The memory cap is per-connection, not per-process, so ten concurrent
 sessions can each use 256 MB. On a 4 GB VPS that's workable. If we ever
-run into pressure, raising `memory_limit` is the wrong move — spilling
+run into pressure, raising `memory_limit` is the wrong move; spilling
 is the right move, because a well-behaved session doesn't actually
 need much RAM.
 

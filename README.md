@@ -3,7 +3,7 @@
 **A municipal geodata stack designed for LLM-driven analysis, with enforced
 provenance and schema normalization.** Stockholm Stadsbyggnadskontorets city
 map, SCB demographic statistical areas (DeSO 2018 + 2025), SCB's DeSO-keyed
-statistical tables, and OpenStreetMap addresses — all pre-joined to
+statistical tables, and OpenStreetMap addresses, all pre-joined to
 canonical keys and exposed to any MCP client through a session-scoped
 DuckDB spatial backend. 66 datasets, one viewer, 38 tools shaped for how
 LLMs actually reason.
@@ -17,8 +17,8 @@ LLMs actually reason.
   per-layer toggles, auto-refresh on session state changes, thematic
   styling via `show(..., style=...)`.
 - **License of underlying data:** CC0 1.0 (SCB + SBK Stadskarta open-data
-  variant) + ODbL 1.0 (OpenStreetMap — "© OpenStreetMap contributors"
-  attribution required on derived exports) + CC BY 4.0 (Lantmäteriet —
+  variant) + ODbL 1.0 (OpenStreetMap, "© OpenStreetMap contributors"
+  attribution required on derived exports) + CC BY 4.0 (Lantmäteriet,
   not currently ingested).
 - **Code license:** GNU Affero General Public License v3.0 or later
   (see `LICENSE`). The AGPL's network-use clause applies: running a
@@ -42,8 +42,8 @@ auto-approve safe calls without per-action permission prompts.
 | `geocode` | Place-name + composite street-number lookup against SBK labels + polygons |
 | `list_layers` | Inventory of all session layers + notes + checkpoint coverage |
 | `inspect` | Sample rows from any layer (200 attribute cap / 10 with geometry) |
-| `inspect_location` | "What's here?" — features near a point across many layers in one call |
-| `inspect_locations` | Batch variant — up to 500 points per call |
+| `inspect_location` | "What's here?" Features near a point across many layers in one call |
+| `inspect_locations` | Batch variant. Up to 500 points per call |
 | `batch_iterate` | Cursor-paginated read for layers too large to inspect in one shot |
 | `stats` | Aggregation tables (min/avg/max/count, grouped) |
 | `sources` | Walks the provenance chain → markdown citations |
@@ -59,7 +59,7 @@ auto-approve safe calls without per-action permission prompts.
 | `create_layer` | Inject LLM-provided data as a layer (1 k row cap, WKT geom, `llm_sourced=True`) |
 | `export` | Write to GeoJSON/GPKG/CSV/Parquet, 24 h download URL (absolute when `PUBLIC_URL` is set) |
 | `show` | Mark layers visible in the viewer (viewer auto-refreshes on change) |
-| `hide` | Inverse of `show` — remove layers from the viewer |
+| `hide` | Inverse of `show`. Remove layers from the viewer |
 | `set_notes` | Attach free-text narration to a layer (surfaces in `list_layers`/`sources`) |
 
 **In-place layer mutation** (QGIS Field-Calculator pattern; reversible in a covering checkpoint)
@@ -72,7 +72,7 @@ auto-approve safe calls without per-action permission prompts.
 | `drop_layer` | Remove a layer from the session |
 | `rename_layer` | Rename a layer |
 
-**Transaction control** — scoped, concurrent
+**Transaction control.** Scoped, concurrent
 | Tool | What it does |
 |---|---|
 | `checkpoint` | Create a named checkpoint (optional `layers=[...]` scope). Multiple can be active at once |
@@ -259,10 +259,10 @@ sources()
 ## Datasets (65 total)
 
 - **DeSO 2018** + **DeSO 2025** polygons (Stockholm), EPSG:3011
-- **DeSO 2018↔2025 historical changes** (1,234 rows) — SCB's official migration mapping
+- **DeSO 2018↔2025 historical changes** (1,234 rows): SCB's official migration mapping
 - **DeSO↔RegSO connection table** (6,160 rows)
-- **30 SBK Stadskarta layers** — buildings, addresses, place names, administrative areas, streets, water, contours, etc. (Stockholm kommun, EPSG:3011)
-- **31 SCB statistical tables** keyed by DeSO/RegSO/kommun/Riket — population, households, income, employment, housing stock, buildings-by-age, land use, cars (Stockholm DeSOs + Stockholm RegSOs + country aggregate)
+- **30 SBK Stadskarta layers**: buildings, addresses, place names, administrative areas, streets, water, contours, etc. (Stockholm kommun, EPSG:3011)
+- **31 SCB statistical tables** keyed by DeSO/RegSO/kommun/Riket: population, households, income, employment, housing stock, buildings-by-age, land use, cars (Stockholm DeSOs + Stockholm RegSOs + country aggregate)
 
 Run `search_data("")` to list them all. Full source notes in
 [`DATA_SUMMARY.md`](DATA_SUMMARY.md) and [`sources.md`](sources.md).
@@ -326,8 +326,8 @@ uv run python -m geodata_mcp --http --host 127.0.0.1 --port 8765
 
 Two CI-ready audits live in `scripts/`:
 
-- `catalog_audit.py` — every catalog `sample_values` entry must appear in the data, feature counts must match, no undeclared columns without explanation.
-- `cross_ref_audit.py` — every DeSO `region` code across SCB tables must resolve to a polygon in the 2018 grid, 2025 grid, or SCB's historical-changes mapping.
+- `catalog_audit.py`: every catalog `sample_values` entry must appear in the data, feature counts must match, no undeclared columns without explanation.
+- `cross_ref_audit.py`: every DeSO `region` code across SCB tables must resolve to a polygon in the 2018 grid, 2025 grid, or SCB's historical-changes mapping.
 
 Both are run automatically at the end of `scripts/normalize.py` and fail the
 pipeline on regressions.
@@ -379,10 +379,10 @@ geodata-mcp/
 
 ## Known limitations
 
-- **Coverage is Stockholm kommun** — everything is filtered to kommunkod `0180`. Expanding is mostly a data-ingest problem, not a tool-design problem.
+- **Coverage is Stockholm kommun.** Everything is filtered to kommunkod `0180`. Expanding is mostly a data-ingest problem, not a tool-design problem.
 - **Street + house-number geocoding** pairs via 250 m spatial join between the street-label point and the nearest address-number point. Some pairs are off-by-one-building.
-- **SCB privacy suppression** — small-population DeSOs have NULL values in statistical tables. Catalog descriptions warn about this; queries must `WHERE value IS NOT NULL` to skip them.
-- **38 catalog warnings** — SBK cartographic columns (TEXTFONT, TEXT_ANGLE, etc.) exist in the data without catalog attribute entries. Flagged by audit, low risk.
+- **SCB privacy suppression.** Small-population DeSOs have NULL values in statistical tables. Catalog descriptions warn about this; queries must `WHERE value IS NOT NULL` to skip them.
+- **38 catalog warnings.** SBK cartographic columns (TEXTFONT, TEXT_ANGLE, etc.) exist in the data without catalog attribute entries. Flagged by audit, low risk.
 - **CLI clients still use a shared bearer.** The legacy bearer flow is fine for any scripted/CLI MCP client (Claude Code, Claude Desktop, Codex, custom scripts). Web custom-connector flows (claude.ai, ChatGPT, Gemini, etc.) use the OAuth 2.1 + PKCE path described above. Either flow gates on the same invite code.
-- **No Lantmäteriet data** — would add nationwide topographic context. Intentionally skipped for disk and scope.
+- **No Lantmäteriet data.** Would add nationwide topographic context. Intentionally skipped for disk and scope.
 

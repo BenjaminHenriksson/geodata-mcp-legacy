@@ -12,7 +12,7 @@ All spatial tools operate in **EPSG:3011** (SWEREF 99 18 00). Coordinates in
 tool arguments and return values use that CRS unless otherwise noted. The
 viewer reprojects to EPSG:4326 at the `/api/.../geojson` boundary. The
 server's `instructions` string (~10 KB workflow primer) is delivered to the
-MCP client at connection time — it covers CRS conventions, canonical SCB
+MCP client at connection time. It covers CRS conventions, canonical SCB
 join keys, the bulk-enrichment loop, macro-tool preferences, the
 auditability nudge, and when the LLM should push back instead of
 ploughing on.
@@ -39,7 +39,7 @@ simultaneously on overlapping or disjoint scopes.
 
 ---
 
-## Auditability — `description` on every mutating tool
+## Auditability: `description` on every mutating tool
 
 Every tool that creates, modifies, or destroys session state (every
 tool in the latter four categories above) accepts a `description: str
@@ -96,7 +96,7 @@ Two modes, tried in order:
   Natur, Trafikplats, Bytesplats, Markanläggning, Övrig anläggning).
 
 For Stadsdel / Distrikt / Stadsdelsnämndsområde / Kvarter matches, the returned
-`bbox_3011` is the extent of the containing `Adm_area` polygon — not a 200 m
+`bbox_3011` is the extent of the containing `Adm_area` polygon, not a 200 m
 label-point radius. Other matches get a 200 m box.
 
 Returns `{query, coverage, matches: [{name, kind, subkind, x_3011, y_3011, bbox_3011, score}]}`.
@@ -146,16 +146,16 @@ enum so clients get autocomplete. Required argument set depends on `operation`:
 | operation | required args | behavior |
 |---|---|---|
 | `select_by_location` | `layer`, `by_layer`, `predicate` | **Spatial WHERE**: rows of `layer` kept unchanged where their geom relates to ANY feature in `by_layer` by `predicate`. Predicates: `intersects` (default), `within`, `contains`, `dwithin` (+ `distance_m`). This is what you usually want for "buildings in district" / "DeSO containing point". |
-| `clip` | `layer`, `by_layer` | `ST_Intersection(layer.geom, ST_Union_Agg(by_layer.geom))`. Geometries are **modified** — trimmed to the clipping shape. Keeps `layer`'s attributes. |
-| `intersect` | `a_layer`, `b_layer` | **Geometric overlay** — one row per intersecting pair, `a.*` / `b.*` prefixed `a_` / `b_`, geometry = `ST_Intersection(a, b)`. Typically changes geometry kind (polygon × point → point). For a spatial join that keeps A's geometry, use `select_by_location` instead. |
-| `buffer` | `layer`, `distance_m` | `ST_Buffer(geom, distance_m)` — metres in EPSG:3011. |
+| `clip` | `layer`, `by_layer` | `ST_Intersection(layer.geom, ST_Union_Agg(by_layer.geom))`. Geometries are **modified**, trimmed to the clipping shape. Keeps `layer`'s attributes. |
+| `intersect` | `a_layer`, `b_layer` | **Geometric overlay.** One row per intersecting pair, `a.*` / `b.*` prefixed `a_` / `b_`, geometry = `ST_Intersection(a, b)`. Typically changes geometry kind (polygon × point → point). For a spatial join that keeps A's geometry, use `select_by_location` instead. |
+| `buffer` | `layer`, `distance_m` | `ST_Buffer(geom, distance_m)`, metres in EPSG:3011. |
 | `centroid` | `layer` | Per-feature `ST_Centroid`. |
 | `dissolve` | `layer`, `by_columns?` | `ST_Union_Agg(geom)` grouped by columns (or all). Adds `feature_count`. |
 | `convex_hull` | `layer`, `aggregate?` | Per-feature hull, or single aggregate hull with `aggregate=true`. |
 
 All provenance is merged from parents, deduped by `dataset_id`. The returned
-`geometry_type` is probed from the actual materialized rows — not inherited
-from a parent — so you can tell when an op changed the geometry kind.
+`geometry_type` is probed from the actual materialized rows (not inherited
+from a parent), so you can tell when an op changed the geometry kind.
 
 ---
 
@@ -214,7 +214,7 @@ for data injected by a future `create_layer` tool.
 
 ## 9. `create_layer(name, data, source?, geometry_column?, crs="EPSG:4326")`
 
-Inject LLM-provided data as a new session layer — for lookup tables the LLM
+Inject LLM-provided data as a new session layer. For lookup tables the LLM
 brings from external knowledge (a scrape, a manual curation, a published
 report) that it wants to join with catalog layers.
 
@@ -225,7 +225,7 @@ report) that it wants to join with catalog layers.
   reprojected to EPSG:3011. Default input CRS is WGS84 lng/lat (EPSG:4326).
 
 Materialized via pyarrow → DuckDB. Same tool interface as catalog layers after
-creation — filter/spatial/stats/execute_sql/export all work on it.
+creation; filter/spatial/stats/execute_sql/export all work on it.
 
 ---
 
@@ -268,18 +268,18 @@ auto-styles by geometry type.
 A handful of tools that fit a category above but warrant only a one-line
 description here. Full docstrings live in `server.py`:
 
-- `bbox_from(name)` — resolve a Stadsdel / Distrikt / Kvarter name to its
+- `bbox_from(name)`: resolve a Stadsdel / Distrikt / Kvarter name to its
   bounding box in EPSG:3011. One call instead of geocode → spatial
   intersection → bbox extraction.
-- `frequencies(layer, column, top=20)` — value-frequency table for one
+- `frequencies(layer, column, top=20)`: value-frequency table for one
   attribute (count + percentage + cumulative percentage), sorted DESC.
   The "show me the distribution of X" call.
-- `reverse_geocode(x_3011, y_3011)` — what Stadsdel / Distrikt /
+- `reverse_geocode(x_3011, y_3011)`: what Stadsdel / Distrikt /
   Kvarter contains this point? Returns the matched admin polygons by
   name. Use this rather than guessing place names from raw coordinates.
-- `inspect_locations(points, radius_m=100, layers?, columns?, per_layer_limit=5)`
-  — batch variant of `inspect_location`. Up to 500 points per call.
-- `render_map(layers, title?, width_px=1600, height_px=1000)` —
+- `inspect_locations(points, radius_m=100, layers?, columns?, per_layer_limit=5)`:
+  batch variant of `inspect_location`. Up to 500 points per call.
+- `render_map(layers, title?, width_px=1600, height_px=1000)`:
   server-side PNG render. Editorial paper-toned backdrop, scale bar,
   legend honoring the active `show()` style. Output URL valid for 24 h.
   Use when you want a self-contained image for a slide / report rather
@@ -316,20 +316,20 @@ Never a Python traceback. Never implementation hints beyond the immediate cause.
 
 - **Tools**: +2 (`create_layer`, `export`). Total 12.
 - **New catalog datasets**: `deso_historical_changes` (SCB's official DeSO 2018→2025 mapping, 1,234 rows) and `deso_regso_mapping` (DeSO→RegSO for 6,160 rows).
-- **`load()` for parquet**: cap raised from 100 K to 10 M — parquet is columnar and compact so the GPKG cap is inappropriate.
+- **`load()` for parquet**: cap raised from 100 K to 10 M. Parquet is columnar and compact so the GPKG cap is inappropriate.
 - **DeSO geom column**: renamed `sp_geometry` → `geom` at normalize time, so every spatial layer in the catalog uses `geom` consistently.
 - **SCB dedup**: normalize step collapses the shadow-NULL duplicate rows that SCB publishes.
 - **Audits**: `catalog_audit.py` + `cross_ref_audit.py` run post-normalize and fail the pipeline on real errors.
 
 ---
 
-## What changed in Phase 4 — LLM-native workflow
+## What changed in Phase 4: LLM-native workflow
 
 - **Tools**: +14 (total **26**). New categories: in-place field ops,
   transaction control, AI-native iteration.
 - **MCP annotations** on every tool (`readOnlyHint` / `destructiveHint`) so
   clients can auto-approve safe calls without per-action prompts.
-- **Server `instructions`** — multi-paragraph system prompt delivered with the
+- **Server `instructions`.** Multi-paragraph system prompt delivered with the
   tool list at connection time. Covers workflow patterns, the CRS convention,
   SCB privacy-suppression and DeSO-2018→2025 footguns, and the enrichment
   loop (batch_iterate → annotate).
@@ -347,7 +347,7 @@ than `sources()` when you don't need provenance detail.
 
 Bulk variant of `load`. Returns `{loaded: [summaries], errors: [per-dataset]}`.
 Single-call convenience when the LLM knows up front that it wants several
-related datasets — shared bbox/limit only. Use individual `load` calls when
+related datasets; shared bbox/limit only. Use individual `load` calls when
 you need per-dataset arguments.
 
 ### 15. `add_field(layer, name, expr, field_type?)`
@@ -385,7 +385,7 @@ values = {
 New columns are created on the fly with type inferred from the values
 (`int`-only → BIGINT; mixed int/float → DOUBLE; bool → BOOLEAN; else
 VARCHAR). Cap: 10,000 keys per call. Pair with `batch_iterate` for larger
-layers. Reversible inside a checkpoint — snapshotted once per column
+layers. Reversible inside a checkpoint, snapshotted once per column
 regardless of how many rows are touched.
 
 ### 19. `batch_iterate(layer, columns?, batch_size=200, cursor?, where?)`
@@ -411,7 +411,7 @@ layer.
 ### 21. `drop_layer(name)`
 
 Remove a layer from the session. Reversible inside a checkpoint (full layer
-snapshotted) — otherwise irreversible.
+snapshotted); otherwise irreversible.
 
 ### 22. `rename_layer(old, new)`
 
@@ -420,8 +420,8 @@ Rename. Reversible inside a checkpoint.
 ### 23. `set_notes(layer, notes)`
 
 Attach free-text notes to a layer. Surfaces in `list_layers` and `sources`.
-For narrating *why* a layer exists — "filtered to pre-1940 stone buildings
-as a proxy for the historical core" — so the reasoning is recoverable from
+For narrating *why* a layer exists ("filtered to pre-1940 stone buildings
+as a proxy for the historical core") so the reasoning is recoverable from
 the session state alone.
 
 ### 24. `checkpoint(name)`
@@ -474,8 +474,8 @@ export("sbk_buildings", format="gpkg")
 ## Response hints
 
 Most mutation tools include a `hint` field in their response flagging
-checkpoint state — e.g. *"Mutation is reversible — call rollback('classify')
-to undo."* or *"No checkpoint active — this mutation is not reversible."*.
+checkpoint state. E.g. *"Mutation is reversible. Call rollback('classify')
+to undo."* or *"No checkpoint active; this mutation is not reversible."*.
 Intended as teaching moments for LLMs just connecting.
 
 ---
@@ -485,11 +485,11 @@ Intended as teaching moments for LLMs just connecting.
 Structured response to the user-testing session friction points:
 
 **Tools added (+3 → 29 total):**
-- `describe_dataset(id)` — full attribute schema for a single dataset. Paired
+- `describe_dataset(id)`: full attribute schema for a single dataset. Paired
   with a `verbose=False` default on `search_data` to keep context small.
-- `inspect_locations(points, ...)` — batch variant of `inspect_location`. Up
+- `inspect_locations(points, ...)`: batch variant of `inspect_location`. Up
   to 500 points per call.
-- `hide(layers)` — inverse of `show`. `layers=None` hides all.
+- `hide(layers)`: inverse of `show`. `layers=None` hides all.
 
 **Response shape changes:**
 - `execute_sql` now returns `truncated: true` + a `warning` when the result
@@ -508,7 +508,7 @@ Structured response to the user-testing session friction points:
   on a cursor call still overrides.
 
 **Scoped, concurrent checkpoints:**
-- `checkpoint(name, layers=[...])` — scope to named layers. `layers=None`
+- `checkpoint(name, layers=[...])`: scope to named layers. `layers=None`
   (default) covers every layer, keeping back-compat.
 - Multiple checkpoints may be active at once. A mutation snapshots against
   every covering active checkpoint, so nested or parallel workflows don't
@@ -522,7 +522,7 @@ Structured response to the user-testing session friction points:
 
 **Viewer UX:**
 - Auto-refresh: viewer polls `/api/<sid>/version` every 2 s and re-syncs on
-  change — new layers appear, removed layers disappear, mutated layer data
+  change. New layers appear, removed layers disappear, mutated layer data
   refreshes in-place, no manual reload.
 - Popup precedence: click returns the feature from the *smallest-bbox*
   layer, not the topmost. Other layers at the same point are listed
@@ -541,7 +541,7 @@ Structured response to the user-testing session friction points:
 - Catalog entries regenerated for all 31 SCB tables. Audits clean.
 
 **Instructions upgrade:**
-- New "When the LLM should push back, not plough on" section — explicit
+- New "When the LLM should push back, not plough on" section. Explicit
   guidance to surface warnings / hints / truncation and to name missing
   data rather than fabricate.
 - "Bulk enrichment pattern" example showing the canonical batch_iterate →
@@ -560,7 +560,7 @@ ceiling on how many tools a single turn can chain):
 ### `top_n(layer, by, n=10, ascending=False, result_name=None)`
 
 filter + `ORDER BY` + `LIMIT` in one call. Produces a new layer with the
-top (or bottom) `n` rows. `by` is a SQL ordering expression — can be a
+top (or bottom) `n` rows. `by` is a SQL ordering expression; can be a
 column name, a function call, or a full expression. Provenance inherits
 from `layer`.
 
@@ -588,7 +588,7 @@ classify("deso", "income_band", rules=[
 
 ### `export_and_cite(layer, format='gpkg')`
 
-`export(layer, format)` + `sources(layer)` in one call — URL + full
+`export(layer, format)` + `sources(layer)` in one call. URL + full
 markdown citations. One round-trip for the last step of every
 publishable workflow.
 
@@ -596,7 +596,7 @@ publishable workflow.
 
 Export several layers under one 24-h download token.
 
-- `format='gpkg'` (recommended): **one multi-layer `.gpkg` file** — each
+- `format='gpkg'` (recommended): **one multi-layer `.gpkg` file**. Each
   input layer preserved as its own GPKG layer with its native geometry
   and attributes. Opens cleanly in QGIS/ArcGIS.
 - `format='geojson'` + `merge_geojson=True`: single `.geojson` with a
@@ -618,17 +618,17 @@ JSON-number serialization doesn't fail with the cryptic "precision up to
 Every `scb_*` parquet now carries these columns in addition to the
 tabular raw:
 
-- `desokod` — DeSO code (9 chars), equals `region_code` when
+- `desokod`: DeSO code (9 chars), equals `region_code` when
   `region_kind='deso'`. Join to `deso_2025.desokod` / `deso_2018.desokod`.
-- `desokod_2025` — 2025-grid equivalent of `desokod`. Bridges 2018 → 2025
+- `desokod_2025`: 2025-grid equivalent of `desokod`. Bridges 2018 → 2025
   via `deso_historical_changes`. Equals `desokod` when the DeSO is
   unchanged since 2018.
-- `regsokod`, `regso_name` — parent RegSO. Joined via `deso_regso_mapping`.
-- `kommunkod`, `kommun_name` — parent kommun. Joined via
+- `regsokod`, `regso_name`: parent RegSO. Joined via `deso_regso_mapping`.
+- `kommunkod`, `kommun_name`: parent kommun. Joined via
   `deso_regso_mapping`.
 
 All six are NULL for non-DeSO rows (RegSO / kommun / country). Prefer
-them over the raw `region` column for joins — they're uniform across
+them over the raw `region` column for joins; they're uniform across
 the 31 SCB tables.
 
 ---

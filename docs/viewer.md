@@ -11,9 +11,9 @@ doing, only what layers are currently visible.
 
 Two files, plus the MapLibre GL CDN:
 
-- `viewer/index.html` — container markup and inline CSS, in the paper
+- `viewer/index.html`: container markup and inline CSS, in the paper
   palette.
-- `viewer/app.js` — all runtime logic.
+- `viewer/app.js`: all runtime logic.
 
 The server serves the HTML at `/view/<sid>` with the JS path
 cache-busted by a content hash (`/static/app.js?v=<hash>`). Cloudflare
@@ -64,11 +64,11 @@ without needing a persistent WebSocket.
 
 Each GeoJSON `FeatureCollection` becomes four MapLibre sublayers:
 
-- `<name>-fill` — polygon fill.
-- `<name>-outline` — polygon outline (separate sublayer for independent
+- `<name>-fill`: polygon fill.
+- `<name>-outline`: polygon outline (separate sublayer for independent
   styling).
-- `<name>-line` — LineString / MultiLineString.
-- `<name>-pt` — Point / MultiPoint.
+- `<name>-line`: LineString / MultiLineString.
+- `<name>-pt`: Point / MultiPoint.
 
 Features are filtered into the appropriate sublayer by geometry type.
 This overhead is cheap and makes per-geometry-type styling trivial.
@@ -120,7 +120,7 @@ schema is:
 
 - Declarative (says what the mapping is, not how to compute it).
 - Small enough to fit in a prompt.
-- Round-trippable server-side — the PNG renderer reads the same spec.
+- Round-trippable server-side; the PNG renderer reads the same spec.
 - Extensible per-channel without changing the top-level contract.
 
 Trade-off: we can't express everything MapLibre can. Step functions,
@@ -148,7 +148,7 @@ auto-assignment writes back to `spec.palette` so the two agree.
 
 ## Click ranking
 
-Clicks hit everything under the cursor — often multiple features across
+Clicks hit everything under the cursor, often multiple features across
 multiple layers. The ranker:
 
 1. `queryRenderedFeatures` with a 4-px-padded hit box (so point and line
@@ -184,8 +184,8 @@ needed.
 
 Below the meta row, a small "authored" line:
 
-- `LLM: era, note` — columns written by `annotate`.
-- `derived: slope_deg` — columns written by `add_field` or
+- `LLM: era, note`: columns written by `annotate`.
+- `derived: slope_deg`: columns written by `add_field` or
   `update_field` with a SQL expression.
 
 These only appear if the server's `_layer_summary` includes

@@ -42,7 +42,7 @@ are a deployment concern, not part of the public contract.
 
 ## Components
 
-### `catalog.py` — the dataset registry
+### `catalog.py`: the dataset registry
 
 Loads `catalog.json` at startup, validates entries against the
 `DatasetEntry` dataclass, builds a fuzzy-search corpus (Swedish + English
@@ -55,7 +55,7 @@ Key fields per entry: `id`, `name_sv`/`name_en`, descriptions,
 licence metadata, and an optional `dedupe_hint` for datasets with
 non-obvious row-level quirks.
 
-### `loader.py` — getting data into a session
+### `loader.py`: getting data into a session
 
 Reads a normalized parquet/geopackage file into DuckDB as a layer.
 Applies optional `bbox_3011`, `where`, and `intersect_layer` filters
@@ -63,28 +63,28 @@ before the per-load cap (100 k features). Records provenance from the
 catalog entry. Everything is pre-projected to EPSG:3011; there's no
 CRS guessing at load time.
 
-### `operations/` — the workhorse package
+### `operations/`: the workhorse package
 
-All the verbs the MCP exposes — filter, spatial, stats, execute_sql,
+All the verbs the MCP exposes (filter, spatial, stats, execute_sql,
 macro helpers, annotate, add_field, checkpoint/rollback/commit, exports,
-frequencies. Every function is session-scoped; there is no global DuckDB
+frequencies). Every function is session-scoped; there is no global DuckDB
 connection.
 
 Split into focused submodules so each file stays readable:
 
-- `_util.py` — provenance merging, predicate validation, unicode
+- `_util.py`: provenance merging, predicate validation, unicode
   normalization, shared SQL-cell formatting.
-- `sql.py` — `execute_sql` + `_validate_sql` (the sqlglot-backed sandbox).
-- `spatial.py` — clip, buffer, centroid, dissolve, convex_hull,
+- `sql.py`: `execute_sql` + `_validate_sql` (the sqlglot-backed sandbox).
+- `spatial.py`: clip, buffer, centroid, dissolve, convex_hull,
   intersect, select_by_location.
-- `query.py` — filter, stats, frequencies, baseline_stats, top_n,
+- `query.py`: filter, stats, frequencies, baseline_stats, top_n,
   classify, batch_iterate.
-- `layers.py` — create_layer, drop_layer, rename_layer, list_layers,
+- `layers.py`: create_layer, drop_layer, rename_layer, list_layers,
   set_notes, hide_layers.
-- `fields.py` — add_field, update_field, drop_field, annotate.
-- `export.py` — export_layer, export_layers, export_and_cite.
-- `checkpoint.py` — checkpoint, rollback, commit, snapshot helpers.
-- `inspect.py` — inspect_location(s), reverse_geocode, sources.
+- `fields.py`: add_field, update_field, drop_field, annotate.
+- `export.py`: export_layer, export_layers, export_and_cite.
+- `checkpoint.py`: checkpoint, rollback, commit, snapshot helpers.
+- `inspect.py`: inspect_location(s), reverse_geocode, sources.
 
 `operations/__init__.py` re-exports every public name so `from
 geodata_mcp.operations import …` keeps working unchanged.
@@ -96,7 +96,7 @@ multi-statement input, function calls to filesystem readers (`read_csv`,
 don't want LLM-invoked. This is the server's primary defence against
 SQL-injection dressed as "friendly expression" input.
 
-### `session.py` — per-client state
+### `session.py`: per-client state
 
 Each MCP client connection gets a `Session` with its own DuckDB file,
 layer metadata, visible styles, operation history, cursors, and
@@ -114,17 +114,17 @@ viewer's audit panel.
 
 Persistence is three files per session:
 
-- `<id>.duckdb` — the DuckDB file with tables (layers + checkpoint
+- `<id>.duckdb`: the DuckDB file with tables (layers + checkpoint
   snapshots);
-- `<id>.meta.json` — Python-side metadata that DuckDB doesn't know about
+- `<id>.meta.json`: Python-side metadata that DuckDB doesn't know about
   (LayerMeta, visible_styles, history, etc.);
-- `<id>.audit.jsonl` — append-only stream of every SQL statement
+- `<id>.audit.jsonl`: append-only stream of every SQL statement
   executed in the session, including internal probes; replayed into
   memory on rehydrate.
 
 See [Sessions](sessions) for the lifecycle in detail.
 
-### `server.py` — the MCP surface
+### `server.py`: the MCP surface
 
 Each tool is a thin `@mcp.tool`-decorated function that:
 
@@ -143,7 +143,7 @@ Tools are annotated (`_READ_ONLY`, `_SAFE_MUTATION`,
 `_IDEMPOTENT_MUTATION`) so MCP clients can auto-approve the safe ones
 without per-call permission prompts.
 
-### `http_app.py` — the viewer + OAuth + docs HTTP layer
+### `http_app.py`: the viewer + OAuth + docs HTTP layer
 
 The Starlette composition (build_http_app + middleware classes) lives
 in its own module so server.py stays focused on the MCP tool surface.
@@ -158,7 +158,7 @@ The middleware stack (outside-in): `RateLimitMiddleware` →
 `SecurityHeadersMiddleware` (CSP + framing) → `OAuthAuthMiddleware`
 (bearer/OAuth on `/mcp/*` only) → Starlette routes.
 
-### `oauth.py` — invite-code-gated OAuth 2.1 + PKCE
+### `oauth.py`: invite-code-gated OAuth 2.1 + PKCE
 
 Implements RFC 7591 dynamic client registration, RFC 8414 authorization
 server metadata, RFC 9728 protected resource metadata, `authorize` and
@@ -171,20 +171,20 @@ Secrets (invite code, legacy bearer) are delivered through a
 credential manager at process start, so they never appear in the
 process environment.
 
-### `geocoder.py` — place-name lookup
+### `geocoder.py`: place-name lookup
 
 Two-mode geocoder: composite address matching (street name + number with a
 250 m spatial pairing) and place-name matching against `NamnText_point`
 with Jaro-Winkler similarity. Returns bbox + centroid in EPSG:3011.
 
-### `render.py` — server-side PNG rendering
+### `render.py`: server-side PNG rendering
 
 Matplotlib + shapely. Reads features via the session's DuckDB connection,
 draws on a paper-toned axes with scale bar, legend, and title. No tiled
 basemap because the sandbox denies egress and the editorial palette
 reads better without one.
 
-### `viewer/` — static frontend
+### `viewer/`: static frontend
 
 Two HTML files plus `app.js`. `landing.html` is the `/` page. `index.html`
 is the per-session viewer served at `/view/<sid>`. The viewer polls
@@ -206,7 +206,7 @@ and writing exports.
 **What we give up.** No raster support (or very limited). No network
 analysis (no pgRouting equivalent). No concurrent multi-user access to
 the same DB (each session is single-owner). Spatial SQL functions are a
-subset of PostGIS — some advanced operations aren't there yet.
+subset of PostGIS; some advanced operations aren't there yet.
 
 **Why it works anyway.** The workload is read-heavy, session-scoped,
 and sized well under DuckDB's sweet spot (hundreds of MB in a session,
@@ -219,7 +219,7 @@ municipal questions.
 batteries-included lifespan + session management (which we wrap but
 build on). Time-to-working-server was short.
 
-**What we gave up.** Some coupling to FastMCP's internal conventions —
+**What we gave up.** Some coupling to FastMCP's internal conventions:
 tool annotations, context injection, error shapes. Version bumps
 occasionally force adjustments.
 
@@ -253,7 +253,7 @@ Nominatim, translation) has to either ship its data locally or relax
 the policy. The current decision is to ship data locally.
 
 **Alternative considered.** An IP allow-list with a tight set of CDN
-ranges for Carto / OSM tiles. Rejected as brittle — CDN ranges change,
+ranges for Carto / OSM tiles. Rejected as brittle: CDN ranges change,
 and an allow-listed host can still be an exfiltration channel if the
 attacker controls what the process POSTs.
 
@@ -332,7 +332,7 @@ splitting sessions across workers, which we haven't needed.
 
 - **No background job queue.** Everything runs in the request path. If a
   tool takes 30 seconds, the client waits 30 seconds. This keeps the
-  error-flow simple — there's no "check back later" state machine.
+  error-flow simple; there's no "check back later" state machine.
 - **No metrics / tracing backend.** `journalctl -u geodata-mcp -f` is the
   operations tool. At current scale this is fine.
 - **No WebSocket push to the viewer.** Auto-refresh is HTTP polling of a

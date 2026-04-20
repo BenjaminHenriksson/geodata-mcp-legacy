@@ -186,6 +186,30 @@ and `sources`. Useful for recording *why* a layer exists ("filtered to
 pre-1940 stone buildings as a proxy for the historical core") so the
 reasoning is recoverable from session state alone.
 
+## Auditability — describe every mutation
+
+Every mutating tool (`load`, `load_many`, `filter`, `spatial`, `top_n`,
+`classify`, `execute_sql`, `create_layer`, `add_field`, `update_field`,
+`drop_field`, `annotate`, `export`, `export_many`, `export_and_cite`,
+`render_map`, `show`, `hide`, `set_notes`, `drop_layer`, `rename_layer`,
+`checkpoint`, `rollback`, `commit`) accepts a `description: str = ""`
+argument. **Always pass a one-sentence rationale** stating what you're
+doing and why — e.g.:
+
+    filter("buildings", where="byggar < 1940", description=
+        "user asked for pre-war buildings as proxy for the historical core")
+    spatial("clip", layer="streets", by_layer="sodermalm", description=
+        "limit street network to Södermalm before density calc")
+    execute_sql("SELECT ...", description=
+        "compute median income per DeSO, weighted by population")
+
+The user sees these descriptions in their viewer's audit panel together
+with the actual SQL run, so they can verify your work without reading
+code. Operations without a description are visibly flagged as
+undocumented — that erodes trust. Treat the description like a commit
+message: short, specific, in the user's frame ("compute X for Y"), not
+yours ("call ST_Buffer on layer foo").
+
 ## Injecting LLM-found data — `source` is mandatory
 
 Every row you inject via `create_layer` must carry a `source` attribute so
@@ -366,6 +390,39 @@ def _session(ctx: Context | None) -> Session:
     client request carries a session id that FastMCP threads through Context."""
     sid = getattr(ctx, "session_id", None) if ctx else None
     return REGISTRY.get_or_create(sid or "default")
+
+
+def _audited(tool_name: str):
+    """Wrap an MCP tool body in `Session.audit_context(tool_name, description)`.
+
+    Place between `@mcp.tool(...)` and the function. functools.wraps preserves
+    the signature so FastMCP's schema introspection still sees the original
+    parameters (including the `description` arg the tool now accepts).
+
+    Pulls `description` and `ctx` from kwargs; the wrapped function still
+    re-resolves `_session(ctx)` itself (idempotent via REGISTRY). Args dict
+    captured for the audit log strips `ctx` and any callables.
+    """
+    import functools
+
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            ctx = kwargs.get("ctx")
+            description = kwargs.get("description", "") or ""
+            try:
+                sess = _session(ctx)
+            except Exception:
+                # Session resolution failed (rare — registry is in-process);
+                # let the tool body's own try/except surface the error.
+                return fn(*args, **kwargs)
+            audit_args = {k: v for k, v in kwargs.items()
+                          if k != "ctx" and not callable(v)}
+            with sess.audit_context(tool_name, description=description,
+                                    args=audit_args):
+                return fn(*args, **kwargs)
+        return wrapper
+    return deco
 
 
 # Stamp every error with a marker that identifies it as coming from the MCP
@@ -690,6 +747,7 @@ def bbox_from(
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
+@_audited("load")
 def load(
     dataset_id: str | None = None,
     id: str | None = None,  # alias for dataset_id
@@ -698,6 +756,7 @@ def load(
     layer_name: str | None = None,
     where: str | None = None,
     intersect_layer: str | None = None,
+    description: str = "",
     ctx: Context | None = None,
 ) -> dict:
     """Load a catalog dataset into the session as a queryable layer.
@@ -742,9 +801,11 @@ def load(
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
+@_audited("filter")
 def filter(
     layer: str, where: str,
     result_name: str | None = None,
+    description: str = "",
     ctx: Context | None = None,
 ) -> dict:
     """Apply a SQL WHERE clause to an existing session layer; emit a new layer.
@@ -784,6 +845,7 @@ SpatialPredicate = Literal["intersects", "within", "contains", "dwithin"]
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
+@_audited("spatial")
 def spatial(
     operation: SpatialOp,
     layer: str | None = None,
@@ -795,6 +857,7 @@ def spatial(
     aggregate: bool = False,
     predicate: SpatialPredicate = "intersects",
     result_name: str | None = None,
+    description: str = "",
     ctx: Context | None = None,
 ) -> dict:
     """Spatial operation producing a new layer.
@@ -946,12 +1009,14 @@ def frequencies(
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
+@_audited("top_n")
 def top_n(
     layer: str,
     by: str,
     n: int = 10,
     ascending: bool = False,
     result_name: str | None = None,
+    description: str = "",
     ctx: Context | None = None,
 ) -> dict:
     """filter + ORDER BY + LIMIT in one call. Produces a new layer with the
@@ -1003,11 +1068,13 @@ def baseline_stats(
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
+@_audited("classify")
 def classify(
     layer: str,
     name: str,
     rules: list[dict],
     default: str | None = None,
+    description: str = "",
     ctx: Context | None = None,
 ) -> dict:
     """Add a categorical column whose value is chosen from the first
@@ -1041,9 +1108,11 @@ def classify(
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
+@_audited("export_and_cite")
 def export_and_cite(
     layer: str,
     format: str = "gpkg",
+    description: str = "",
     ctx: Context | None = None,
 ) -> dict:
     """Shortcut for `export(layer, format)` + `sources(layer)`. Returns
@@ -1060,6 +1129,7 @@ def export_and_cite(
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
+@_audited("execute_sql")
 def execute_sql(
     sql: str,
     description: str = "",
@@ -1107,12 +1177,14 @@ def execute_sql(
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
+@_audited("create_layer")
 def create_layer(
     name: str,
     data: list[dict],
     source: str | None = None,
     geometry_column: str | None = None,
     crs: str = "EPSG:4326",
+    description: str = "",
     ctx: Context | None = None,
 ) -> dict:
     """Inject LLM-provided data as a new session layer.
@@ -1164,9 +1236,11 @@ def create_layer(
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
+@_audited("export")
 def export(
     layer: str,
     format: str = "geojson",
+    description: str = "",
     ctx: Context | None = None,
 ) -> dict:
     """Export a session layer to a downloadable file. Returns a URL valid for 24 h.
@@ -1190,10 +1264,12 @@ def export(
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
+@_audited("export_many")
 def export_many(
     layers: list[str],
     format: str = "gpkg",
     merge_geojson: bool = False,
+    description: str = "",
     ctx: Context | None = None,
 ) -> dict:
     """Export multiple layers together under one 24-h download token.
@@ -1227,12 +1303,14 @@ def export_many(
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
+@_audited("render_map")
 def render_map(
     layers: list[str],
     title: str | None = None,
     legend: bool = True,
     width_px: int = 1600,
     height_px: int = 1000,
+    description: str = "",
     ctx: Context | None = None,
 ) -> dict:
     """Render the given layers to a PNG and return a download URL.
@@ -1397,10 +1475,12 @@ def inspect(
 
 
 @mcp.tool(annotations=_IDEMPOTENT_MUTATION)
+@_audited("show")
 def show(
     layers: list[str],
     title: str | None = None,
     style: dict | None = None,
+    description: str = "",
     ctx: Context | None = None,
 ) -> dict:
     """Mark layers visible in the viewer and return their summaries + viewer URL.
@@ -1553,12 +1633,14 @@ def list_layers(ctx: Context | None = None) -> dict:
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
+@_audited("load_many")
 def load_many(
     dataset_ids: list[str] | None = None,
     ids: list[str] | None = None,        # alias for dataset_ids
     datasets: list[str] | None = None,   # alias for dataset_ids
     bbox_3011: list[float] | None = None,
     limit: int | None = None,
+    description: str = "",
     ctx: Context | None = None,
 ) -> dict:
     """Bulk-load several catalog datasets in one call. Identical semantics to
@@ -1599,9 +1681,11 @@ def load_many(
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
+@_audited("add_field")
 def add_field(
     layer: str, name: str, expr: str,
     field_type: str | None = None,
+    description: str = "",
     ctx: Context | None = None,
 ) -> dict:
     """Add a new column to a layer in place, computed from a SQL expression.
@@ -1632,9 +1716,11 @@ def add_field(
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
+@_audited("update_field")
 def update_field(
     layer: str, name: str, expr: str,
     where: str | None = None,
+    description: str = "",
     ctx: Context | None = None,
 ) -> dict:
     """Overwrite an existing column's values from a SQL expression, optionally
@@ -1656,7 +1742,9 @@ def update_field(
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
-def drop_field(layer: str, name: str, ctx: Context | None = None) -> dict:
+@_audited("drop_field")
+def drop_field(layer: str, name: str, description: str = "",
+               ctx: Context | None = None) -> dict:
     """Remove a column from a layer. In place. Reversible inside a checkpoint.
     Refuses to drop the geometry column — use drop_layer for that."""
     try:
@@ -1669,12 +1757,14 @@ def drop_field(layer: str, name: str, ctx: Context | None = None) -> dict:
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
+@_audited("annotate")
 def annotate(
     layer: str,
     values: dict,
     key_column: str = "rowid",
     dry_run: bool = False,
     model: str | None = None,
+    description: str = "",
     ctx: Context | None = None,
 ) -> dict:
     """Attach LLM-classified per-feature attributes in one call.
@@ -1872,7 +1962,9 @@ def inspect_locations(
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
-def drop_layer(name: str, ctx: Context | None = None) -> dict:
+@_audited("drop_layer")
+def drop_layer(name: str, description: str = "",
+               ctx: Context | None = None) -> dict:
     """Remove a layer from the session. Reversible inside an active checkpoint
     (full layer snapshotted); not reversible otherwise.
     """
@@ -1886,7 +1978,9 @@ def drop_layer(name: str, ctx: Context | None = None) -> dict:
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
-def rename_layer(old: str, new: str, ctx: Context | None = None) -> dict:
+@_audited("rename_layer")
+def rename_layer(old: str, new: str, description: str = "",
+                 ctx: Context | None = None) -> dict:
     """Rename a layer. Reversible inside an active checkpoint."""
     try:
         sess = _session(ctx)
@@ -1898,8 +1992,10 @@ def rename_layer(old: str, new: str, ctx: Context | None = None) -> dict:
 
 
 @mcp.tool(annotations=_IDEMPOTENT_MUTATION)
+@_audited("hide")
 def hide(
     layers: list[str] | None = None,
+    description: str = "",
     ctx: Context | None = None,
 ) -> dict:
     """Hide layers in the viewer. Inverse of `show`. With no args, hides all.
@@ -1917,7 +2013,9 @@ def hide(
 
 
 @mcp.tool(annotations=_IDEMPOTENT_MUTATION)
-def set_notes(layer: str, notes: str, ctx: Context | None = None) -> dict:
+@_audited("set_notes")
+def set_notes(layer: str, notes: str, description: str = "",
+              ctx: Context | None = None) -> dict:
     """Attach free-text notes to a layer. Shown in list_layers and sources.
     Useful for "why does this layer exist" narration that will help you (or a
     colleague reading the export) later."""
@@ -1928,9 +2026,11 @@ def set_notes(layer: str, notes: str, ctx: Context | None = None) -> dict:
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
+@_audited("checkpoint")
 def checkpoint(
     name: str,
     layers: list[str] | None = None,
+    description: str = "",
     ctx: Context | None = None,
 ) -> dict:
     """Create a named checkpoint. Subsequent in-place mutations (`add_field`,
@@ -1956,7 +2056,9 @@ def checkpoint(
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
-def rollback(name: str, ctx: Context | None = None) -> dict:
+@_audited("rollback")
+def rollback(name: str, description: str = "",
+             ctx: Context | None = None) -> dict:
     """Restore every in-place mutation made since `checkpoint(name)`. Discards
     the checkpoint and its snapshots."""
     try:
@@ -1966,7 +2068,9 @@ def rollback(name: str, ctx: Context | None = None) -> dict:
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
-def commit(name: str, ctx: Context | None = None) -> dict:
+@_audited("commit")
+def commit(name: str, description: str = "",
+           ctx: Context | None = None) -> dict:
     """Make all mutations since `checkpoint(name)` permanent. Discards
     snapshots, reclaims storage."""
     try:
@@ -2281,6 +2385,47 @@ def build_http_app() -> object:
             "visible_layers": s.visible_layers,
         })
 
+    async def api_audit_log(request):
+        """Per-session audit timeline for the viewer's history panel.
+
+        Returns each Operation in chronological order, with its captured SQL
+        statements grouped by correlation_id. Internal probes (DESCRIBE,
+        bbox queries, etc.) are filtered out unless ?include_internal=1.
+        """
+        sid = request.path_params["session_id"]
+        s = REGISTRY.get(sid)
+        if s is None:
+            return JSONResponse({"error": "unknown_or_expired_session"},
+                                status_code=404)
+        include_internal = request.query_params.get("include_internal") in (
+            "1", "true", "yes",
+        )
+        # Group audit records by correlation_id for O(1) op→sql lookup.
+        from .session import _audit_to_dict, _op_to_dict
+        sql_by_cid: dict[str, list[dict]] = {}
+        unattached: list[dict] = []
+        for rec in s.audit:
+            if rec.internal and not include_internal:
+                continue
+            d = _audit_to_dict(rec)
+            if rec.correlation_id:
+                sql_by_cid.setdefault(rec.correlation_id, []).append(d)
+            else:
+                unattached.append(d)
+        operations = []
+        for op in s.history:
+            d = _op_to_dict(op)
+            d["sql_statements"] = sql_by_cid.get(op.correlation_id, []) \
+                if op.correlation_id else []
+            operations.append(d)
+        return JSONResponse({
+            "session_id": s.id,
+            "version": s.version,
+            "operations": operations,
+            "unattached_sql": unattached,
+            "include_internal": include_internal,
+        })
+
     async def serve_export(request):
         """Serve /exports/{token}/{filename} from data/exports/.
         Path-traversal-safe: token must be a pure identifier, filename must live
@@ -2406,6 +2551,7 @@ def build_http_app() -> object:
         Route("/view/{session_id}", view_index),
         Route("/api/{session_id}/visible_layers", api_visible),
         Route("/api/{session_id}/version", api_version),
+        Route("/api/{session_id}/audit_log", api_audit_log),
         Route("/api/{session_id}/layer/{layer}/geojson", api_layer_geojson),
         Route("/exports/{token}/{filename}", serve_export),
         Mount("/static", StaticFiles(directory=str(viewer_dir)), name="static"),

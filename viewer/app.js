@@ -100,6 +100,11 @@ const dataLayers = {};
 let lastVersion = -1;
 let autoFit = true;    // fit bounds on first sync; subsequent refreshes preserve view
 
+// -- audit panel --
+const auditBody = document.getElementById('audit-body');
+const auditToggle = document.getElementById('audit-internal-toggle');
+if (auditToggle) auditToggle.addEventListener('change', () => renderAuditPanel());
+
 async function pollForChanges() {
   try {
     const res = await fetch(`/api/${sessionId}/version`);
@@ -122,6 +127,9 @@ async function syncSession(isFirstLoad) {
     return;
   }
   lastVersion = payload.version ?? 0;
+  // Audit panel reflects the same version bump even when no layers are
+  // visible yet (e.g. user has done load/filter but not show).
+  renderAuditPanel();
 
   // Title: server-set via show(title=...), falls back to default.
   const desiredTitle = payload.title || DEFAULT_TITLE;
@@ -185,6 +193,73 @@ async function syncSession(isFirstLoad) {
     map.fitBounds(tightest.b, { padding: 60, maxZoom: 13, duration: 600 });
   }
   if (isFirstLoad) map.on('click', onMapClick);
+}
+
+async function renderAuditPanel() {
+  if (!auditBody) return;
+  const includeInternal = !!(auditToggle && auditToggle.checked);
+  let payload;
+  try {
+    const url = `/api/${sessionId}/audit_log${includeInternal ? '?include_internal=1' : ''}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    payload = await res.json();
+  } catch (e) {
+    auditBody.innerHTML = `<div class="audit-empty">Audit log unavailable (${escapeHtml(e.message)})</div>`;
+    return;
+  }
+  const ops = payload.operations || [];
+  if (!ops.length) {
+    auditBody.innerHTML = '<div class="audit-empty">No operations yet.</div>';
+    return;
+  }
+  // Reverse-chronological — newest first.
+  const html = [];
+  for (const op of ops.slice().reverse()) {
+    html.push(renderAuditOp(op));
+  }
+  auditBody.innerHTML = html.join('');
+}
+
+function renderAuditOp(op) {
+  const tool = escapeHtml(op.tool || '?');
+  const layer = op.result_layer ? `<span class="arrow">→</span><span class="layer">${escapeHtml(op.result_layer)}</span>` : '';
+  const ts = op.at ? formatTime(op.at) : '';
+  const dur = (typeof op.duration_ms === 'number') ? `${op.duration_ms} ms` : '';
+  const isErr = op.status === 'error';
+  const meta = [
+    isErr ? '<span class="err">error</span>' : '',
+    ts,
+    dur,
+  ].filter(Boolean).join(' · ');
+  const desc = op.description
+    ? `<div class="audit-op-desc">${escapeHtml(op.description)}</div>`
+    : `<div class="audit-op-desc missing">no description provided</div>`;
+  const sqls = (op.sql_statements || []);
+  let sqlBlock = '';
+  if (sqls.length) {
+    const items = sqls.map(s => {
+      const cls = s.internal ? 'audit-sql internal' : 'audit-sql';
+      const metaLine = `${s.duration_ms} ms${s.status === 'error' ? ' · error' : ''}${s.internal ? ' · internal' : ''}`;
+      return `<div class="${cls}"><span class="sql-meta">${escapeHtml(metaLine)}</span>${escapeHtml(s.sql)}</div>`;
+    }).join('');
+    sqlBlock = `<details><summary>${sqls.length} sql statement${sqls.length === 1 ? '' : 's'}</summary>${items}</details>`;
+  }
+  const errLine = (isErr && op.error)
+    ? `<div class="audit-sql" style="color:var(--terra)">${escapeHtml(op.error)}</div>` : '';
+  return `<div class="audit-op">
+    <div class="audit-op-head">
+      <span class="audit-op-tool">${tool}${layer}</span>
+      <span class="audit-op-meta">${meta}</span>
+    </div>
+    ${desc}${errLine}${sqlBlock}
+  </div>`;
+}
+
+function formatTime(iso) {
+  // "2026-04-20T14:23:45.123456Z" → "14:23:45"
+  const m = /T(\d{2}:\d{2}:\d{2})/.exec(iso || '');
+  return m ? m[1] : (iso || '');
 }
 
 function removeLayer(name) {

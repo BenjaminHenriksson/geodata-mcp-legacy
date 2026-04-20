@@ -74,6 +74,124 @@
     max-width: calc(100vw - 32px);
   }
 
+  #panel-audit {
+    top: 16px;
+    right: 16px;
+    width: 360px;
+    max-width: calc(100vw - 32px);
+    max-height: calc(100vh - 32px);
+    display: flex;
+    flex-direction: column;
+  }
+  #panel-audit .audit-body {
+    margin-top: 0.6rem;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+  #panel-audit .audit-body::-webkit-scrollbar { width: 6px; }
+  #panel-audit .audit-body::-webkit-scrollbar-thumb {
+    background: var(--rule); border-radius: 3px;
+  }
+  .audit-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    color: var(--ink-mid);
+    letter-spacing: 0.04em;
+    margin: 0.4rem 0 0.2rem;
+  }
+  .audit-toggle input { margin: 0; }
+  .audit-empty {
+    font-size: 11px;
+    color: var(--ink-faint);
+    font-style: italic;
+    padding: 0.6rem 0;
+  }
+  .audit-op {
+    border-top: 1px solid var(--rule-soft);
+    padding: 0.55rem 0;
+  }
+  .audit-op:first-child { border-top: none; }
+  .audit-op-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 11px;
+  }
+  .audit-op-tool {
+    font-family: var(--mono);
+    color: var(--ink);
+    font-size: 11px;
+  }
+  .audit-op-tool .arrow {
+    color: var(--ink-faint);
+    margin: 0 4px;
+  }
+  .audit-op-tool .layer {
+    color: var(--terra);
+  }
+  .audit-op-meta {
+    font-size: 10px;
+    color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+  .audit-op-meta .err {
+    color: var(--terra);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .audit-op-desc {
+    font-size: 11px;
+    color: var(--ink-mid);
+    font-style: italic;
+    line-height: 1.45;
+    margin-top: 0.25rem;
+    padding-left: 0.6rem;
+    border-left: 2px solid var(--rule-soft);
+  }
+  .audit-op-desc.missing {
+    color: var(--ink-faint);
+    border-left-color: var(--terra);
+  }
+  .audit-op details {
+    margin-top: 0.3rem;
+  }
+  .audit-op details summary {
+    font-size: 9px;
+    letter-spacing: 0.16em;
+    color: var(--ink-faint);
+  }
+  .audit-sql {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ink);
+    background: var(--paper);
+    border: 1px solid var(--rule-soft);
+    padding: 6px 8px;
+    margin: 0.3rem 0;
+    border-radius: 2px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    line-height: 1.4;
+  }
+  .audit-sql.internal {
+    color: var(--ink-faint);
+    background: transparent;
+    border-style: dashed;
+  }
+  .audit-sql .sql-meta {
+    display: block;
+    font-size: 9px;
+    color: var(--ink-faint);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 3px;
+  }
+
   .viewer-eyebrow {
     font-family: var(--sans);
     font-size: 10px;
@@ -453,6 +571,7 @@
       right: 16px;
       width: auto;
     }
+    #panel-audit { display: none; }
   }
 </style>
 </head>
@@ -477,6 +596,19 @@
       <input id="basemap-input" type="text" placeholder="Leave blank for default"/>
       <button id="basemap-apply">Apply</button>
       <button id="basemap-reset" class="secondary">Reset</button>
+    </div>
+  </details>
+</div>
+
+<div id="panel-audit" class="panel">
+  <details open>
+    <summary>Audit log</summary>
+    <label class="audit-toggle">
+      <input type="checkbox" id="audit-internal-toggle" />
+      Show internal SQL probes
+    </label>
+    <div class="audit-body" id="audit-body">
+      <div class="audit-empty">No operations yet.</div>
     </div>
   </details>
 </div>

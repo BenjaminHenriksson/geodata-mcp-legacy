@@ -8,8 +8,11 @@ state if desired.
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import json
 import secrets
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -19,6 +22,15 @@ from pathlib import Path
 import duckdb
 
 from .catalog import DatasetEntry
+
+# Per-tool-call audit context. Set by Session.audit_context(), read by
+# _AuditedConnection.execute() and Session.log() so every SQL statement and
+# every Operation logged inside a tool inherits the same correlation_id and
+# user-facing description. None outside any tool call (e.g. startup probes,
+# GC paths) — those audit records are tagged internal=True.
+_audit_ctx: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "geodata_audit_ctx", default=None,
+)
 
 IDLE_TIMEOUT_S = 30 * 60           # 30 min idle → close handle, keep files
 GC_INTERVAL_S = 60                  # check every minute
@@ -81,6 +93,31 @@ class Operation:
     result_layer: str | None
     summary: str
     at: datetime
+    # Audit fields — populated automatically by Session.log() from the active
+    # audit context, then patched with status/duration when the context exits.
+    # Defaults keep backward-compat for callers that build Operation without
+    # them (and for sidecar JSON written before this field existed).
+    correlation_id: str | None = None
+    description: str = ""
+    status: str = "ok"           # "ok" | "error"
+    duration_ms: int | None = None
+    error: str | None = None
+
+
+@dataclass
+class AuditRecord:
+    """Single SQL statement captured by _AuditedConnection. Every conn.execute()
+    produces one of these. Tagged with the active tool's correlation_id when
+    inside a Session.audit_context, else internal=True."""
+    correlation_id: str | None
+    tool: str
+    sql: str
+    started_at: datetime
+    duration_ms: int
+    status: str                  # "ok" | "error"
+    error_type: str | None = None
+    error: str | None = None
+    internal: bool = False
 
 
 class SessionExpired(Exception):
@@ -104,6 +141,11 @@ def _op_to_dict(op: Operation) -> dict:
         "result_layer": op.result_layer,
         "summary": op.summary,
         "at": op.at.isoformat() + "Z",
+        "correlation_id": op.correlation_id,
+        "description": op.description,
+        "status": op.status,
+        "duration_ms": op.duration_ms,
+        "error": op.error,
     }
 
 
@@ -114,6 +156,39 @@ def _op_from_dict(d: dict) -> Operation:
         result_layer=d.get("result_layer"),
         summary=d.get("summary", ""),
         at=_parse_dt(d.get("at")),
+        correlation_id=d.get("correlation_id"),
+        description=d.get("description", "") or "",
+        status=d.get("status", "ok") or "ok",
+        duration_ms=d.get("duration_ms"),
+        error=d.get("error"),
+    )
+
+
+def _audit_to_dict(rec: AuditRecord) -> dict:
+    return {
+        "correlation_id": rec.correlation_id,
+        "tool": rec.tool,
+        "sql": rec.sql,
+        "started_at": rec.started_at.isoformat() + "Z",
+        "duration_ms": rec.duration_ms,
+        "status": rec.status,
+        "error_type": rec.error_type,
+        "error": rec.error,
+        "internal": rec.internal,
+    }
+
+
+def _audit_from_dict(d: dict) -> AuditRecord:
+    return AuditRecord(
+        correlation_id=d.get("correlation_id"),
+        tool=d.get("tool", ""),
+        sql=d.get("sql", ""),
+        started_at=_parse_dt(d.get("started_at")),
+        duration_ms=int(d.get("duration_ms", 0)),
+        status=d.get("status", "ok") or "ok",
+        error_type=d.get("error_type"),
+        error=d.get("error"),
+        internal=bool(d.get("internal", False)),
     )
 
 
@@ -184,6 +259,64 @@ def _parse_dt(s: str | None) -> datetime:
         return datetime.utcnow()
 
 
+class _AuditedConnection:
+    """Thin proxy around a DuckDBPyConnection that records every execute().
+
+    Forwards every other attribute (.description, .interrupt, .close, etc.)
+    via __getattr__, so callers see a normal connection. Only execute() is
+    intercepted: timed, captured, and tagged with the active audit context.
+    Calls outside any audit_context are tagged internal=True with tool
+    "<probe>" — covers the startup `INSTALL spatial`, `SET memory_limit`
+    probes inside operations.py (DESCRIBE, COUNT, bbox), GC paths, etc.
+    """
+
+    __slots__ = ("_raw", "_session")
+
+    def __init__(self, raw_conn, session: "Session") -> None:
+        # __slots__ + object.__setattr__ avoids any chance of recursion via
+        # a future __setattr__ override.
+        object.__setattr__(self, "_raw", raw_conn)
+        object.__setattr__(self, "_session", session)
+
+    def execute(self, sql, *args, **kwargs):
+        ctx = _audit_ctx.get()
+        started = time.monotonic()
+        started_at = datetime.utcnow()
+        status = "ok"
+        error_type: str | None = None
+        error_msg: str | None = None
+        try:
+            return self._raw.execute(sql, *args, **kwargs)
+        except Exception as e:
+            status = "error"
+            error_type = type(e).__name__
+            error_msg = str(e)
+            raise
+        finally:
+            duration_ms = int((time.monotonic() - started) * 1000)
+            try:
+                self._session._record_audit(AuditRecord(
+                    correlation_id=(ctx.get("correlation_id") if ctx else None),
+                    tool=(ctx.get("tool") if ctx else "<probe>"),
+                    sql=sql if isinstance(sql, str) else repr(sql),
+                    started_at=started_at,
+                    duration_ms=duration_ms,
+                    status=status,
+                    error_type=error_type,
+                    error=error_msg,
+                    internal=(ctx is None),
+                ))
+            except Exception as audit_err:
+                # Never let audit bookkeeping mask the real query result.
+                print(f"[session {self._session.id}] audit record failed: "
+                      f"{audit_err!r}", file=sys.stderr)
+
+    def __getattr__(self, name):
+        # Called only when an attribute is NOT found on the proxy itself.
+        # Forward to the wrapped DuckDBPyConnection.
+        return getattr(self._raw, name)
+
+
 class Session:
     """Per-MCP-connection state. Each session has an on-disk DuckDB file and
     a JSON sidecar for Python-side metadata (layers, styles, history,
@@ -206,7 +339,15 @@ class Session:
         SESSION_DB_TEMP_DIR.mkdir(parents=True, exist_ok=True)
         self._db_path = SESSION_DB_DIR / f"{self.id}.duckdb"
         self._meta_path = SESSION_DB_DIR / f"{self.id}.meta.json"
-        self.conn = duckdb.connect(str(self._db_path))
+        self._audit_path = SESSION_DB_DIR / f"{self.id}.audit.jsonl"
+        # Append-only timeline of every SQL statement (incl. internal probes).
+        # Mirrored line-by-line to _audit_path so it survives restarts.
+        self.audit: list[AuditRecord] = []
+        # Wrap the raw connection in an audit proxy BEFORE any execute() —
+        # the very first INSTALL spatial / SET pragma calls below get logged
+        # as internal records, which is what we want for full traceability.
+        _raw_conn = duckdb.connect(str(self._db_path))
+        self.conn = _AuditedConnection(_raw_conn, self)
         self.conn.execute("INSTALL spatial; LOAD spatial;")
         # Cap per-session resource usage so one greedy SQL can't OOM others.
         self.conn.execute(f"SET memory_limit = '{SESSION_DB_MEMORY_LIMIT}'")
@@ -257,6 +398,14 @@ class Session:
         self._dirty = True
 
     def log(self, op: Operation) -> None:
+        # Inherit correlation_id + description from the active audit context
+        # so callers in operations.py don't have to pass them explicitly.
+        ctx = _audit_ctx.get()
+        if ctx is not None:
+            if op.correlation_id is None:
+                op.correlation_id = ctx.get("correlation_id")
+            if not op.description:
+                op.description = ctx.get("description", "") or ""
         self.history.append(op)
         self.touch()
         # Any logged operation is by definition something the viewer might
@@ -264,6 +413,68 @@ class Session:
         # through register().
         self.version += 1
         self._dirty = True
+
+    @contextlib.contextmanager
+    def audit_context(self, tool: str, description: str = "",
+                      args: dict | None = None):
+        """Open a per-tool-call audit scope. Every SQL run inside (via the
+        proxied conn) and every Operation logged inherits a fresh
+        `correlation_id`. On exit, status/duration_ms are patched onto every
+        Operation that was logged under this id; if the body logged nothing
+        (e.g. read-only tools), a synthetic Operation is added so the audit
+        feed still shows the call.
+        """
+        cid = secrets.token_urlsafe(8)
+        started = time.monotonic()
+        started_at = datetime.utcnow()
+        token = _audit_ctx.set({
+            "correlation_id": cid,
+            "tool": tool,
+            "description": description or "",
+            "args": args or {},
+        })
+        status = "ok"
+        error_str: str | None = None
+        try:
+            yield cid
+        except Exception as e:
+            status = "error"
+            error_str = f"{type(e).__name__}: {e}"
+            raise
+        finally:
+            _audit_ctx.reset(token)
+            duration_ms = int((time.monotonic() - started) * 1000)
+            patched = False
+            for op in self.history:
+                if op.correlation_id == cid:
+                    op.status = status
+                    op.duration_ms = duration_ms
+                    if status == "error" and not op.error:
+                        op.error = error_str
+                    patched = True
+            if not patched:
+                # Read-only tool, or the body raised before any session.log().
+                # Synthesize an Operation so the audit panel still surfaces it.
+                self.log(Operation(
+                    tool=tool, args=args or {}, result_layer=None,
+                    summary="" if status == "ok" else (error_str or "error"),
+                    at=started_at,
+                    correlation_id=cid, description=description or "",
+                    status=status, duration_ms=duration_ms, error=error_str,
+                ))
+            self._dirty = True
+
+    def _record_audit(self, rec: AuditRecord) -> None:
+        """Append an AuditRecord to the in-memory list and the JSONL sidecar.
+        Called from _AuditedConnection.execute() — must never raise."""
+        self.audit.append(rec)
+        try:
+            with open(self._audit_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(_audit_to_dict(rec), ensure_ascii=False)
+                        + "\n")
+        except OSError as e:
+            print(f"[session {self.id}] audit append failed: {e!r}",
+                  file=sys.stderr)
 
     def unique_layer_name(self, base: str) -> str:
         if base not in self.layers:
@@ -327,7 +538,6 @@ class Session:
             # Never let a persist failure break a tool call. Re-dirty so
             # the next flush will retry.
             self._dirty = True
-            import sys
             print(f"[session {self.id}] persist failed: {e!r}", file=sys.stderr)
 
     @classmethod
@@ -378,6 +588,30 @@ class Session:
                 "layers": None if scope is None else set(scope),
             }
         s.checkpoints = ckpts
+        # Replay the audit JSONL into memory so the viewer can show history
+        # across restarts. JSONL is append-only on disk; in memory we just
+        # rebuild the list. Skip startup probes that ran during this very
+        # rehydrate (those came from the *new* connection and are already in
+        # s.audit at this point) — they live after the file's last line.
+        try:
+            audit_path = SESSION_DB_DIR / f"{sid}.audit.jsonl"
+            if audit_path.exists():
+                replayed: list[AuditRecord] = []
+                with audit_path.open("r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            replayed.append(_audit_from_dict(json.loads(line)))
+                        except Exception:
+                            continue
+                # Prepend historical records before the just-recorded
+                # rehydrate-time probes.
+                s.audit = replayed + s.audit
+        except OSError as e:
+            print(f"[session {sid}] audit replay failed: {e!r}",
+                  file=sys.stderr)
         s._dirty = False
         return s
 
@@ -392,7 +626,7 @@ class Session:
 
     def delete_files(self) -> None:
         """Remove persistent files — session is unrecoverable after this."""
-        for p in (self._db_path, self._meta_path):
+        for p in (self._db_path, self._meta_path, self._audit_path):
             try:
                 p.unlink(missing_ok=True)
             except OSError:

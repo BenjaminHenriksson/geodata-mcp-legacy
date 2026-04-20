@@ -18,6 +18,71 @@ from typing import Iterable
 # → filesystem / httpfs / extension-loader reach.
 _EPSG_RE = re.compile(r"EPSG:\d{4,6}")
 
+
+# Some MCP clients / LLMs over-escape unicode when they build the JSON for
+# a tool call — e.g. `title="Caféer"` arrives as the 13-character literal
+# string `Caf\u00e9er` instead of the 7-character decoded form. We normalise
+# at every free-text ingress so the viewer / docs / popups render real
+# characters rather than literal `\uXXXX` sequences. No-op for strings that
+# don't contain a backslash-u; safe to apply repeatedly.
+#
+# Security notes:
+# - Every display surface downstream escapes HTML (textContent or
+#   escapeHtml), so producing `<`, `>`, etc. via decode cannot introduce
+#   XSS in the current code path.
+# - Lone UTF-16 surrogates (U+D800..U+DFFF) cannot encode to UTF-8 and
+#   would crash JSON/HTTP serialisation for the viewer API. We only
+#   decode matched surrogate pairs and leave any remaining lone
+#   surrogates as literal `\uXXXX` text.
+# - Regex is linear-time; result is strictly shorter than input.
+_UESC_PAIR_RE = re.compile(
+    r"\\u([dD][89aAbB][0-9a-fA-F]{2})\\u([dD][c-fC-F][0-9a-fA-F]{2})"
+)
+_UESC_RE = re.compile(r"\\u([0-9a-fA-F]{4})")
+
+
+def _join_surrogates(m: "re.Match[str]") -> str:
+    hi = int(m.group(1), 16)
+    lo = int(m.group(2), 16)
+    return chr(0x10000 + (hi - 0xD800) * 0x400 + (lo - 0xDC00))
+
+
+def _decode_single(m: "re.Match[str]") -> str:
+    cp = int(m.group(1), 16)
+    # Leave lone surrogates as the original literal text — chr() would
+    # produce an un-UTF-8-encodable string and DoS the viewer API.
+    if 0xD800 <= cp <= 0xDFFF:
+        return m.group(0)
+    return chr(cp)
+
+
+def decode_unicode_escapes(s):
+    """Replace literal ``\\uXXXX`` escapes in `s` with their characters.
+    Accepts any value; returns non-strings unchanged. Handles surrogate
+    pairs; leaves lone surrogates as literal text."""
+    if not isinstance(s, str) or "\\u" not in s:
+        return s
+    try:
+        s = _UESC_PAIR_RE.sub(_join_surrogates, s)
+        return _UESC_RE.sub(_decode_single, s)
+    except ValueError:
+        return s
+
+
+def decode_escapes_deep(v):
+    """Recursively normalise every string value inside a dict/list/tuple.
+    Used for annotate payloads where the LLM may have escaped any of the
+    string values it wrote."""
+    if isinstance(v, str):
+        return decode_unicode_escapes(v)
+    if isinstance(v, dict):
+        return {k: decode_escapes_deep(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [decode_escapes_deep(x) for x in v]
+    if isinstance(v, tuple):
+        return tuple(decode_escapes_deep(x) for x in v)
+    return v
+
 import duckdb
 import sqlglot
 from sqlglot import expressions as sqlexp
@@ -1951,6 +2016,11 @@ def annotate(
     if len(values) > ANNOTATE_CAP:
         raise OpError(f"too many annotations ({len(values)}); cap is {ANNOTATE_CAP}")
 
+    # Normalise literal \uXXXX escapes in user-supplied values — some MCP
+    # clients over-escape unicode when building tool-call JSON, and the
+    # annotated values end up displayed in the viewer's popup.
+    values = decode_escapes_deep(values)
+
     # Collect all attribute names across values.
     all_attrs: dict[str, set] = {}
     for k, row in values.items():
@@ -2232,6 +2302,7 @@ def list_layers(session: Session) -> dict:
 def set_notes(session: Session, layer: str, notes: str) -> dict:
     """Attach a free-text note to a layer. Shown in list_layers and sources."""
     meta = _require_layer(session, layer)
+    notes = decode_unicode_escapes(notes)
     meta.notes = notes
     session.log(Operation(
         tool="set_notes", args={"layer": layer, "notes_len": len(notes)},

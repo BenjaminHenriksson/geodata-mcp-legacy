@@ -16,9 +16,13 @@ Endpoints (all public — must not be behind the /mcp bearer check):
     POST /oauth/authorize                           validate code → auth code
     POST /oauth/token                               exchange code → access token
 
-Storage is in-memory. Access tokens live 7 days; if the server restarts
-users re-auth. Good enough for a small-team MCP demo; swap for sqlite if
-you ever want persistence.
+Storage is persistent: registered clients and access + refresh tokens
+are written to `.duckdb/oauth.json` (mode 0600) so a graceful service
+restart doesn't force every user back through the invite-code form.
+Access tokens live 7 days, refresh tokens 30; expired entries are
+dropped during load. Auth codes stay in-memory only (5-min TTL, single
+use). Good enough for a small-team MCP demo; swap for SQLite + hashed
+tokens if you ever need audit trails or at-rest-leak resistance.
 
 The access tokens this module issues are opaque random strings. Validate
 them via `validate_token(token)`; returns the issuing client_id on success
@@ -38,6 +42,7 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlencode
 
@@ -84,6 +89,21 @@ _auth_codes: dict[str, dict] = {}          # code → {client_id, redirect_uri, 
 _access_tokens: dict[str, dict] = {}       # token → {client_id, exp}
 _refresh_tokens: dict[str, dict] = {}      # token → {client_id, exp}
 
+# Persistence so a graceful restart doesn't force every user back through
+# the invite-code form. Clients and both token kinds survive; auth_codes
+# stay in-memory (5-min TTL, single-use, rarely mid-flight).
+#
+# Threat model for this file:
+# - Path is inside the service's ReadWritePaths (same zone as the DuckDB
+#   sessions); not web-served.
+# - Mode 0600 at create-time so even a relaxed parent directory wouldn't
+#   expose tokens.
+# - Tokens stored verbatim (not hashed). A file leak equals a token leak
+#   for the 7/30-day TTL window; equivalent surface to /etc/credstore.
+#   If that ever needs tightening, switch to HMAC-hashed lookups.
+_OAUTH_STORE_PATH = (Path(__file__).resolve().parents[1]
+                     / ".duckdb" / "oauth.json")
+
 
 def _now() -> float:
     return time.time()
@@ -98,6 +118,62 @@ def _reap(store: dict) -> None:
     now = _now()
     for k in [k for k, v in store.items() if v.get("exp", 0) < now]:
         store.pop(k, None)
+
+
+def _load_store() -> None:
+    """Load persisted clients + tokens from disk. Expired tokens are
+    dropped during the load. Safe to call at import."""
+    if not _OAUTH_STORE_PATH.exists():
+        return
+    try:
+        data = json.loads(_OAUTH_STORE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    now = _now()
+    with _lock:
+        for cid, cmeta in (data.get("clients") or {}).items():
+            _clients[cid] = cmeta
+        for t, entry in (data.get("access_tokens") or {}).items():
+            if entry.get("exp", 0) > now:
+                _access_tokens[t] = entry
+        for t, entry in (data.get("refresh_tokens") or {}).items():
+            if entry.get("exp", 0) > now:
+                _refresh_tokens[t] = entry
+
+
+def _save_store_locked() -> None:
+    """Atomic write of in-memory OAuth state. Caller must hold `_lock`.
+
+    Writes to a sibling `.tmp` first, then `os.replace()` so a partial
+    write can't corrupt a live file.
+    """
+    _OAUTH_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # Reap expired entries before serialising so the file stays small.
+    _reap(_access_tokens)
+    _reap(_refresh_tokens)
+    payload = json.dumps({
+        "version": 1,
+        "clients": _clients,
+        "access_tokens": _access_tokens,
+        "refresh_tokens": _refresh_tokens,
+    }, ensure_ascii=False, separators=(",", ":"))
+    tmp = _OAUTH_STORE_PATH.with_suffix(".tmp")
+    # Mode 0600 at open so the fresh file is never world-readable even
+    # if the parent directory's permissions loosen.
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(payload)
+    except Exception:
+        try:
+            os.close(fd)
+        except Exception:
+            pass
+        raise
+    os.replace(str(tmp), str(_OAUTH_STORE_PATH))
+
+
+_load_store()
 
 
 # ---- endpoint handlers ---------------------------------------------------
@@ -154,6 +230,7 @@ async def register(request: Request) -> JSONResponse:
             "client_name": str(client_name),
             "created_at": _now(),
         }
+        _save_store_locked()
     return JSONResponse({
         "client_id": client_id,
         "client_id_issued_at": int(_now()),
@@ -520,6 +597,7 @@ async def token(request: Request) -> JSONResponse:
                                        "exp": _now() + ACCESS_TOKEN_TTL_S}
             _refresh_tokens[refresh] = {"client_id": client_id,
                                          "exp": _now() + REFRESH_TOKEN_TTL_S}
+            _save_store_locked()
         return JSONResponse({
             "access_token": access,
             "token_type": "Bearer",
@@ -539,6 +617,7 @@ async def token(request: Request) -> JSONResponse:
             access = "at_" + _random_token(32)
             _access_tokens[access] = {"client_id": client_id,
                                        "exp": _now() + ACCESS_TOKEN_TTL_S}
+            _save_store_locked()
         return JSONResponse({
             "access_token": access,
             "token_type": "Bearer",

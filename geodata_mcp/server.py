@@ -26,6 +26,7 @@ from .loader import LoadError, load_dataset
 from .operations import (
     OpError, SqlError,
     EXPORT_ROOT, EXPORT_TTL_S,
+    decode_unicode_escapes,
     add_field as op_add_field,
     annotate as op_annotate,
     batch_iterate as op_batch_iterate,
@@ -1464,7 +1465,7 @@ def show(
             missing.append(n)
     sess.visible_layers = [n for n in layers if n in sess.layers]
     if title is not None:
-        sess.visible_title = title or None
+        sess.visible_title = decode_unicode_escapes(title) or None
     # Style validation — color channel + optional size/opacity/stroke
     # channels. Invalid specs reject the whole call so the LLM can fix and
     # retry in one round.

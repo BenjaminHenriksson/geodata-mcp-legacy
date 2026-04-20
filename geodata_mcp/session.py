@@ -348,11 +348,19 @@ class Session:
         s.created_at = _parse_dt(data.get("created_at"))
         s.last_active = _parse_dt(data.get("last_active"))
         s.version = int(data.get("version", 0))
+        # Self-heal any legacy free-text fields that were stored with
+        # literal \uXXXX escape sequences (an over-escape bug in some MCP
+        # client paths). Decode on the way out so the viewer / API see
+        # real characters.
+        from .operations import decode_unicode_escapes as _dec
         s.layers = {n: _layer_from_dict(m)
                     for n, m in (data.get("layers") or {}).items()}
+        for _m in s.layers.values():
+            _m.notes = _dec(_m.notes) if _m.notes else _m.notes
         s.visible_layers = list(data.get("visible_layers") or [])
         s.visible_styles = dict(data.get("visible_styles") or {})
-        s.visible_title = data.get("visible_title")
+        _vt = data.get("visible_title")
+        s.visible_title = _dec(_vt) if _vt else _vt
         s.history = [_op_from_dict(op) for op in (data.get("history") or [])]
         s.cursors = dict(data.get("cursors") or {})
         s.active_checkpoint = data.get("active_checkpoint")

@@ -64,6 +64,3 @@ like a bug.
 - Viewer labelling. Label-placement is its own project; defer until
   demand is concrete.
 - Per-user invite codes (currently single shared code).
-- Persistent OAuth token store (current store is in-memory; graceful
-  restart survives the MCP session state but not OAuth tokens, so users
-  re-authorise after every restart).

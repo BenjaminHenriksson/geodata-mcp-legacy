@@ -57,8 +57,9 @@ practical question.
 - **Spatial statistics.** No Moran's I, Getis-Ord, Ripley's K. The
   "is this pattern clustered, and is it significant" class of
   questions. Most can be built with `execute_sql` + numeric work in
-  Claude's code interpretation, but having first-class tools would
-  shorten the loop.
+  the model's code-interpreter sandbox (Claude's, ChatGPT's, Gemini's
+  — they all have one now), but having first-class tools would shorten
+  the loop.
 - **Fastighetsregister (property ownership).** Ownership + lot numbers
   + legal descriptions. Data is Lantmäteriet, licensed — not open. Would
   need a separate licensing arrangement.

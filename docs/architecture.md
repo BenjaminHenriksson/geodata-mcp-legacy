@@ -7,10 +7,11 @@ How the pieces fit together and why each piece is where it is.
 ## Request flow
 
 ```
-MCP client (Claude)         Browser (viewer)
-      │                            │
-      │ HTTPS                      │ HTTPS
-      ▼                            ▼
+MCP client (Claude / ChatGPT /     Browser (viewer)
+   Gemini / Qwen / …)                    │
+      │                                  │
+      │ HTTPS                            │ HTTPS
+      ▼                                  ▼
               CDN / edge (TLS termination)
                          │
                          ▼
@@ -162,8 +163,9 @@ The middleware stack (outside-in): `RateLimitMiddleware` →
 Implements RFC 7591 dynamic client registration, RFC 8414 authorization
 server metadata, RFC 9728 protected resource metadata, `authorize` and
 `token` endpoints. Gate: a shared invite code entered on the consent
-form. Legacy Claude Code clients can skip OAuth and present a
-pre-provisioned bearer instead.
+form. CLI / desktop clients that haven't shipped OAuth 2.1 + PKCE yet
+(Claude Code, Claude Desktop, Codex, in-house scripted MCP clients)
+can skip OAuth and present a pre-provisioned bearer instead.
 
 Secrets (invite code, legacy bearer) are delivered through a
 credential manager at process start, so they never appear in the
@@ -262,10 +264,12 @@ world-readable endpoint would attract scrapers, LLM spamming, and
 liability for data-hoarding claims against Swedish open-data licences.
 An invite gate is the cheapest reliable filter.
 
-**Why OAuth around it.** claude.ai's custom-connector flow wants OAuth
-2.1 + PKCE. Making the invite code a pre-flight gate in the consent
-form means we get both: the LLM-industry-standard auth ceremony and
-the invite-level access control.
+**Why OAuth around it.** Web custom-connector flows (claude.ai,
+ChatGPT, Gemini, …) want OAuth 2.1 + PKCE — that's the pattern the
+Model Context Protocol standardised on for browser-side clients.
+Making the invite code a pre-flight gate in the consent form means we
+get both: the protocol-standard auth ceremony and the invite-level
+access control.
 
 **What we gave up.** No per-user tokens (everyone with the invite
 bootstraps into the same authorization). No granular scopes. For the

@@ -10,8 +10,9 @@ LLMs actually reason.
 
 - **Live:** `https://geo.benjaminhenriksson.com`
 - **MCP endpoint:** `POST /mcp` (streamable HTTP). OAuth 2.1 + PKCE via
-  invite code for claude.ai custom connectors; legacy shared bearer for
-  Claude Code CLI.
+  invite code for web custom-connector flows (claude.ai, ChatGPT,
+  Gemini, etc.); legacy shared bearer for CLI clients (Claude Code,
+  Claude Desktop, scripted MCP clients).
 - **Viewer:** MapLibre GL JS, dark Carto basemap, click-to-inspect popups,
   per-layer toggles, auto-refresh on session state changes, thematic
   styling via `show(..., style=...)`.
@@ -28,9 +29,10 @@ LLMs actually reason.
 
 ## What it does
 
-29 tools across four categories. All carry MCP `toolAnnotations`
-(`readOnlyHint` / `destructiveHint=false`) so clients like Claude Code /
-Desktop can auto-approve safe calls.
+38 tools across four categories. All carry MCP `toolAnnotations`
+(`readOnlyHint` / `destructiveHint=false`) so MCP clients (claude.ai,
+ChatGPT, Gemini, Qwen, Claude Desktop / Code, and the rest) can
+auto-approve safe calls without per-action permission prompts.
 
 **Discovery & read-only**
 | Tool | What it does |
@@ -81,8 +83,8 @@ Full tool reference: **[`docs/tools.md`](docs/tools.md)**, plus the
 published docs at [`geo.benjaminhenriksson.com/docs`](https://geo.benjaminhenriksson.com/docs)
 (design rationale, architecture, data model, sessions, viewer,
 provenance, rendering, roadmap). The server also publishes top-level
-`instructions` at connection time — a ~5 KB workflow primer Claude (and
-other MCP clients) read before the first tool call.
+`instructions` at connection time — a ~10 KB workflow primer the model
+(Claude, ChatGPT, Gemini, Qwen, …) reads before the first tool call.
 
 ---
 
@@ -122,19 +124,30 @@ are retained as one-shots that informed the filtering decisions.
 
 ## Quick start for MCP clients
 
-Two connection paths:
+Two connection paths: an OAuth flow for web clients, and a bearer
+token for CLI / desktop clients that haven't shipped OAuth 2.1 + PKCE
+support yet.
 
-### 1a. claude.ai custom connector (preferred)
+### 1. Web custom-connector flow (preferred — claude.ai, ChatGPT, Gemini, …)
 
-Settings → Connectors → Add custom connector → paste
-`https://geo.benjaminhenriksson.com/mcp` → Connect. You'll be redirected
-to a consent form that shows the callback host and asks for an invite
-code. Type the code (shared out-of-band) and you're in.
+Open your AI app's connector settings, choose Add custom connector
+(naming varies — "Custom connector" in claude.ai, similar in ChatGPT
+and Gemini), and paste:
+
+```
+https://geo.benjaminhenriksson.com/mcp
+```
+
+You'll be redirected to a consent form that shows the callback host
+and asks for an invite code. Type the code (shared out-of-band) and
+you're in. The same endpoint URL works for every MCP-capable web
+client — the protocol is identical, only the connector dialog UI
+differs.
 
 Get the invite code from the host operator; it lives in
 `/etc/credstore/geodata-mcp.invite` (root-readable only).
 
-### 1b. Claude Code CLI (legacy shared bearer)
+### 2. Claude Code CLI (legacy shared bearer — example)
 
 ```bash
 TOKEN=$(ssh geo-vps 'sudo cat /etc/credstore/geodata-mcp.token')
@@ -143,11 +156,15 @@ claude mcp add --transport http geodata \
   --header "Authorization: Bearer $TOKEN"
 ```
 
-Restart Claude Code. The 38 tools appear automatically.
+Restart the client. The 38 tools appear automatically. The same
+bearer-on-`/mcp` pattern works for any CLI-style MCP client — Codex,
+custom scripts, in-house tools — only the `add` command syntax
+differs.
 
-### 3. Claude Desktop (via the `mcp-remote` shim)
+### 3. Desktop apps via the `mcp-remote` shim (Claude Desktop example)
 
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json`
+(or the equivalent config file for your desktop client):
 
 ```json
 {
@@ -296,7 +313,9 @@ uv sync
 uv run --with pandas --with pyarrow --with openpyxl \
   python scripts/normalize.py
 
-# run locally (stdio — plug into Claude Code config)
+# run locally (stdio — plug into any MCP client config; example below
+# uses Claude Code, but the same stdio entry point works for ChatGPT
+# Desktop, Codex, in-house MCP clients, etc.)
 uv run python -m geodata_mcp
 
 # run HTTP (same as production)
@@ -322,11 +341,14 @@ geodata-mcp/
 ├── DATA_SUMMARY.md              — human-readable catalogue
 ├── pyproject.toml + uv.lock
 ├── geodata_mcp/
-│   ├── server.py                — FastMCP + Starlette + 12 tools + routes
+│   ├── server.py                — FastMCP + 38 @mcp.tool wrappers + main entry
+│   ├── http_app.py              — Starlette routes + middleware (built only with --http)
 │   ├── catalog.py               — rapidfuzz-backed catalog search
-│   ├── session.py               — per-connection sessions, GC, persistence
+│   ├── session.py               — per-connection sessions, GC, persistence, SQL audit
 │   ├── loader.py                — read normalized data → DuckDB
-│   ├── operations.py            — Phase 2/3 ops (filter/spatial/stats/sql/sources/create_layer/export)
+│   ├── operations/              — split package: sql/spatial/query/layers/fields/export/checkpoint/inspect
+│   ├── render.py                — server-side PNG rendering (matplotlib)
+│   ├── oauth.py                 — invite-gated OAuth 2.1 + PKCE
 │   └── geocoder.py              — SBK-backed place + street+number lookup
 ├── viewer/
 │   ├── index.html
@@ -361,6 +383,6 @@ geodata-mcp/
 - **Street + house-number geocoding** pairs via 250 m spatial join between the street-label point and the nearest address-number point. Some pairs are off-by-one-building.
 - **SCB privacy suppression** — small-population DeSOs have NULL values in statistical tables. Catalog descriptions warn about this; queries must `WHERE value IS NOT NULL` to skip them.
 - **38 catalog warnings** — SBK cartographic columns (TEXTFONT, TEXT_ANGLE, etc.) exist in the data without catalog attribute entries. Flagged by audit, low risk.
-- **No OAuth** — the MCP endpoint uses a single bearer token. claude.ai web Connectors require OAuth 2.1, so they can't currently plug in. Claude Code / Desktop and other scripted MCP clients work fine.
+- **CLI clients still use a shared bearer** — the legacy bearer flow is fine for any scripted/CLI MCP client (Claude Code, Claude Desktop, Codex, custom scripts). Web custom-connector flows (claude.ai, ChatGPT, Gemini, etc.) use the OAuth 2.1 + PKCE path described above. Either flow gates on the same invite code.
 - **No Lantmäteriet data** — would add nationwide topographic context. Intentionally skipped for disk and scope.
 

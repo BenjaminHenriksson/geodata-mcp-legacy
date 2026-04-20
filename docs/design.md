@@ -10,14 +10,15 @@ absent.
 
 *Expose only what the LLM cannot do on its own.*
 
-Claude — and similar frontier models — can already:
+Frontier LLMs (Claude, ChatGPT, Gemini, Qwen, and the rest — this
+server is model-agnostic and any MCP-capable client works) can already:
 
 - Generate prose, narrative, explanation.
-- Write documents, slides, and PDFs with its own file-generation tools.
+- Write documents, slides, and PDFs with their own file-generation tools.
 - Compose HTML, iterate on code, and produce shell scripts.
 - Reason through a problem, break it into steps, and sequence calls.
 
-What Claude *cannot* do, by itself:
+What the model *cannot* do, by itself:
 
 - Execute authoritative spatial SQL against a real CRS-aware engine.
 - Join 66 locally-curated datasets without the transport being an
@@ -53,7 +54,8 @@ On top of that, we track **per-column provenance**: when `annotate`,
 `add_field`, or `update_field` writes a column, the session remembers
 who wrote it, with what expression, and optionally what model. So an
 exported attribute can be traced to "LLM-written on 2026-04-19 by
-`annotate(model='claude-opus-4-7')`" distinct from "loaded from
+`annotate(model='gpt-5')`" — or `claude-opus-4-7`, or any other model
+identifier the calling client passes — distinct from "loaded from
 `sbk_admin_polygons.gpkg`".
 
 Why this matters:
@@ -161,11 +163,13 @@ Applying the AI-native principle, here are things the server deliberately
 *doesn't* provide:
 
 - **Narrative summary tools** (`describe_findings`, `summarize_layer`).
-  Claude writes better prose than any template we could ship.
-- **Report layout** (PDF composition, slide templating). Claude has its
-  own document-generation path; we hand it a PNG and let it compose.
-- **Natural-language query parsers** (`query_in_english`). Claude already
-  understands English and writes DuckDB SQL.
+  The model writes better prose than any template we could ship.
+- **Report layout** (PDF composition, slide templating). Modern AI
+  assistants have their own document-generation paths; we hand them a
+  PNG and let them compose.
+- **Natural-language query parsers** (`query_in_english`). Frontier
+  models already understand English (and Swedish) and write DuckDB SQL
+  directly.
 - **Explanation-generation tools** (`explain_column`, `why_did_this_fail`).
   The LLM reasons over the data; we just provide authoritative data.
 - **Conversational-UI helpers** ("friendly error messages"). Error
@@ -209,9 +213,9 @@ generation. That's the filter.
 
 A few places the principle pulls against pragmatism:
 
-- **No `render_pdf` tool.** Claude's file-tools can compose a PDF from
-  a PNG + prose, but the round-trip is slower than a dedicated tool
-  would be. We accept the cost.
+- **No `render_pdf` tool.** The AI app's own file-tools can compose a
+  PDF from a PNG + prose, but the round-trip is slower than a dedicated
+  tool would be. We accept the cost.
 - **Smaller tool surface means more LLM composition.** A user used
   to ArcGIS or QGIS might expect a "buffer + clip + dissolve" one-shot; we expose
   the primitives and let the LLM sequence them. This makes individual

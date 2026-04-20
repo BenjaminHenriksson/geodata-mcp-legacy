@@ -68,6 +68,11 @@ authoring record:
 }
 ```
 
+The `model` field is whatever string the calling client passes to
+`annotate(model=...)` — `claude-opus-4-7`, `gpt-5`, `gemini-2.5-pro`,
+`qwen3-max`, anything. The server doesn't validate it; it just records
+it so the downstream reviewer can see which model wrote which column.
+
 Columns absent from this dict are assumed to come from the loaded
 source (no in-session authoring). The `annotate`, `add_field`,
 `update_field` operations write into this dict; `drop_field` removes.

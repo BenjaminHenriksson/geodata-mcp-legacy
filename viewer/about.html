@@ -341,46 +341,58 @@
 
     <p>
       <strong>MCP</strong> stands for <em>Model Context Protocol</em>. It
-      is an open specification for letting a chat-based AI (Claude,
-      ChatGPT, and others) call structured tools and read structured
-      data while the user is talking to it. Think of it as a standard
-      plug: the AI learned how the plug works once, and now it can
-      connect to any server that offers one.
+      is an open specification, originally proposed by Anthropic and now
+      supported across the industry, that lets a chat-based AI call
+      structured tools and read structured data while the user is talking
+      to it. Think of it as a standard plug: the model learned how the
+      plug works once, and now it can connect to any server that offers
+      one.
+    </p>
+
+    <p>
+      MCP-capable clients today include claude.ai and the Claude desktop
+      and Claude Code apps; ChatGPT (custom connectors); Google's Gemini
+      apps; Qwen Chat; and a growing list of open-source clients. This
+      server doesn't care which one you use — the protocol is identical.
+      The setup examples on the landing page lead with claude.ai
+      because that is what was tested first, but the same endpoint URL
+      drops into any of the others.
     </p>
 
     <p>
       The arrangement looks like this:
     </p>
 
-    <div class="flow">You  ↔  Your Claude app (MCP client)  ↔  MCP server  ↔  Tools, data
+    <div class="flow">You  ↔  Your AI app (MCP client)  ↔  MCP server  ↔  Tools, data
                ↕
-          Claude (AI)</div>
+        The model (Claude, ChatGPT, Gemini, …)</div>
 
     <p>
-      A small but load-bearing distinction: <strong>Claude</strong>
-      (the AI, the LLM, the model) is not the same thing as the
-      <strong>Claude app</strong> you type into. Claude itself is a
-      large model running on Anthropic's servers. The app is the
-      software on your computer or in your browser: the claude.ai
-      website, the Claude desktop app, or a terminal program like
-      Claude Code. In the Model Context Protocol's vocabulary, that
-      app is called the <strong>MCP client</strong>.
+      A small but load-bearing distinction: <strong>the model</strong>
+      (the LLM itself — Claude, ChatGPT, Gemini, Qwen, whichever you use)
+      is not the same thing as the <strong>app</strong> you type into.
+      The model runs on its provider's servers. The app is the software
+      on your computer or in your browser: the claude.ai or chatgpt.com
+      website, a desktop app, or a terminal program. In the Model
+      Context Protocol's vocabulary, that app is called the
+      <strong>MCP client</strong>.
     </p>
 
     <p>
-      The client sits between you and Claude. When you type a
-      question, the client sends it to Claude and waits for a reply.
-      When Claude decides to call a tool, the client does the actual
+      The client sits between you and the model. When you type a
+      question, the client sends it to the model and waits for a reply.
+      When the model decides to call a tool, the client does the actual
       network call to the MCP server, reads the result, and hands it
-      back to Claude. When Claude is done, the client shows you the
-      answer. Claude decides <em>what</em> to call; the client does
-      the calling. From the MCP server's perspective, it doesn't
-      matter which app you are using; the protocol is the same.
+      back to the model. When the model is done, the client shows you
+      the answer. The model decides <em>what</em> to call; the client
+      does the calling. From the MCP server's perspective, it doesn't
+      matter which app or which model is on the other end; the protocol
+      is the same.
     </p>
 
     <p>
-      So: you ask the AI a question, Claude decides what to do, the
-      client makes the tool calls, Claude reads the results, and
+      So: you ask the AI a question, the model decides what to do, the
+      client makes the tool calls, the model reads the results, and
       eventually you see an answer. The server never sees your
       natural-language prompt; it only sees the structured tool calls.
       You usually don't see the individual tool calls either (unless
@@ -428,19 +440,19 @@
     </p>
 
     <ol class="steps">
-      <li>You open Claude (in the browser or the desktop app) and connect
-        to this server once, entering an invite code. That setup step
-        is one-off.</li>
+      <li>You open your AI app (claude.ai, ChatGPT, Gemini, Claude
+        Desktop / Code, whichever you use) and connect to this server
+        once, entering an invite code. That setup step is one-off.</li>
       <li>You ask a question in plain Swedish or English. Something
         like: <em>Vilka fem DeSO:n i Stockholm har högst medianinkomst,
         och hur ser bebyggelsen runt omkring ut?</em></li>
-      <li>Claude decides which tools to call. It might load the SCB
+      <li>The model decides which tools to call. It might load the SCB
         income layer, join it with the SBK building layer, run a
         spatial buffer, classify the result, and call <code>show()</code>
         to mark the layers visible in a viewer.</li>
       <li>You get back an answer and a private viewer URL that shows
-        the map. The viewer auto-refreshes as Claude does more work.</li>
-      <li>If you want a shareable image of the map, Claude calls
+        the map. The viewer auto-refreshes as the model does more work.</li>
+      <li>If you want a shareable image of the map, the model calls
         <code>render_map()</code> and hands you a PNG URL valid for
         twenty-four hours. You embed it in whatever document you are
         writing.</li>
@@ -450,7 +462,7 @@
       Everything runs in a <em>session</em>, a private workspace keyed
       to your connection. Your session has its own database, its own
       layers, its own visible styles. Nobody else can see it. If you
-      close Claude and come back tomorrow, the session is still there;
+      close the app and come back tomorrow, the session is still there;
       analyses resume where they left off.
     </p>
 
@@ -467,13 +479,14 @@
 
     <p>
       This MCP server is <strong>stateful within a session</strong>.
-      When Claude calls <code>load("scb_income")</code>, the resulting
-      layer stays in your session. The next call, <code>filter(...)</code>,
-      operates on that loaded layer by name, not on a re-fetched copy.
-      The call after that, <code>annotate(...)</code>, writes columns
-      into the same table. Twenty operations can compose over a shared
-      workspace without re-downloading, re-projecting, or re-joining
-      anything. The viewer looks at the same state.
+      When the model calls <code>load("scb_income")</code>, the
+      resulting layer stays in your session. The next call,
+      <code>filter(...)</code>, operates on that loaded layer by name,
+      not on a re-fetched copy. The call after that,
+      <code>annotate(...)</code>, writes columns into the same table.
+      Twenty operations can compose over a shared workspace without
+      re-downloading, re-projecting, or re-joining anything. The viewer
+      looks at the same state.
     </p>
 
     <p>
@@ -535,14 +548,14 @@
       <p>
         The AI does not have random-access memory of all 66 datasets.
         Every tool call retrieves exactly what it asks for. If you ask
-        a vague question, Claude will narrow it down by calling
+        a vague question, the model will narrow it down by calling
         <code>search_data</code> or <code>describe_dataset</code> first
         to find the right table. It is not searching a pre-built index
         of everything.
       </p>
       <p>
         This means a question like "what does the data say about
-        Södermalm" will not get a one-shot answer. Claude will
+        Södermalm" will not get a one-shot answer. The model will
         iteratively pull relevant layers and join them. That takes a
         handful of seconds but is more accurate than a keyword search
         would be.
@@ -553,27 +566,28 @@
       <div class="pitfall-label">Pitfall 02</div>
       <h3>Memory lives on the server, not in the model</h3>
       <p>
-        Claude has no persistent memory of your previous conversations.
-        Each new chat starts fresh on the model side. What continuity
-        you get across days comes from the session state stored on
-        <em>this</em> server (layers, styles, operation log), which
-        Claude rereads when you reconnect. The AI itself does not
-        carry anything forward.
+        The model has no persistent memory of your previous
+        conversations. Each new chat starts fresh on the model side.
+        What continuity you get across days comes from the session state
+        stored on <em>this</em> server (layers, styles, operation log),
+        which the model rereads when you reconnect. The AI itself does
+        not carry anything forward.
       </p>
       <p>
-        Separately, on training: under Anthropic's standard consumer
-        terms, chat conversations may be used to improve future models
-        unless you are on a plan that opts out (most enterprise and
-        API plans do). Whether that matters for your work depends on
-        what you discuss. The data this MCP exposes is public
-        municipal data, so nothing confidential leaves your
-        organisation through the chat, but if you paste internal
-        documents into the prompt, that is a different question. Check
-        the specifics of your Claude plan if you are not sure.
+        Separately, on training: most consumer chat plans (Anthropic's,
+        OpenAI's, Google's) may use conversations to improve future
+        models unless you are on a plan that opts out (most enterprise
+        and API tiers do). Whether that matters for your work depends
+        on what you discuss and which provider you are using. The data
+        this MCP exposes is public municipal data, so nothing
+        confidential leaves your organisation through the chat, but if
+        you paste internal documents into the prompt, that is a
+        different question. Check the specifics of your AI plan if you
+        are not sure.
       </p>
       <p>
         Nothing the MCP server stores (session state, exported files)
-        leaves this server or feeds back into Claude's training.
+        leaves this server or feeds back into any model's training.
       </p>
     </div>
 
@@ -581,19 +595,20 @@
       <div class="pitfall-label">Pitfall 03</div>
       <h3>LLM-authored columns are not the same as loaded data</h3>
       <p>
-        You can ask Claude to classify every feature in a layer: tag
-        each stadsdel with a dominant architectural era, for example.
-        That works, and the values are written into a column as if
-        they came from the source. But they did not. Claude invented
-        them based on its training data plus whatever context you
-        supplied.
+        You can ask the model to classify every feature in a layer:
+        tag each stadsdel with a dominant architectural era, for
+        example. That works, and the values are written into a column
+        as if they came from the source. But they did not. The model
+        invented them based on its training data plus whatever context
+        you supplied.
       </p>
       <p>
         The server tracks this. Every in-session column carries
         provenance: <em>LLM-authored via annotate by model
-        claude-opus-4-7 on 2026-04-19</em>, or <em>derived via
-        add_field with this SQL expression</em>. The viewer and
-        <code>sources()</code> tool surface the distinction.
+        gpt-5 on 2026-04-19</em> or <em>… by claude-opus-4-7</em>, or
+        <em>derived via add_field with this SQL expression</em>. The
+        viewer and <code>sources()</code> tool surface the
+        distinction, regardless of which model wrote the column.
       </p>
       <div class="callout">
         <strong>Check before you trust.</strong> If a column's values
@@ -622,21 +637,23 @@
 
     <div class="pitfall">
       <div class="pitfall-label">Pitfall 05</div>
-      <h3>Claude can still hallucinate around the data</h3>
+      <h3>The model can still hallucinate around the data</h3>
       <p>
-        The numbers Claude reads from tool calls are authoritative.
-        The prose Claude writes <em>around</em> those numbers is
+        The numbers the model reads from tool calls are authoritative.
+        The prose the model writes <em>around</em> those numbers is
         subject to the usual AI failure modes: misreading a column,
         confusing similar place names, inventing a plausible-sounding
-        explanation for a pattern. The data is trustworthy; the
-        storytelling on top of it needs the same scepticism you would
-        apply to any AI-generated prose.
+        explanation for a pattern. This is true of every frontier model.
+        The data is trustworthy; the storytelling on top of it needs
+        the same scepticism you would apply to any AI-generated prose.
       </p>
       <p>
-        Rule of thumb: if Claude makes a claim, check it against the
-        underlying layer. <code>inspect</code> and <code>stats</code>
-        give you the raw rows and aggregates. If the prose and the
-        rows disagree, trust the rows.
+        Rule of thumb: if the model makes a claim, check it against
+        the underlying layer. <code>inspect</code> and
+        <code>stats</code> give you the raw rows and aggregates. If
+        the prose and the rows disagree, trust the rows. The viewer's
+        audit panel also shows the exact SQL the model ran, so you can
+        verify each step instead of just the conclusion.
       </p>
     </div>
 
@@ -669,7 +686,7 @@
       </p>
       <p>
         If an analysis becomes a recurring need, port it out: the SQL
-        Claude writes is standard DuckDB, and the datasets are all
+        the model writes is standard DuckDB, and the datasets are all
         publicly downloadable. A production pipeline is a different
         problem.
       </p>
@@ -679,16 +696,17 @@
       <div class="pitfall-label">Pitfall 08</div>
       <h3>The AI is a collaborator, not a spec</h3>
       <p>
-        Claude responds to ambiguity by making judgement calls. If
-        your question is underspecified, Claude will pick a reasonable
+        The model responds to ambiguity by making judgement calls.
+        If your question is underspecified, it will pick a reasonable
         interpretation and proceed. That interpretation might not be
         yours.
       </p>
       <p>
-        The cure is to read what Claude did. The tool call log is
-        usually visible in the client. Ask follow-ups. Ask Claude to
-        show the SQL it ran. Treat it as a capable helper with good
-        instincts, not a mind-reader.
+        The cure is to read what the model did. The tool call log is
+        usually visible in the client, and the viewer's audit panel
+        shows every SQL statement plus the rationale the model wrote
+        for each call. Ask follow-ups. Treat it as a capable helper
+        with good instincts, not a mind-reader.
       </p>
     </div>
   </div>
@@ -705,9 +723,10 @@
     <p>
       Access is invite-only. If you do not have a code, ask; the list
       of people with codes is currently small. With a code, the set-up
-      is the same as any other custom claude.ai connector: a one-time
-      paste of the endpoint URL, a confirmation screen, and the invite
-      code.
+      is the same as adding any other custom MCP connector to your AI
+      app — claude.ai, ChatGPT, Gemini, or another MCP-capable client:
+      a one-time paste of the endpoint URL, a confirmation screen, and
+      the invite code.
     </p>
     <p>
       The full connect flow and tool catalogue are on the

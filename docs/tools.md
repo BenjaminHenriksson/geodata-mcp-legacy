@@ -1,10 +1,12 @@
 # MCP tool reference
 
 **38 tools** across five categories. Endpoint:
-`https://geo.benjaminhenriksson.com/mcp` (OAuth 2.1 + PKCE via invite code
-for claude.ai; legacy shared bearer for Claude Code CLI). Every tool
-carries MCP `toolAnnotations` (`readOnlyHint`, `destructiveHint=false`)
-so clients can auto-approve the safe ones without per-call prompts.
+`https://geo.benjaminhenriksson.com/mcp` (OAuth 2.1 + PKCE via invite
+code for web custom-connector flows — claude.ai, ChatGPT, Gemini, and
+the rest; legacy shared bearer for CLI / desktop clients that haven't
+shipped OAuth yet). Every tool carries MCP `toolAnnotations`
+(`readOnlyHint`, `destructiveHint=false`) so any MCP-capable client
+can auto-approve the safe ones without per-call prompts.
 
 All spatial tools operate in **EPSG:3011** (SWEREF 99 18 00). Coordinates in
 tool arguments and return values use that CRS unless otherwise noted. The
@@ -551,7 +553,9 @@ Structured response to the user-testing session friction points:
 
 ## Macro tools (post-feedback pass)
 
-Added to reduce round-trips under claude.ai's per-turn tool-call cap:
+Added to reduce round-trips under the per-turn tool-call caps that most
+web AI clients apply (claude.ai, ChatGPT, Gemini, etc. all impose some
+ceiling on how many tools a single turn can chain):
 
 ### `top_n(layer, by, n=10, ascending=False, result_name=None)`
 

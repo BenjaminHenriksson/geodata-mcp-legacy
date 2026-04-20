@@ -452,8 +452,8 @@
     <p class="hero-tagline">
       Municipal geodata for LLM-driven analysis. SCB DeSO, SBK Stadskarta
       and OSM addresses over a session-scoped DuckDB spatial backend,
-      with enforced provenance and normalized join keys. Built for Claude
-      and other MCP clients.
+      with enforced provenance and normalized join keys. Works with any
+      MCP-capable assistant — Claude, ChatGPT, Gemini, Qwen, and others.
     </p>
     <div class="hero-coords">
       EPSG:3011 <span class="divider">·</span> SWEREF 99 18 00
@@ -489,16 +489,26 @@
         code you were given.</li>
       <li>Start a new chat. The 38 geodata tools are now available under
         the "Stockholm Geodata MCP" connector. Ask a spatial question and
-        Claude does the rest.</li>
+        the model does the rest.</li>
     </ol>
 
-    <p class="client-title">For Claude Code or other MCP clients</p>
+    <p class="client-title">For ChatGPT, Gemini, and other web clients</p>
+    <p class="prose">
+      Same endpoint URL — paste it into the equivalent custom-connector
+      flow in ChatGPT, Gemini, or whichever MCP-capable client you use.
+      Each app's connector dialog is slightly different, but the OAuth
+      2.1 + PKCE handshake and invite-code prompt are identical. The
+      tool catalogue and behaviour do not depend on which model is
+      driving them.
+    </p>
+
+    <p class="client-title">For Claude Code, Claude Desktop, and other CLI clients</p>
     <p class="prose">
       Legacy bearer-token flow, available on request. Send the token as
       <code>Authorization: Bearer &lt;token&gt;</code> on every request to
       <code>/mcp</code>. The OAuth flow above is preferred; the bearer
       path exists for clients that do not yet implement OAuth 2.1 with
-      PKCE.
+      PKCE — most current CLI / desktop MCP clients fall into this bucket.
     </p>
   </section>
 </div>

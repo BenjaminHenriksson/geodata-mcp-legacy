@@ -8,7 +8,8 @@ document.
 
 ## Why render server-side at all
 
-Claude can write prose, Word documents, and PDFs. Claude cannot:
+Modern AI assistants can write prose, Word documents, and PDFs. None
+of them can, by themselves:
 
 - Fetch vector features from a session-scoped DuckDB.
 - Reproject and render them in the correct CRS.
@@ -17,12 +18,14 @@ Claude can write prose, Word documents, and PDFs. Claude cannot:
 - Add a scale bar at the right length for the map extent.
 
 So `render_map` exists. Give it a list of visible layers; it returns a
-PNG URL valid for 24 hours. Claude takes that URL and embeds the image
-in a document it composes itself — no PDF-layout tool needed on our
-side.
+PNG URL valid for 24 hours. The model takes that URL and embeds the
+image in whatever document it composes — no PDF-layout tool needed on
+our side, regardless of which client (claude.ai, ChatGPT, Gemini, …)
+is driving.
 
 This follows the [AI-native principle](design): build the render (hard
-for Claude alone), skip the document assembly (easy for Claude alone).
+for the model alone), skip the document assembly (easy for the model
+alone).
 
 ---
 

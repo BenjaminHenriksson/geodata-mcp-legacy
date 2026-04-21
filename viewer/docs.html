@@ -77,6 +77,15 @@
     text-decoration: none;
   }
   .site-nav-name em { font-style: italic; color: var(--terra); }
+  .site-nav-links .site-nav-back {
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: none;
+    color: var(--ink-faint);
+    padding-left: 1rem;
+    border-left: 1px solid var(--rule);
+  }
+  .site-nav-links .site-nav-back:hover { color: var(--terra); }
   .site-nav-links {
     display: flex;
     gap: 2rem;
@@ -361,6 +370,7 @@
       <li><a href="/about">About</a></li>
       <li><a href="/docs">Docs</a></li>
       <li><a href="/#connect">Connect</a></li>
+      <li><a href="https://benjaminhenriksson.com/" class="site-nav-back">← benjaminhenriksson.com</a></li>
     </ul>
   </div>
 </nav>

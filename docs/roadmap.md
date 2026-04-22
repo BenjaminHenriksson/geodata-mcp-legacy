@@ -11,8 +11,8 @@ of scope. Honesty over ambition.
   city-plan data. SCB joins with canonical keys, SBK polygons,
   building-level analysis. The 80-percent case of municipal work.
 - **LLM-written attribute columns** with tracked provenance. The
-  `annotate → checkpoint(op="commit") → export → sources` loop is
-  clean and trustworthy.
+  `write_attributes → checkpoint(op="commit") → export → sources`
+  loop is clean and trustworthy.
 - **Reversible experimentation** via scoped checkpoints. The LLM can
   try things and back out cheaply.
 - **Session persistence** across service restarts. A paused analysis

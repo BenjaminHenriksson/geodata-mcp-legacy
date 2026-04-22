@@ -282,9 +282,11 @@ async def run_coverage(mcp) -> None:
     except Exception as e:
         _record("edit_field.classify", False, repr(e))
 
-    # annotate is now its own tool (split out of edit_field).
+    # write_attributes is its own tool (split out of edit_field; renamed
+    # from "annotate" to make the "authoritative bulk write" semantics
+    # blunt about what it does).
     try:
-        d = await _call(mcp, "annotate", {
+        d = await _call(mcp, "write_attributes", {
             "layer": "d_top", "key_column": "desokod",
             "values": {"0180C1010": {"note": "stress_test"}},
             "dry_run": True,
@@ -295,7 +297,7 @@ async def run_coverage(mcp) -> None:
         _record("annotate(dry_run)", False, repr(e))
 
     try:
-        d = await _call(mcp, "annotate", {
+        d = await _call(mcp, "write_attributes", {
             "layer": "d_top", "key_column": "desokod",
             "values": {"0180C1010": {"test_tag": "a"}},
         })
@@ -306,7 +308,7 @@ async def run_coverage(mcp) -> None:
         _record("annotate(live write)", False, repr(e))
 
     try:
-        d = await _call(mcp, "annotate", {"layer": "d_top"})
+        d = await _call(mcp, "write_attributes", {"layer": "d_top"})
         _record("annotate(missing values)", _is_error(d), d.get("error"))
     except Exception as e:
         _record("annotate(missing values)", False, repr(e))
@@ -361,6 +363,38 @@ async def run_coverage(mcp) -> None:
                 "rowid column present" if has_rowid else "rowid missing")
     except Exception as e:
         _record("inspect.rows(include_rowid)", False, repr(e))
+
+    # Feature: inspect(op="rows") returns structured `rows` list alongside
+    # `table_md` so programmatic pipelines don't have to parse markdown.
+    try:
+        d = await _call(mcp, "inspect", {"op": "rows", "layer": "d_top", "n": 3})
+        rows_ok = (isinstance(d.get("rows"), list)
+                   and len(d["rows"]) == 3
+                   and isinstance(d["rows"][0], dict))
+        _record("inspect.rows(structured rows list)", rows_ok,
+                f"type={type(d.get('rows')).__name__} "
+                f"n={len(d.get('rows') or [])}")
+    except Exception as e:
+        _record("inspect.rows(structured rows list)", False, repr(e))
+
+    # Regression: geocode forward ranking must be deterministic — same
+    # query returns the same top match regardless of `limit`. Pre-fix,
+    # `Kungsträdgården` flipped between the park (Natur) and the metro
+    # (Bytesplats) when limit changed.
+    try:
+        r1 = await _call(mcp, "geocode", {"op": "forward",
+                                           "name": "Kungsträdgården", "limit": 1})
+        r2 = await _call(mcp, "geocode", {"op": "forward",
+                                           "name": "Kungsträdgården", "limit": 3})
+        top1 = (r1.get("matches") or [{}])[0]
+        top2 = (r2.get("matches") or [{}])[0]
+        same = (top1.get("name") == top2.get("name")
+                and top1.get("kind") == top2.get("kind"))
+        _record("geocode.forward(stable top match across limits)", same,
+                f"limit=1→{top1.get('kind')}/{top1.get('name')}, "
+                f"limit=3→{top2.get('kind')}/{top2.get('name')}")
+    except Exception as e:
+        _record("geocode.forward(stable top match across limits)", False, repr(e))
 
     try:
         d = await _call(mcp, "inspect", {

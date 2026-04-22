@@ -373,7 +373,11 @@ def render_map_png(
         dpi=dpi, facecolor=IVORY,
     )
     has_legend = legend and bool(per_layer)
-    right_margin = 0.2 if has_legend else 0.04
+    # Legend column widened to 0.24 (was 0.2) — the previous width clipped
+    # layer names and column labels with ellipses even when the canvas
+    # had clearly spare room. Trade-off: map loses 0.04 of horizontal
+    # canvas when the legend is on.
+    right_margin = 0.24 if has_legend else 0.04
     ax = fig.add_axes([0.04, 0.06, 1 - 0.04 - right_margin, 0.84])
     ax.set_facecolor(IVORY)
     ax.set_xlim(xmin, xmax)
@@ -559,12 +563,13 @@ def _draw_legend(fig, per_layer, styles):
     if not lines:
         return
     n = min(32, len(lines))
-    # Legend column: right margin is reserved via the axes layout above.
-    x_sw = 0.815              # swatch left edge
-    x_txt = 0.835             # text left edge (18% right-margin - swatch)
+    # Legend column: right margin is 24% of fig width (see _render_map).
+    # Swatch + text fit comfortably; MAX_LABEL sized to the text column.
+    x_sw = 0.775              # swatch left edge
+    x_txt = 0.795             # text left edge
     y_top = 0.88
     dy = 0.024
-    MAX_LABEL = 22            # truncate longer labels with ellipsis
+    MAX_LABEL = 30            # truncate longer labels with ellipsis
     def _trunc(s):
         return s if len(s) <= MAX_LABEL else s[: MAX_LABEL - 1] + "…"
     for i, (label, color, kind) in enumerate(lines[:n]):

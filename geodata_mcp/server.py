@@ -82,7 +82,7 @@ filtered to Stockholm kommun (kommunkod `0180`). 65 datasets.
 4. `execute_sql(sql, ...)` — read-only DuckDB+Spatial. 30 s timeout. DDL/DML/file I/O rejected.
 5. `derive(op, ...)` — new layer from existing: `"filter"`, `"top_n"`, `"clip"`, `"intersect"`, `"select_by_location"` (supports `center_3011`+`distance_m` for bare point+radius), `"buffer"`, `"centroid"`, `"dissolve"`, `"convex_hull"`.
 6. `edit_field(op, layer, ...)` — expression-driven column mutations: `"add"`, `"update"`, `"drop"`, `"classify"`. Reversible inside a checkpoint.
-7. `annotate(layer, values, ...)` — data-driven bulk per-feature attribute writes from a `{key: {attr: val, ...}}` dict. Use when the LLM has specific per-row knowledge; use `edit_field(op="classify")` when a uniform CASE-WHEN applies.
+7. `write_attributes(layer, values, ...)` — data-driven bulk per-feature attribute writes from a `{key: {attr: val, ...}}` dict (creates columns on the fly, keyed by `key_column`). Use when the LLM has specific per-row knowledge; use `edit_field(op="classify")` when a uniform CASE-WHEN applies.
 8. `inspect(op, ...)` — `"layers"` (session inventory), `"rows"` (sample, with optional `include_rowid`), `"batch"` (cursor pagination), `"at"` (spatial "what's here" for 1..500 points).
 9. `layer(op, ...)` — visibility + lifecycle: `"show"`, `"hide"`, `"rename"`, `"drop"`, `"set_notes"`.
 10. `export(layers, format, cite?)` — data-only: gpkg/geojson/csv/parquet. `cite=True` bundles provenance markdown.
@@ -147,14 +147,17 @@ out = inspect(op="batch", layer="sbk_buildings",
               columns=["id","name","byggar"], batch_size=500)
 while True:
     tags = {row["rowid"]: {"era": ..., "confidence": ...} for row in out["rows"]}
-    annotate(layer="sbk_buildings", values=tags)
+    write_attributes(layer="sbk_buildings", values=tags)
     if out.get("exhausted"): break
     out = inspect(op="batch", cursor=out["next_cursor"])
 checkpoint(op="commit", name="tag")
 ```
 
 For ≤ ~500 features, skip the loop: one `inspect(op="rows", n=500,
-include_rowid=True)` then one `annotate(layer="...", values=...)`.
+include_rowid=True)` then one `write_attributes(layer="...", values=...)`.
+`inspect(op="rows")` returns both a `table_md` and a structured
+`rows` list — feed the `rows` list directly into the `values` dict
+builder.
 
 ## Provenance — mandatory on LLM-injected data
 
@@ -917,8 +920,8 @@ def edit_field(
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
-@_audited("annotate")
-def annotate(
+@_audited("write_attributes")
+def write_attributes(
     layer: str,
     values: dict | None = None,
     key_column: str = "rowid",
@@ -927,14 +930,17 @@ def annotate(
     description: str = "",
     ctx: Context | None = None,
 ) -> dict:
-    """Attach LLM-classified per-feature attributes to a layer in bulk.
+    """Bulk per-feature attribute writer — **data-driven** column
+    updates with one authoritative value per row, keyed by
+    `key_column`.
 
-    **Data-driven** bulk write — different shape from `edit_field`'s
-    single-expression ops. Use this when the LLM has specific
-    knowledge per row (e.g. after sampling features, classifying each
-    individually, and wanting to write the classifications back in
-    one call). Use `edit_field(op="classify", ...)` when one
-    CASE-WHEN expression covers every row uniformly.
+    Use this when the LLM has specific knowledge per row (read a
+    sample, classify each individually, write the classifications
+    back) rather than a single SQL expression covering all rows
+    uniformly — for the latter use `edit_field(op="classify", ...)`.
+    Creates columns on the fly if missing; also overwrites existing
+    values. (Despite the historical "annotate" name this replaces,
+    these are authoritative attribute writes, not footnotes.)
 
     Payload shape:
         values = {
@@ -976,7 +982,8 @@ def annotate(
     try:
         sess = _session(ctx)
         if values is None:
-            return _server_error("missing_arg", "annotate requires `values`.")
+            return _server_error("missing_arg",
+                                 "write_attributes requires `values`.")
         out = op_annotate(sess, layer, values, key_column=key_column,
                           dry_run=dry_run, model=model)
         _attach_hint(out, sess, layer)
@@ -1008,12 +1015,14 @@ def inspect(
 
     - `op="layers"`: inventory of every session layer + checkpoint state.
     - `op="rows"` (layer, n?, include_geometry?, include_rowid?,
-      offset?, where?): sample rows from `layer` as a markdown table
-      (returned in `table_md`). Caps: 200 rows without geometry, 10
-      with. Set `include_rowid=True` to prepend a `rowid` column —
-      useful when you plan to `annotate(layer, key_column="rowid",
-      values={…})` against the sampled rows without switching to
-      `op="batch"`.
+      offset?, where?): sample rows from `layer`. Returns both a
+      rendered markdown table (`table_md`) and a structured `rows`
+      list (`[{col: val, ...}, ...]`) so programmatic pipelines
+      don't have to parse the markdown. Caps: 200 rows without
+      geometry, 10 with. Set `include_rowid=True` to prepend a
+      `rowid` column — useful when you plan to `write_attributes(layer,
+      key_column="rowid", values={…})` against the sampled rows
+      without switching to `op="batch"`.
     - `op="batch"` (layer or cursor, columns?, where?, batch_size?):
       cursor-paginated reader for large layers. First call: pass
       `layer`. Subsequent calls: pass `cursor` from the previous
@@ -1119,6 +1128,7 @@ def inspect(
             return {
                 "layer": layer, "rows_shown": 0,
                 "rows_total": effective_total, "cap": cap,
+                "rows": [],
                 "table_md": f"(no rows; {meta.feature_count} in layer)",
             }
         md = ["| " + " | ".join(col_names) + " |",
@@ -1139,11 +1149,16 @@ def inspect(
             )
         if include_geometry:
             parts.append("\n_geom_wkt is large — request only when needed._")
+        # Structured `rows` list alongside the markdown, so programmatic
+        # pipelines (sample → annotate) don't have to parse the markdown
+        # back out. The markdown is still the primary display surface.
+        rows_list = [dict(zip(col_names, r)) for r in rows]
         return {
             "layer": layer,
             "rows_shown": len(rows),
             "rows_total": effective_total,
             "cap": cap,
+            "rows": rows_list,
             "table_md": "\n".join(parts),
         }
 
@@ -1474,7 +1489,7 @@ def checkpoint(
       snapshots, reclaim storage.
 
     Covered mutations: `edit_field` (add/update/drop/classify),
-    `annotate`, and `layer` (rename/drop).
+    `write_attributes`, and `layer` (rename/drop).
     """
     try:
         sess = _session(ctx)

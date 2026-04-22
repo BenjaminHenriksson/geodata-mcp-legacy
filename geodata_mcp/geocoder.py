@@ -120,7 +120,13 @@ def _place_matches(
                jaro_winkler_similarity(name_lower, ?) AS score
         FROM candidates
         QUALIFY ROW_NUMBER() OVER (PARTITION BY lower(name), GRUPP ORDER BY score DESC) = 1
-        ORDER BY score DESC
+        -- Deterministic tiebreak: same query must return the same top
+        -- match regardless of `limit`. jaro_winkler_similarity can tie
+        -- at 1.0 across multiple (name, GRUPP) pairs (e.g. a park and a
+        -- metro station both exactly named "Kungsträdgården"), and
+        -- undefined post-sort order then makes the result flip between
+        -- calls. `name ASC, GRUPP ASC` makes it stable.
+        ORDER BY score DESC, name ASC, GRUPP ASC
         LIMIT ?
         """,
         [str(NAMN_GPKG), qlower, limit],

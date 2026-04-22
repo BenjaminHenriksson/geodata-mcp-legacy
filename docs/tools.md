@@ -25,7 +25,7 @@ instead of ploughing on.
 4. **`execute_sql`** — read-only DuckDB + Spatial SQL sandbox.
 5. **`derive`** — new layer from existing (filter / spatial / top_n).
 6. **`edit_field`** — expression-driven column mutations: add / update / drop / classify.
-7. **`annotate`** — data-driven bulk per-feature attribute writes from a dict payload.
+7. **`write_attributes`** — data-driven bulk per-feature attribute writes from a dict payload.
 8. **`inspect`** — session inventory, rows, cursor pagination, spatial "what's here" (`readOnlyHint`).
 9. **`layer`** — show / hide / rename / drop / set_notes.
 10. **`export`** — data artefact: gpkg / geojson / csv / parquet; optional citation bundle.
@@ -311,7 +311,7 @@ Returns a layer summary.
 Four sub-ops. **Expression-driven**: one SQL expression applied
 uniformly across all (or `where`-restricted) rows. For
 **data-driven** bulk writes where the LLM has specific per-row
-values to apply, use the dedicated `annotate` tool (section 7).
+values to apply, use the dedicated `write_attributes` tool (section 7).
 
 All are reversible inside an active checkpoint covering `layer`
 (see `checkpoint`); without a covering checkpoint they're permanent.
@@ -357,13 +357,15 @@ edit_field(op="classify", layer="deso", name="income_band", rules=[
 
 ---
 
-## 7. `annotate(layer, values, key_column="rowid", dry_run=False, model=None)`
+## 7. `write_attributes(layer, values, key_column="rowid", dry_run=False, model=None)`
 
-**Data-driven** bulk attribute writes. Use this when the LLM has
-specific knowledge per row (read a sample, classify each
-individually, write the classifications back) rather than a single
-SQL expression covering all rows uniformly — for the latter use
-`edit_field(op="classify", ...)`.
+**Data-driven** bulk attribute writes — authoritative per-row column
+updates keyed by `key_column`. Use this when the LLM has specific
+knowledge per row (read a sample, classify each individually, write
+the classifications back) rather than a single SQL expression
+covering all rows uniformly — for the latter use
+`edit_field(op="classify", ...)`. Creates columns on the fly if
+missing; also overwrites existing values.
 
 ### Payload shape
 
@@ -374,7 +376,7 @@ values = {
     ...
 }
 
-annotate(layer="buildings", values=values)
+write_attributes(layer="buildings", values=values)
 ```
 
 Columns are created on the fly if they don't exist (type inferred
@@ -426,18 +428,24 @@ overwhelmed by prior state.
 
 ### `op="rows"` (`layer`, `n=10`, `include_geometry=False`, `include_rowid=False`, `offset=0`, `where?`)
 
-Sample rows from one layer as a markdown table. Hard caps: 200 rows
-without geometry, 10 rows with geometry (WKT; verbose — request
-only when needed). Set `include_rowid=True` to prepend a `rowid`
-column — useful when you plan to `annotate(layer,
-key_column="rowid", values={…})` against the sampled rows without
-switching to `op="batch"`.
+Sample rows from one layer. Hard caps: 200 rows without geometry,
+10 rows with geometry (WKT; verbose — request only when needed).
+Set `include_rowid=True` to prepend a `rowid` column — useful when
+you plan to `write_attributes(layer, key_column="rowid",
+values={…})` against the sampled rows without switching to
+`op="batch"`.
 
-Returns `{layer, rows_shown, rows_total, cap, table_md}` where
-`table_md` is the rendered markdown (header + rows + a "N more not
-shown" footer when applicable). The `where` clause is sqlglot-validated
-before being spliced in.
+Returns `{layer, rows_shown, rows_total, cap, rows, table_md}`:
 
+- `rows: [{col: val, ...}, ...]` — structured per-row data, suitable
+  as direct input for `write_attributes` (build a `values` dict by
+  keying each row on its `rowid` or a declared key column). Use this
+  when consuming programmatically.
+- `table_md` — the rendered markdown (header + rows + a "N more not
+  shown" footer when applicable). Use this when displaying to a
+  user.
+
+The `where` clause is sqlglot-validated before being spliced in.
 For very large layers use `op="batch"` (resumable cursor).
 
 ### `op="batch"` (`layer` OR `cursor`, `columns?`, `batch_size=200`, `where?`)
@@ -448,7 +456,7 @@ carries `rows`, `next_cursor`, `exhausted`. Subsequent calls: pass
 `cursor=<next_cursor>` — all other args ignored.
 
 Every batch includes a `rowid` column (DuckDB pseudo-column) suitable
-for `annotate(layer, key_column="rowid", values=...)`.
+for `write_attributes(layer, key_column="rowid", values=...)`.
 
 ### `op="at"` (`points`, `radius_m=100.0`, `layers?`, `columns?`, `per_layer_limit=3`)
 
@@ -650,9 +658,9 @@ Discards snapshots, reclaims storage.
 
 ### Covered mutations
 
-`edit_field` (add / update / drop / classify), `annotate`, and
-`layer` (rename / drop). `load` / `execute_sql(result_name=...)` /
-`derive` create new layers and are not "mutations" in the
+`edit_field` (add / update / drop / classify), `write_attributes`,
+and `layer` (rename / drop). `load` / `execute_sql(result_name=...)`
+/ `derive` create new layers and are not "mutations" in the
 checkpoint sense (drop the resulting layer if you want to undo
 them).
 

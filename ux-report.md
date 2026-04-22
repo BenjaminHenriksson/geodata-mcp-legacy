@@ -102,21 +102,24 @@ part of the refactor, costs one slot; (b) add a PNG-only `style=`
 override on `export` so data flow is self-contained; (c) keep as-is
 and make the doc explicit. No auto-fix; decide deliberately.
 
-### B. `edit_field` may fold too many shapes (resolved — annotate split out)
+### B. `edit_field` may fold too many shapes (resolved — write_attributes is its own tool)
 
 Agent C: `add`/`update`/`drop`/`classify` all share `name` + `expr`
-(or similar single-expression) signatures. `annotate` has a
-bulk-dict payload with nothing in common.
+(or similar single-expression) signatures. The old `annotate` op had
+a bulk-dict payload with nothing in common.
 
-**Resolved 2026-04-22**: `annotate` promoted to its own top-level
-tool. `edit_field` now carries only the four expression-driven
-sub-ops (`add`/`update`/`drop`/`classify`), so its parameter list
-is coherent (`name`/`expr`/`where`/`rules`/`default`). `annotate`'s
-data-driven shape (`values={key: {attr: val, ...}}`,
-`key_column`, `dry_run`, `model`) lives on its own tool where those
-params aren't diluted. Docs (`docs/tools.md`, README, design,
-provenance, viewer, roadmap) and the bulk-enrichment example in
-`SERVER_INSTRUCTIONS` updated accordingly. Tool count: 12 → 13.
+**Resolved 2026-04-22** (initial split), **renamed 2026-04-22** (round-2
+follow-up): the bulk-write tool was promoted out of `edit_field` as
+`annotate`, then renamed to `write_attributes` after a second sub-agent
+flagged that "annotate" reads as "attach footnotes," not
+"authoritative column writes." `edit_field` now carries only the four
+expression-driven sub-ops (`add`/`update`/`drop`/`classify`), so its
+parameter list is coherent (`name`/`expr`/`where`/`rules`/`default`).
+`write_attributes` takes `values={key: {attr: val, ...}}`,
+`key_column`, `dry_run`, `model`. Docs (`docs/tools.md`, README,
+design, provenance, viewer, roadmap), the bulk-enrichment example in
+`SERVER_INSTRUCTIONS`, and the stress test updated. Tool count:
+12 → 13.
 
 ### C. `derive(op="select_by_location")` requires a `by_layer` — no bare point+radius
 
@@ -188,8 +191,84 @@ pattern would save the `SELECT DISTINCT` step.
   (Bug 4 was a doc-only fix after security-posture investigation
   confirmed the sandbox was still enforcing egress-deny; the tiles
   come from a pre-warmed local cache, not runtime fetches.)
-- **Design decisions open**: signals A, B, C, D, E — to be decided
-  deliberately, not auto-applied.
+- **Design decisions open (originally)**: signals A, B, C, D, E.
+  Status after round-2 follow-ups (see below): A, B, C resolved;
+  D, E remain deferred as low-ROI.
+
+---
+
+## Round 2 — second sub-agent swarm (2026-04-22)
+
+A second 4-agent swarm ran against the post-refactor 12-tool surface
+(after `render_map` split + `annotate` split). Agents took 4 new
+tasks (annotate workflow, point+radius spatial, DeSO 2018→2025
+change detection, styled-map deliverable). All completed at 2/5
+difficulty.
+
+### Round-2 findings (resolved in the same session)
+
+1. **Cross-process session ghost-table inconsistency** (3/4 agents).
+   DuckDB's catalog persisted tables that `.meta.json` didn't know
+   about, producing a confusing "Table X already exists" +
+   "unknown layer X" pair. Fixed in `session.py`: `register()` now
+   flushes the sidecar synchronously, and `get_or_create()` cleans
+   up orphaned DuckDB + audit-log files when the sidecar is
+   absent.
+
+2. **`inspect(op="rows")` was markdown-only** (Agent Annotate,
+   strong signal). Forced programmatic consumers to re-parse their
+   own markdown. Response now carries `rows: [{col: val, ...}]`
+   alongside `table_md`. Round-2 stress test pins this as a
+   regression.
+
+3. **`geocode(op="forward")` nondeterministic ranking** (Agent
+   Radius). Same query produced different top matches for `limit=1`
+   vs `limit=3`. Fixed by deterministic tiebreak
+   (`ORDER BY score DESC, name ASC, GRUPP ASC`). Round-2 stress test
+   pins this as a regression.
+
+4. **`kommunkod` NULL invariant contradicted real data** (Agent
+   DeSO Change). Catalog said NULL only when `region_kind != 'deso'`;
+   retired 2018-code rows also had it NULL. Catalog descriptions
+   (both `description_sv` and `description_en`) updated to describe
+   the real behaviour and recommend filtering by `desokod_2025` /
+   `region_kind` instead.
+
+5. **Legend truncation in `render_map` PNG** (Agent Styled Map).
+   Widened the legend column (right_margin 0.2 → 0.24) and raised
+   `MAX_LABEL` 22 → 30.
+
+6. **Rename `annotate` → `write_attributes`** (Agent Annotate).
+   "Annotate" pulled the wrong way ("attach footnotes"); new name
+   makes the "authoritative per-row column writes" semantics
+   blunt. Same operation underneath.
+
+### Round-2 signals deferred
+
+- Default `include_rowid=True` on `inspect(op="rows")`: worth a
+  future bump but not blocking.
+- Qualify the SCB "aggregate before joining" warning with a list of
+  pre-cleaned tables vs dirty ones: low effort, good doc polish.
+- Rename/alias `derive(op="select_by_location")` with point+radius
+  mode as `derive(op="within_radius", ...)`: current docs do call
+  out the dual signature, agents found it; cosmetic.
+- `render_map` inline `style=` shortcut: current two-step flow is
+  idiomatic once discovered.
+- `edit_field(op="classify")` echo band counts in response: saves a
+  round-trip, trivial.
+
+### Round-2 positive confirmations
+
+- **`render_map` split from `export`**: Agent Styled Map — "the
+  tool index line is explicit. I never hesitated. Splitting worked."
+- **`write_attributes` (as split out)**: Agent Annotate — helped
+  once the naming lands, which motivated round-2 rename.
+- **Point+radius mode on `select_by_location`**: Agent Radius —
+  "found it fast".
+- **Canonical SCB join keys**: Agent DeSO Change — worked cleanly;
+  new "aggregate before joining" footgun note was verified
+  empirically and, interestingly, didn't bite for
+  `scb_population_age_sex` (SCB zero-fills retired codes).
 
 Test harness: `scripts/stress_test_tools.py` (57 covering cases,
 all passing post-fix).

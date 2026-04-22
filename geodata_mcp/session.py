@@ -396,6 +396,15 @@ class Session:
         self.layers[meta.name] = meta
         self.version += 1
         self._dirty = True
+        # Flush synchronously: a DuckDB table now exists on disk under
+        # `meta.name`, and if the process exits before the GC sweep the
+        # sidecar would lag. Next process would see a ghost table
+        # (DuckDB has it, the registry doesn't), producing the
+        # confusing "Table X already exists" vs "unknown layer X" pair.
+        # persist() is cheap for typical session sizes and silently
+        # re-dirties itself on failure, so this is strictly safer than
+        # the async-flush alternative.
+        self.persist()
 
     def log(self, op: Operation) -> None:
         # Inherit correlation_id + description from the active audit context
@@ -713,6 +722,16 @@ class SessionRegistry:
                 # Sidecar was corrupt. Fall through to a fresh session
                 # with the requested id (drops the old DuckDB file if any).
                 self._db_path(session_id).unlink(missing_ok=True)
+                (SESSION_DB_DIR / f"{session_id}.audit.jsonl").unlink(missing_ok=True)
+            elif session_id and self._db_path(session_id).exists():
+                # Sidecar absent but the DuckDB file is present — an orphan
+                # from a previous process that mutated the DB but never
+                # flushed the sidecar (crash, hard kill, etc.). Ghost
+                # tables with no provenance are useless and produce
+                # confusing "Table X already exists" vs "unknown layer X"
+                # errors on the next `load`. Clean up before opening.
+                self._db_path(session_id).unlink(missing_ok=True)
+                (SESSION_DB_DIR / f"{session_id}.audit.jsonl").unlink(missing_ok=True)
             # Brand new session.
             s = Session(session_id)
             self._sessions[s.id] = s

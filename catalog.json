@@ -3458,8 +3458,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -3665,8 +3665,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -3852,8 +3852,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -4048,8 +4048,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -4244,8 +4244,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -4436,8 +4436,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -4628,8 +4628,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -4818,8 +4818,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -5010,8 +5010,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -5199,8 +5199,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -5398,8 +5398,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -5586,8 +5586,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -5788,8 +5788,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -5980,8 +5980,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -6182,8 +6182,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -6385,8 +6385,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -6586,8 +6586,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -6788,8 +6788,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -6975,8 +6975,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -7160,8 +7160,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -7362,8 +7362,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -7564,8 +7564,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -7750,8 +7750,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -7963,8 +7963,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -8177,8 +8177,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -8378,8 +8378,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -8577,8 +8577,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -8769,8 +8769,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -8972,8 +8972,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -9166,8 +9166,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]
@@ -9360,8 +9360,8 @@
         {
           "name": "kommunkod",
           "type": "VARCHAR",
-          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso'.",
-          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!='deso'.",
+          "description_sv": "Kommunkod (4 siffror) för DeSO:n. NULL när region_kind!='deso' ELLER när desokoden utgått i grid-övergången 2018→2025 (retired 2018-code; SCB 0-fyller value för sådana rader). Filtrera på kommunkod='0180' tappar därför legitima 'deso'-rader med value=0. Säkrare: filtrera på desokod_2025 eller region_kind.",
+          "description_en": "Municipality code (4 digits) for this DeSO. NULL when region_kind!=deso OR when the DeSO code was retired in the 2018->2025 grid transition (SCB zero-fills the value column on those rows). Filtering on kommunkod=0180 therefore drops legitimate region_kind=deso rows with value=0; prefer filtering on desokod_2025 or region_kind.",
           "sample_values": [
             "0180"
           ]

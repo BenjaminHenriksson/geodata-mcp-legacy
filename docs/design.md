@@ -56,10 +56,11 @@ is flagged so `sources(layer)` can surface "this was made up by the
 model" as a first-class fact.
 
 On top of that, we track **per-column provenance**: when `edit_field`
-writes a column (add / update / classify / annotate), the session
+writes a column (add / update / classify) — or `write_attributes`
+does a bulk per-row write — the session
 remembers who wrote it, with what expression, and optionally what
 model. So an exported attribute can be traced to "LLM-written on
-2026-04-19 by `annotate(model='gpt-5')`" (or
+2026-04-19 by `write_attributes(model='gpt-5')`" (or
 `claude-opus-4-7`, or any other model identifier the calling client
 passes), distinct from "loaded from `sbk_admin_polygons.gpkg`".
 
@@ -88,7 +89,7 @@ A session isn't a linear log of edits. It's a set of named savepoints
 that can be rolled back independently.
 
     checkpoint(op="create", name="before_enrichment", layers=["buildings"])
-    # ... annotate(...) / edit_field(op="add" | "classify", ...) ...
+    # ... write_attributes(...) / edit_field(op="add" | "classify", ...) ...
     checkpoint(op="rollback", name="before_enrichment")   # undo just the buildings work
 
 Checkpoints capture *column snapshots* (pre-images of the columns about
@@ -111,7 +112,7 @@ Rollbacks are independent.
 
 Why this matters: LLM-driven enrichment is iterative and frequently
 wrong. Without a scoped checkpoint model, a single bad
-`annotate(...)` call becomes a session-ending event.
+`write_attributes(...)` call becomes a session-ending event.
 With it, the LLM can experiment cheaply.
 
 ---

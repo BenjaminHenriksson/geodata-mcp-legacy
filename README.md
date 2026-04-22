@@ -44,7 +44,7 @@ values are visible in the tool schema.
 | `execute_sql` | Read-only DuckDB + Spatial SQL, sqlglot-validated, 30 s timeout |
 | `derive` | New layer from existing: `filter`, `top_n`, `clip`, `intersect`, `select_by_location`, `buffer`, `centroid`, `dissolve`, `convex_hull` |
 | `edit_field` | Expression-driven column mutations: `add`, `update`, `drop`, `classify`. Reversible inside a checkpoint |
-| `annotate` | Data-driven bulk per-feature attribute writes from a `{key: {attr: val, ...}}` dict; creates columns on the fly |
+| `write_attributes` | Data-driven bulk per-feature attribute writes from a `{key: {attr: val, ...}}` dict; creates columns on the fly |
 | `inspect` | `layers` (inventory), `rows` (sample, ≤200), `batch` (cursor-paginate), `at` (spatial "what's here", ≤500 points) |
 | `layer` | Visibility + lifecycle: `show`, `hide`, `rename`, `drop`, `set_notes` |
 | `export` | Data-only: single or multi layer → gpkg/geojson/csv/parquet; optional citation bundle |

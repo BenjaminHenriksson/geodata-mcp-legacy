@@ -30,13 +30,17 @@ What the model *cannot* do, by itself:
 The MCP's surface is shaped by that second list. We don't provide a
 "render a PDF report" tool because the LLM writes better reports than a
 fixed template. We don't provide a "summarize this layer in prose" tool
-because the LLM already has prose. We do provide `render_map`, because
-fetching tiles, reprojecting to EPSG:3011, and compositing a styled
-vector overlay is a task the LLM can't do without us.
+because the LLM already has prose. We do provide `export(format='png')`,
+because reprojecting to EPSG:3011 and compositing a styled vector overlay
+on a paper-toned backdrop is a task the LLM can't do without us.
 
 This principle rules out about half the tools one would naïvely implement
-on a GIS backend, and it's why the tool surface is comparatively small
-(38 tools) despite covering a wide workflow.
+on a GIS backend, and it's why the tool surface is compact (11 tools)
+despite covering a wide workflow. Sub-operations are multiplexed via
+`op: Literal[...]` enums on tools like `derive`, `edit_field`, and
+`layer` — the LLM's mental model is coarser than the underlying ops
+(it thinks "I want a subset of this layer", not "should I call `filter`
+or `top_n`"), and the surface matches that.
 
 ---
 
@@ -44,19 +48,19 @@ on a GIS backend, and it's why the tool surface is comparatively small
 
 Every layer that enters a session carries one or more `SourceRef` records
 describing where its rows came from: dataset id, publisher, licence,
-retrieved-on date. Derived layers (from `filter`, `spatial`, `execute_sql`,
-macro helpers) inherit the union of their parents' source refs. A layer
-that comes out of `create_layer(..., llm_sourced=True)`, geometry built
-from model-generated coordinates, is flagged so `sources(layer)` can
-surface "this was made up by the model" as a first-class fact.
+retrieved-on date. Derived layers (from `derive`, `execute_sql`) inherit
+the union of their parents' source refs. A layer that comes out of
+`load(op='inline', ...)`, geometry built from model-generated coordinates,
+is flagged so `sources(layer)` can surface "this was made up by the
+model" as a first-class fact.
 
-On top of that, we track **per-column provenance**: when `annotate`,
-`add_field`, or `update_field` writes a column, the session remembers
-who wrote it, with what expression, and optionally what model. So an
-exported attribute can be traced to "LLM-written on 2026-04-19 by
-`annotate(model='gpt-5')`" (or `claude-opus-4-7`, or any other model
-identifier the calling client passes), distinct from "loaded from
-`sbk_admin_polygons.gpkg`".
+On top of that, we track **per-column provenance**: when `edit_field`
+writes a column (add / update / classify / annotate), the session
+remembers who wrote it, with what expression, and optionally what
+model. So an exported attribute can be traced to "LLM-written on
+2026-04-19 by `edit_field(op='annotate', model='gpt-5')`" (or
+`claude-opus-4-7`, or any other model identifier the calling client
+passes), distinct from "loaded from `sbk_admin_polygons.gpkg`".
 
 Why this matters:
 
@@ -82,9 +86,9 @@ has been worth it.
 A session isn't a linear log of edits. It's a set of named savepoints
 that can be rolled back independently.
 
-    checkpoint("before_enrichment", layers=["buildings"])
-    # ... annotate, add_field, classify ...
-    rollback("before_enrichment")   # undo just the buildings work
+    checkpoint(op="create", name="before_enrichment", layers=["buildings"])
+    # ... edit_field(op="annotate" | "add" | "classify", ...) ...
+    checkpoint(op="rollback", name="before_enrichment")   # undo just the buildings work
 
 Checkpoints capture *column snapshots* (pre-images of the columns about
 to be mutated) rather than whole-layer copies. Storage cost is
@@ -94,18 +98,20 @@ two 79k-row columns, not 158k rows of full-layer duplicates.
 
 Two scoping modes:
 
-- `checkpoint("x")` (no scope): covers every mutation on every layer
-  until `commit` or `rollback`.
-- `checkpoint("x", layers=["a", "b"])`: covers only mutations on those
-  layers; other work is irreversible relative to this checkpoint.
+- `checkpoint(op="create", name="x")` (no scope): covers every
+  mutation on every layer until `op="commit"` or `op="rollback"`.
+- `checkpoint(op="create", name="x", layers=["a", "b"])`: covers only
+  mutations on those layers; other work is irreversible relative to
+  this checkpoint.
 
 Multiple checkpoints can be active concurrently, with overlapping or
 disjoint scopes. A mutation snapshots once per covering checkpoint.
 Rollbacks are independent.
 
 Why this matters: LLM-driven enrichment is iterative and frequently
-wrong. Without a scoped checkpoint model, a single bad `annotate` call
-becomes a session-ending event. With it, the LLM can experiment cheaply.
+wrong. Without a scoped checkpoint model, a single bad
+`edit_field(op="annotate", ...)` call becomes a session-ending event.
+With it, the LLM can experiment cheaply.
 
 ---
 
@@ -150,7 +156,7 @@ The layer colour palette is deliberately desaturated: cartographer's inks
 (burnt umber, raw sienna, verdigris, antique brass) rather than the
 neon-on-dark of dashboards. No colour is meant to "pop"; they coexist.
 
-Rendered PNG exports (via `render_map`) follow the same rules. No tiled
+Rendered PNG exports (via `export(format='png')`) follow the same rules. No tiled
 basemap (the systemd sandbox denies outbound egress anyway). Just paper
 background, faint cartographer's grid, vector overlay, scale bar, and
 legend.
@@ -187,16 +193,16 @@ for the human debugging the flow.
 
 And these are the capabilities the principle specifically motivates:
 
-- **Spatial ops** (`spatial`, `filter`, macro helpers): authoritative
-  CRS-aware geometry work over a DuckDB spatial backend.
+- **Spatial ops** (`derive`, `execute_sql`): authoritative CRS-aware
+  geometry work over a DuckDB spatial backend.
 - **Provenance tracking** (layer + column): trust infrastructure that
   survives export.
 - **Viewer with auto-refresh.** A live rendering surface that the LLM
-  can update by calling `show()` again without the user touching
-  anything.
+  can update by calling `layer(op="show")` again without the user
+  touching anything.
 - **Checkpoints.** A transactional workspace the LLM can experiment in.
-- **PNG rendering** (`render_map`): editorial map artefacts the LLM can
-  embed.
+- **PNG rendering** (`export(format='png')`): editorial map artefacts
+  the LLM can embed.
 - **Persistence.** Survives restart so paused analyses resume.
 - **Canonical join keys** (added to every SCB table in the normalization
   pipeline): removes a class of join-column-name-guessing the LLM

@@ -41,8 +41,8 @@ Plus the polygon layers for DeSO itself (`DeSO_2018.gpkg` and
 `DeSO_2025.gpkg`) which sit outside the normalization pipeline because
 they're already in the right shape.
 
-Call `search_data(query)` to fuzzy-find by name, description, or keyword.
-Call `describe_dataset(id)` for the full attribute schema.
+Call `catalog(query=...)` to fuzzy-find by name, description, or
+keyword. Call `catalog(id=...)` for the full attribute schema.
 
 ---
 
@@ -151,7 +151,7 @@ this dataset will rediscover the quirk the same way (confused queries,
 then a GROUP BY workaround).
 
 The fix: a `dedupe_hint` field on the catalog entry that surfaces the
-caveat up-front in `describe_dataset` output:
+caveat up-front in `catalog(id=...)` output:
 
 ```
 dedupe_hint: "Multi-word labels are one point per word. Use
@@ -167,7 +167,7 @@ UX.
 ## Column typing
 
 DuckDB types are preserved through normalization and loading. For the LLM's
-benefit, types are reported alongside column names in `describe_dataset`
+benefit, types are reported alongside column names in `catalog(id=...)`
 and `_layer_summary`, so the LLM can pick correctly between `COUNT(x)`
 and `SUM(x)` without probing.
 
@@ -186,7 +186,7 @@ error that surprises downstream consumers.
 
 Every catalog entry's attribute list carries up to 5 `sample_values` per
 column, populated automatically by `catalog_autogen.py`. These show up
-in `describe_dataset` responses. They exist because an LLM looking at a
+in `catalog(id=...)` responses. They exist because an LLM looking at a
 column called `KATEGORI` has no idea whether the values are English or
 Swedish, free-form or closed-set, without them.
 
@@ -226,7 +226,7 @@ Every `SourceRef` carries a licence string. Major sources:
 
 Mixing these is usually fine for non-commercial and public-sector use,
 but OSM's ODbL share-alike means anything derived from OSM has to be
-published under ODbL too. The `render_map` PNG artefact doesn't
+published under ODbL too. The `export(format="png")` artefact doesn't
 technically trigger ODbL (it's not a "substantial extract of the
 database"), but a derived parquet absolutely does. Always check
 `sources(layer)` before publishing.

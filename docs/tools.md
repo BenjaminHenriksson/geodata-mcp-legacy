@@ -1,655 +1,630 @@
 # MCP tool reference
 
-**38 tools** across five categories. Endpoint:
-`https://geo.benjaminhenriksson.com/mcp` (OAuth 2.1 + PKCE via invite
-code for web custom-connector flows like claude.ai, ChatGPT, Gemini, and
-the rest; legacy shared bearer for CLI / desktop clients that haven't
-shipped OAuth yet). Every tool carries MCP `toolAnnotations`
-(`readOnlyHint`, `destructiveHint=false`) so any MCP-capable client
-can auto-approve the safe ones without per-call prompts.
+**11 tools.** Endpoint: `https://geo.benjaminhenriksson.com/mcp`
+(OAuth 2.1 + PKCE via invite code for web custom-connector flows
+like claude.ai, ChatGPT, Gemini, and the rest; legacy shared bearer
+for CLI / desktop clients that haven't shipped OAuth yet). Every
+tool carries MCP `toolAnnotations` (`readOnlyHint`,
+`destructiveHint=false`) so any MCP-capable client can auto-approve
+the safe ones without per-call prompts.
 
-All spatial tools operate in **EPSG:3011** (SWEREF 99 18 00). Coordinates in
-tool arguments and return values use that CRS unless otherwise noted. The
-viewer reprojects to EPSG:4326 at the `/api/.../geojson` boundary. The
-server's `instructions` string (~10 KB workflow primer) is delivered to the
-MCP client at connection time. It covers CRS conventions, canonical SCB
-join keys, the bulk-enrichment loop, macro-tool preferences, the
-auditability nudge, and when the LLM should push back instead of
-ploughing on.
+All spatial tools operate in **EPSG:3011** (SWEREF 99 18 00).
+Coordinates in tool arguments and return values use that CRS unless
+otherwise noted. The viewer reprojects to EPSG:4326 at the
+`/api/.../geojson` boundary. The server's `instructions` string
+(~6 KB workflow primer) is delivered to the MCP client at
+connection time. It covers the tool index, the canonical SCB join
+keys, the bulk-enrichment loop, auditability, and when to push back
+instead of ploughing on.
 
 ## Tool index
 
-**Discovery / read-only** (`readOnlyHint=true`, 14 tools): `search_data`,
-`describe_dataset`, `geocode`, `bbox_from`, `inspect`, `stats`,
-`frequencies`, `baseline_stats`, `sources`, `list_layers`,
-`batch_iterate`, `reverse_geocode`, `inspect_location`, `inspect_locations`.
+1. **`catalog`** — catalog search + describe (`readOnlyHint`).
+2. **`geocode`** — name ↔ coords ↔ bbox (`readOnlyHint`).
+3. **`load`** — pull catalog datasets or inject LLM-provided rows.
+4. **`execute_sql`** — read-only DuckDB + Spatial SQL sandbox.
+5. **`derive`** — new layer from existing (filter / spatial / top_n).
+6. **`edit_field`** — add / update / drop / classify / annotate columns.
+7. **`inspect`** — session inventory, rows, cursor pagination, spatial "what's here" (`readOnlyHint`).
+8. **`layer`** — show / hide / rename / drop / set_notes.
+9. **`export`** — single or many layers, gpkg / geojson / csv / parquet / png; optional citation bundle.
+10. **`sources`** — provenance markdown (`readOnlyHint`).
+11. **`checkpoint`** — create / rollback / commit savepoints.
 
-**Layer creation / session state**: `load`, `load_many`, `filter`,
-`spatial`, `top_n`, `classify`, `execute_sql`, `create_layer`,
-`export`, `export_many`, `export_and_cite`, `render_map`, `show`,
-`hide`, `set_notes`.
+Tools 1, 2, 7, 10 are read-only. The rest mutate session state (load
+creates layers, edit_field mutates columns, etc.) but are non-destructive
+(reversible if wrapped in a checkpoint where applicable).
 
-**In-place layer mutation** (reversible inside a checkpoint):
-`add_field`, `update_field`, `drop_field`, `annotate`, `drop_layer`,
-`rename_layer`.
+---
 
-**Transaction control**: `checkpoint`, `rollback`, `commit`. Checkpoints
-accept an optional `layers=[...]` scope, and multiple can be active
-simultaneously on overlapping or disjoint scopes.
+## The `op` enum pattern
+
+Five tools — `geocode`, `derive`, `edit_field`, `inspect`, `layer`,
+`checkpoint` — take `op: Literal[...]` as the first required argument
+to select among a small set of related sub-operations. This keeps the
+11-tool surface focused on what the model is thinking about ("I want
+a new layer derived from this one") rather than how it's
+implemented ("did I call `filter` or `top_n` or `buffer`"). The
+`Literal` values are visible directly in the tool schema, so the LLM
+sees the valid ops at a glance.
+
+`load`, `execute_sql`, and `export` also multiplex behaviour, but the
+dispatch is on natural argument shape (which fields you pass, or
+`format=...`) rather than a dedicated `op` enum — see each tool's
+signature below.
 
 ---
 
 ## Auditability: `description` on every mutating tool
 
-Every tool that creates, modifies, or destroys session state (every
-tool in the latter four categories above) accepts a `description: str
-= ""` keyword argument. The user sees this in their viewer's audit
-panel together with the actual SQL the tool generated, and can decide
-whether to trust the LLM's work without reading code.
+`load`, `execute_sql`, `derive`, `edit_field`, `layer`, `export`,
+`checkpoint` accept a `description: str = ""` keyword argument. The
+user sees this in their viewer's audit panel alongside the actual SQL
+the tool generated, and can decide whether to trust the LLM's work
+without reading code.
 
 The decorator behind every mutating tool opens an audit context that:
 
 - mints a per-call `correlation_id`,
 - captures every SQL statement executed inside the tool body
-  (including internal helper queries like `DESCRIBE`, bbox aggregates,
+  (including helper queries like `DESCRIBE`, bbox aggregates,
   `COUNT`s),
 - records timing + status,
 - attaches the `description` to the resulting `Operation` record.
 
 Records mirror to `<sid>.audit.jsonl` (append-only) and serve at
 `GET /api/<sid>/audit_log`. Operations called without a description
-appear in the panel flagged "no description provided", a visible
-nudge that the LLM should be filling them in.
+appear flagged "no description provided" — a visible nudge that the
+LLM should be filling them in.
 
 Treat the description like a commit message: short, specific, in the
 user's frame ("filter to schools within 500 m of metro stops, per
-user request"), not yours ("call ST_DWithin on layer foo"). The doc
-sections below omit the `description` argument from every signature
-to keep them readable, but it's accepted on every mutating tool.
+user request"), not yours ("call ST_DWithin on layer foo"). Tool
+signatures below omit `description` for readability, but it's
+accepted everywhere mutations happen.
 
 ---
 
-## 1. `search_data(query: str = "")`
+## 1. `catalog(query="", id=None, verbose=False, limit=20)`
 
-Fuzzy-search the catalog of locally available datasets. `rapidfuzz.WRatio` with
-lowercase normalization over name + description + keywords + attribute
-descriptions in Swedish and English.
+Catalog search + describe. Pass `id` for full metadata of a single
+dataset (attribute schema, sample values, descriptions); otherwise
+fuzzy-search the 65-dataset catalog via `rapidfuzz.WRatio` over name
++ description + keywords + attribute descriptions (Swedish + English).
 
-Returns structured metadata per match: id, name (SV/EN), description, source
-type, geometry type, feature count, coverage, temporal range, CRS, attributes
-(name/type/description/sample values), publisher, license, match score.
+- Compact search (`verbose=False`, default): id / name / description /
+  coverage / temporal / licence per hit. 20–50 KB → ~2 KB per hit.
+- Verbose search (`verbose=True`): include full attribute schema for
+  every hit (can be 20–50 KB total).
+- Describe (`id="..."`): full metadata for one dataset. Prefer this
+  over `verbose=True` once you know what you want.
 
----
-
-## 2. `geocode(name: str, limit: int = 5, all_kinds: bool = False)`
-
-Resolve a Swedish place name or `street number` against SBK label layers.
-
-Two modes, tried in order:
-- **Composite address** (triggered when the input matches `<street> <number>`):
-  spatial-pairs `NamnText_point[GRUPP='Gatunamn']` with `AdressText_point` where
-  `TEXT == number` within 250 m of the street label. Returns at most one match
-  per (street, number) pair.
-- **Place name**: `jaro_winkler_similarity` across `NamnText_point` filtered to
-  useful GRUPP values (Stadsdel, Distrikt, Kvarter, Gatunamn, Bostadsbyggnad,
-  Samhällsfunktionsbyggnad, Idrottsanläggning, Koloniområde, Sjö, Vattendrag,
-  Natur, Trafikplats, Bytesplats, Markanläggning, Övrig anläggning).
-
-For Stadsdel / Distrikt / Stadsdelsnämndsområde / Kvarter matches, the returned
-`bbox_3011` is the extent of the containing `Adm_area` polygon, not a 200 m
-label-point radius. Other matches get a 200 m box.
-
-Returns `{query, coverage, matches: [{name, kind, subkind, x_3011, y_3011, bbox_3011, score}]}`.
+Returns a list of dataset summaries with a `hint` field prompting the
+compact-then-describe pattern.
 
 ---
 
-## 3. `load(dataset_id, bbox_3011?, limit?, layer_name?, where?, intersect_layer?)`
+## 2. `geocode(op, ...)` — name ↔ coords ↔ bbox
 
-Read a catalog dataset into the session as a DuckDB table, optionally filtered
-at load time. Filters AND-combine before the 100,000-feature cap.
+Resolve a Swedish place name or street+number against SBK label
+layers. Three sub-ops.
 
-- `bbox_3011`: `[xmin, ymin, xmax, ymax]` rectangular filter.
-- `where`: SQL WHERE against dataset columns (no `;`).
-- `intersect_layer`: Name of an already-loaded session layer; features kept
-  where they intersect the union of that layer's geometries. Preferred over
-  hand-crafted bboxes for irregular polygons.
+### `op="forward"` — name → EPSG:3011 coords + bbox
 
-Provenance: `SourceRef` from the catalog entry; if `intersect_layer` is used,
-the intersecting layer's sources are merged in.
+Args: `name: str`, `limit: int = 5`, `all_kinds: bool = False`.
 
-Returns a layer summary (name, feature count, bbox, geometry type, attributes, provenance).
+Two matching modes, tried in order:
+- **Composite address** (triggered when input matches `<street> <number>`):
+  spatial-pairs `NamnText_point[GRUPP='Gatunamn']` with
+  `AdressText_point` where `TEXT == number` within 250 m of the
+  street label. At most one match per (street, number).
+- **Place name**: `jaro_winkler_similarity` across `NamnText_point`
+  filtered to useful GRUPP values (Stadsdel, Distrikt, Kvarter,
+  Gatunamn, Bostadsbyggnad, Samhällsfunktionsbyggnad,
+  Idrottsanläggning, Koloniområde, Sjö, Vattendrag, Natur,
+  Trafikplats, Bytesplats, Markanläggning, Övrig anläggning).
 
----
+Stadsdel / Distrikt / Stadsdelsnämndsområde / Kvarter matches return
+the extent of the containing `Adm_area` polygon as `bbox_3011`; other
+matches get a 200 m label-point box.
 
-## 4. `filter(layer, where, result_name?)`
+Returns `{query, coverage, matches: [{name, kind, subkind, x_3011,
+y_3011, bbox_3011, score}]}`. By default deduplicated across GRUPP
+(one row per named thing). Pass `all_kinds=True` to see every label
+variant.
 
-SQL WHERE over an existing session layer. Creates a new layer. Rejects `;`.
-Provenance inherited from `layer`.
+### `op="reverse"` — coords → containing admin areas
 
-The WHERE expression accepts any DuckDB-compatible predicate, including
-**spatial predicates on the `geom` column**:
-- Attribute: `KATEGORI = 'Flerbostadshus'`
-- Spatial: `ST_Contains(geom, ST_Point(153700, 6578000))`
-- Distance: `ST_DWithin(geom, ST_Point(x, y), 200)`
-- Mixed: `KATEGORI='Flerbostadshus' AND ST_Contains(geom, <polygon>)`
+Args: `x_3011: float`, `y_3011: float`.
 
-For "features of A that relate to any feature of B" use
-`spatial(operation='select_by_location', ...)` instead.
+**Always use this instead of guessing neighborhoods from raw
+coordinates.** Returns the Stadsdel / Stadsdelsnämndsområde /
+Distrikt / Kvarter / Kommun polygons that contain the point, plus a
+`by_kategori` grouping for convenience. If the point is outside
+SBK's coverage, `containing` is empty with a warning — state the
+location is unidentifiable, do not invent.
 
----
+### `op="bbox"` — name → EPSG:3011 bbox (optionally buffered)
 
-## 5. `spatial(operation, ...)`
+Args: `name: str`, `buffer_m: float = 0.0`.
 
-Spatial ops producing new layers. The `operation` parameter uses a JSON-Schema
-enum so clients get autocomplete. Required argument set depends on `operation`:
+Thin convenience over `op="forward"`: takes the best match and
+returns its `bbox_3011`, optionally expanded by `buffer_m` on every
+side. Folds the "geocode → eyeball coords → build a bbox by hand"
+pattern into one call.
 
-| operation | required args | behavior |
-|---|---|---|
-| `select_by_location` | `layer`, `by_layer`, `predicate` | **Spatial WHERE**: rows of `layer` kept unchanged where their geom relates to ANY feature in `by_layer` by `predicate`. Predicates: `intersects` (default), `within`, `contains`, `dwithin` (+ `distance_m`). This is what you usually want for "buildings in district" / "DeSO containing point". |
-| `clip` | `layer`, `by_layer` | `ST_Intersection(layer.geom, ST_Union_Agg(by_layer.geom))`. Geometries are **modified**, trimmed to the clipping shape. Keeps `layer`'s attributes. |
-| `intersect` | `a_layer`, `b_layer` | **Geometric overlay.** One row per intersecting pair, `a.*` / `b.*` prefixed `a_` / `b_`, geometry = `ST_Intersection(a, b)`. Typically changes geometry kind (polygon × point → point). For a spatial join that keeps A's geometry, use `select_by_location` instead. |
-| `buffer` | `layer`, `distance_m` | `ST_Buffer(geom, distance_m)`, metres in EPSG:3011. |
-| `centroid` | `layer` | Per-feature `ST_Centroid`. |
-| `dissolve` | `layer`, `by_columns?` | `ST_Union_Agg(geom)` grouped by columns (or all). Adds `feature_count`. |
-| `convex_hull` | `layer`, `aggregate?` | Per-feature hull, or single aggregate hull with `aggregate=true`. |
-
-All provenance is merged from parents, deduped by `dataset_id`. The returned
-`geometry_type` is probed from the actual materialized rows (not inherited
-from a parent), so you can tell when an op changed the geometry kind.
+Returns `{name, kind, subkind, score, center_3011, bbox_3011, buffer_m}`
+or a `no_match` error.
 
 ---
 
-## 6. `stats(layer, columns?, group_by?, limit=100)`
+## 3. `load(op, ...)` — catalog pull OR inline injection
 
-Return a markdown aggregation table.
+Single entry point for getting data into the session.
 
-- Numeric columns → count / min / avg / max + non-null count.
-- String columns → count / distinct count.
-- Default `columns`: all numeric columns in the layer.
-- `group_by`: list of attribute columns to group by. Rows sorted by `n` DESC.
+### `op="catalog"` — pull 1..N catalog datasets
 
-Does not create a layer.
+Args: `dataset_ids: list[str]` (required) + per-dataset filters (single-id only): `bbox_3011`, `where`, `intersect_layer`, `layer_name`. Also `limit: int | None`.
 
----
+- Single id: all filters honoured. Server cap: 100,000 features.
+- Multiple ids: `bbox_3011` and `limit` apply across the set;
+  `where` / `intersect_layer` / `layer_name` are ignored (use
+  separate single-id calls if you need per-dataset filtering).
 
-## 7. `execute_sql(sql, description="", result_name?, geometry_column?)`
+`intersect_layer` is preferred over hand-crafted bboxes for irregular
+polygons (e.g. clipping to a Stadsdel) — pass the name of an
+already-loaded session layer and the dataset is filtered to features
+intersecting the union of its geometries.
 
-Read-only SQL escape hatch.
+Provenance: `SourceRef` from each catalog entry; if `intersect_layer`
+is used, the intersecting layer's sources are merged in.
 
-**Validation** (raises `sql_rejected`):
-- Parsed with `sqlglot` in DuckDB dialect.
-- Exactly one statement.
-- Statement must be `SELECT` / `WITH` / `UNION` / `Subquery`.
-- Rejects `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `DROP`, `ALTER`, `MERGE`, `COPY` anywhere in the tree.
+### `op="inline"` — inject LLM-provided rows
 
-**Layer-vs-table decision** (in order of precedence):
-1. If `geometry_column` is passed, layer mode is forced; the named column is cast to `GEOMETRY`.
-2. Otherwise the result schema is probed via `DESCRIBE (<sql>)` and any column typed `GEOMETRY*` triggers layer mode.
-3. Otherwise table mode returns up to 50 rows as markdown.
-4. If a BLOB column happens to have a geometry-ish name (`geom`, `geometry`, `shape`, …) in table mode, the response includes a `geometry_hint` telling you to re-run with `geometry_column=…` or explicit `::GEOMETRY` cast.
+Args: `data: list[dict]` (required, ≤ 1,000 rows), `source: str` (see
+below), `geometry_column: str | None`, `crs: str = "EPSG:4326"`,
+`layer_name: str | None`.
 
-**Execution** (raises `sql_failed` on runtime error):
-- 30-s wall-clock timeout via `threading.Timer` calling `conn.interrupt()`.
+**`source` is MANDATORY.** Provide it one of two ways:
+- Top-level `source="Booli.se 2026-03 scrape"` — broadcast to every
+  row. Use when all rows share one origin.
+- Per-row `source` field on each dict — use when rows come from
+  different origins (some from hitta.se, some from web search, some
+  from the user). The top-level `source` fills gaps for rows that
+  omit it.
 
-Session layers appear as regular tables. DuckDB spatial functions are loaded.
+Failing to provide either form returns `missing_arg`. Short specific
+source strings are the norm ("SL.se timetable 2026-04", "hitta.se
+manual lookup 2026-04-19"), not generic ones like "the internet" or
+"web search".
 
-Returns one of:
-- `{mode: "layer", layer_name, feature_count, geometry_type, description}`
-- `{mode: "table", rows, capped_at, description, markdown, geometry_hint?}`
-- `{error: "sql_rejected"|"sql_failed", detail}`
+If a column holds WKT strings, name it in `geometry_column` and it's
+parsed + reprojected from `crs` → EPSG:3011. Resulting layers carry
+`llm_sourced=True` in their provenance so `sources()` can surface
+"this was made up by the model" as a first-class fact.
 
----
+### Return shape (both ops)
 
-## 8. `sources(layer?)`
-
-Markdown report of provenance + operation chain. If `layer` is given, only that
-layer; otherwise all session layers.
-
-Per layer: feature count, creator tool, parent layers, operations applied
-(walking ancestors via `parent_layers`), deduped source references with
-publisher, license, URL, file path, retrieval date, and the `llm_sourced` flag
-for data injected by a future `create_layer` tool.
-
----
-
-## 9. `create_layer(name, data, source?, geometry_column?, crs="EPSG:4326")`
-
-Inject LLM-provided data as a new session layer. For lookup tables the LLM
-brings from external knowledge (a scrape, a manual curation, a published
-report) that it wants to join with catalog layers.
-
-- `data`: up to 1,000 rows as a list of dicts with identical keys.
-- `source`: short free-text description of where the data came from. Stored as
-  `llm_source_description` and always marked `llm_sourced=True` in provenance.
-- `geometry_column` + `crs`: if one column carries WKT strings, it's parsed and
-  reprojected to EPSG:3011. Default input CRS is WGS84 lng/lat (EPSG:4326).
-
-Materialized via pyarrow → DuckDB. Same tool interface as catalog layers after
-creation; filter/spatial/stats/execute_sql/export all work on it.
+`{loaded: [layer_summary, ...], errors: [{dataset_id, error, detail}],
+n_loaded: N}`. Single-dataset loads still return a 1-element
+`loaded` list for consistency.
 
 ---
 
-## 10. `export(layer, format="geojson")`
+## 4. `execute_sql(sql, description="", result_name=None, geometry_column=None)`
 
-Write a session layer to a downloadable file and return its URL.
+Run a validated, read-only SQL query against session layers. Single
+SELECT / WITH / UNION only — DDL / DML is rejected by a
+sqlglot-based parser. DuckDB spatial functions are available.
+Session layers are referenced by their names as regular tables.
 
-| format | extension | notes |
-|---|---|---|
-| `geojson` | `.geojson` | FeatureCollection reprojected to EPSG:4326 |
-| `gpkg` | `.gpkg` | OGC GeoPackage native EPSG:3011 |
-| `csv` | `.csv` | Attribute columns + geometry serialized as WKT |
-| `parquet` | `.parquet` | Columnar, Zstd-compressed, geometry as WKB |
+### Guardrails
 
-URL format: `/exports/<random-token>/<layer>.<ext>`. Token is a 16-byte
-URL-safe secret, TTL 24 h, files auto-purged on subsequent export calls.
-Returns size, expiry, and the layer's provenance for citation.
+- No semicolons, no multi-statement, no DDL, no DML.
+- No HTTP URLs, no abs paths, no `read_*`/`copy_*` file functions.
+- Numeric literals > 10M rejected as DoS protection (override by
+  referencing a column or computing the value).
+- 30-second wall-clock timeout (via `conn.interrupt()`).
+- 256 MB memory cap per session.
+- Rejects any identifier that doesn't resolve to a known session
+  layer or standard DuckDB system table.
 
----
+### Layer-vs-table decision
 
-## 11. `inspect(layer, n=3, include_geometry=false, offset=0, where?)`
+1. If `geometry_column` is set, layer mode is forced with that column
+   cast to GEOMETRY.
+2. Else the tool runs `DESCRIBE (sql)` and promotes to layer if any
+   column has type starting with `GEOMETRY`.
+3. Otherwise the query returns up to 50 rows as a markdown table. If
+   a column named `geom` / `geometry` exists but got demoted to BLOB
+   (common with cross-layer expressions), the response carries a
+   `geometry_hint` telling you to retry with `geometry_column='...'`.
 
-Raw row sampler. Markdown table. Hard caps: **25** rows without geometry, **10**
-with geometry (`geom_wkt` column). `where` optional SQL predicate, no `;`.
+### Returns
 
----
-
-## 12. `show(layers, title?)`
-
-Mark layers visible in the viewer; return their summaries and the viewer URL.
-Viewer pulls `/api/{session_id}/layer/{name}/geojson` per visible layer and
-auto-styles by geometry type.
-
----
-
----
-
-## Other tools (brief)
-
-A handful of tools that fit a category above but warrant only a one-line
-description here. Full docstrings live in `server.py`:
-
-- `bbox_from(name)`: resolve a Stadsdel / Distrikt / Kvarter name to its
-  bounding box in EPSG:3011. One call instead of geocode → spatial
-  intersection → bbox extraction.
-- `frequencies(layer, column, top=20)`: value-frequency table for one
-  attribute (count + percentage + cumulative percentage), sorted DESC.
-  The "show me the distribution of X" call.
-- `reverse_geocode(x_3011, y_3011)`: what Stadsdel / Distrikt /
-  Kvarter contains this point? Returns the matched admin polygons by
-  name. Use this rather than guessing place names from raw coordinates.
-- `inspect_locations(points, radius_m=100, layers?, columns?, per_layer_limit=5)`:
-  batch variant of `inspect_location`. Up to 500 points per call.
-- `render_map(layers, title?, width_px=1600, height_px=1000)`:
-  server-side PNG render. Editorial paper-toned backdrop, scale bar,
-  legend honoring the active `show()` style. Output URL valid for 24 h.
-  Use when you want a self-contained image for a slide / report rather
-  than the interactive viewer.
+- **Table mode** (no geometry detected): `{rows, columns,
+  markdown_table, row_count, truncated}`.
+- **Layer mode**: a layer summary identical to `load` / `derive`.
+  Pass `result_name` to name it explicitly; otherwise auto-generated.
 
 ---
 
-## Error envelope
+## 5. `derive(op, ...)` — new layer from an existing one
 
-All tools that can fail return a structured error object (not an exception):
+Nine sub-ops, all producing a new session layer. Provenance inherits
+from the source(s).
 
-```json
-{"error": "<short_code>", "detail": "<human-readable>"}
-```
+### Attribute filters
 
-Observed codes:
-- `unknown_dataset`, `load_failed`, `filter_failed`
-- `spatial_failed`, `missing_arg`, `unsupported_operation`
-- `sql_rejected`, `sql_failed`
-- `create_layer_failed`, `export_failed`
+- **`op="filter"`** (`layer`, `where`, `result_name?`) — SQL WHERE
+  → new layer. WHERE accepts any DuckDB-compatible predicate,
+  including spatial ones on the `geom` column
+  (`ST_Contains(geom, ST_Point(...))`, `ST_DWithin(geom, ..., 200)`).
+  For "features of A that relate to any feature of B", prefer
+  `op="select_by_location"` — it handles cross-layer predicates
+  directly.
+- **`op="top_n"`** (`layer`, `by`, `n=10`, `ascending=False`,
+  `result_name?`) — filter + ORDER BY + LIMIT in one call. `by` is
+  an SQL ordering expression
+  (e.g. `"population"`, `"ST_Area(geom)"`, `"median_income DESC NULLS LAST"`).
 
-Never a Python traceback. Never implementation hints beyond the immediate cause.
+### Spatial
 
----
+- **`op="clip"`** (`layer`, `by_layer`) — trim `layer`'s geometries
+  to the union of `by_layer`'s geometries. Geometries MODIFIED.
+- **`op="intersect"`** (`a_layer`, `b_layer`) — geometric overlay:
+  one row per intersecting pair, geometry = `ST_Intersection(a, b)`
+  (often changes geometry kind). For a spatial join that keeps A's
+  geometry unchanged, use `op="select_by_location"` instead.
+- **`op="select_by_location"`** (`layer`, `by_layer`,
+  `predicate="intersects" | "within" | "contains" | "dwithin"`,
+  `distance_m?`) — classic spatial WHERE: keep features of `layer`
+  (unchanged geometry + attributes) whose geom relates to ANY
+  feature in `by_layer` by `predicate`. `dwithin` requires
+  `distance_m`.
+- **`op="buffer"`** (`layer`, `distance_m`) — `ST_Buffer` in
+  EPSG:3011 metres.
+- **`op="centroid"`** (`layer`) — per-feature `ST_Centroid`.
+- **`op="dissolve"`** (`layer`, `by_columns?`) — union geometries;
+  optionally grouped by attribute columns. Adds a `feature_count`
+  column to the result.
+- **`op="convex_hull"`** (`layer`, `aggregate=False`) — per-feature
+  hull, or one aggregate hull for the whole layer with
+  `aggregate=True`.
 
-## What changed in Phase 2 vs Phase 1
-
-- **Tools**: +5 (`filter`, `spatial`, `stats`, `execute_sql`, `sources`). Phase 1 had `search_data`, `geocode`, `load`, `inspect`, `show`.
-- **`load()`**: new `where` and `intersect_layer` params. Feature cap raised 50k → 100k.
-- **`geocode()`**: composite street+number via spatial pairing; polygon-backed bbox for admin-kind matches.
-- **Provenance**: now propagates through every derivation. `parent_layers` + `provenance` union deduped by `dataset_id`.
-
-## What changed in Phase 3 vs Phase 2
-
-- **Tools**: +2 (`create_layer`, `export`). Total 12.
-- **New catalog datasets**: `deso_historical_changes` (SCB's official DeSO 2018→2025 mapping, 1,234 rows) and `deso_regso_mapping` (DeSO→RegSO for 6,160 rows).
-- **`load()` for parquet**: cap raised from 100 K to 10 M. Parquet is columnar and compact so the GPKG cap is inappropriate.
-- **DeSO geom column**: renamed `sp_geometry` → `geom` at normalize time, so every spatial layer in the catalog uses `geom` consistently.
-- **SCB dedup**: normalize step collapses the shadow-NULL duplicate rows that SCB publishes.
-- **Audits**: `catalog_audit.py` + `cross_ref_audit.py` run post-normalize and fail the pipeline on real errors.
-
----
-
-## What changed in Phase 4: LLM-native workflow
-
-- **Tools**: +14 (total **26**). New categories: in-place field ops,
-  transaction control, AI-native iteration.
-- **MCP annotations** on every tool (`readOnlyHint` / `destructiveHint`) so
-  clients can auto-approve safe calls without per-action prompts.
-- **Server `instructions`.** Multi-paragraph system prompt delivered with the
-  tool list at connection time. Covers workflow patterns, the CRS convention,
-  SCB privacy-suppression and DeSO-2018→2025 footguns, and the enrichment
-  loop (batch_iterate → annotate).
-- **`inspect` cap raised** from 25 → 200 (attributes only); the 10 cap with
-  geometry is unchanged.
-
-### 13. `list_layers()`
-
-Clean inventory: each layer's name, feature_count, geometry_type, bbox,
-columns, creator, parent_layers, notes, visibility flag. Plus
-`active_checkpoint` and `open_checkpoints`. Use this for orientation rather
-than `sources()` when you don't need provenance detail.
-
-### 14. `load_many(dataset_ids: list[str], bbox_3011?, limit?)`
-
-Bulk variant of `load`. Returns `{loaded: [summaries], errors: [per-dataset]}`.
-Single-call convenience when the LLM knows up front that it wants several
-related datasets; shared bbox/limit only. Use individual `load` calls when
-you need per-dataset arguments.
-
-### 15. `add_field(layer, name, expr, field_type?)`
-
-QGIS / ArcGIS Field Calculator. Add a column whose values are a DuckDB SQL
-scalar expression per row. Type auto-inferred unless `field_type` is supplied
-(`VARCHAR`, `DOUBLE`, `BIGINT`, `BOOLEAN`, `DATE`, `TIMESTAMP`). May reference
-other columns of the same layer or scalar subqueries against other session
-layers (useful for spatial-joined values).
-
-In-place. Reversible inside an active `checkpoint(...)`.
-
-### 16. `update_field(layer, name, expr, where?)`
-
-Overwrite an existing column. Optional WHERE restricts which rows are
-updated. In-place; reversible inside a checkpoint.
-
-### 17. `drop_field(layer, name)`
-
-Remove a column. Refuses to drop the geometry column (use `drop_layer` for
-that). In-place; reversible inside a checkpoint.
-
-### 18. `annotate(layer, values: dict, key_column="rowid")`
-
-Attach LLM-classified per-feature attributes in one call. Payload:
-
-```python
-values = {
-    rowid1: {"era": "functionalist", "confidence": 0.9, "note": "..."},
-    rowid2: {"era": "art-nouveau",    "confidence": 0.7},
-    ...
-}
-```
-
-New columns are created on the fly with type inferred from the values
-(`int`-only → BIGINT; mixed int/float → DOUBLE; bool → BOOLEAN; else
-VARCHAR). Cap: 10,000 keys per call. Pair with `batch_iterate` for larger
-layers. Reversible inside a checkpoint, snapshotted once per column
-regardless of how many rows are touched.
-
-### 19. `batch_iterate(layer, columns?, batch_size=200, cursor?, where?)`
-
-Cursor-paginated read for layers too large to inspect in one go. First call
-passes `layer` (and optionally `columns`, `where`, `batch_size`), response
-carries `rows`, `next_cursor`, `exhausted`. Subsequent calls pass
-`cursor=<next>`. Finish when `next_cursor` is null. Every batch includes a
-`rowid` column suitable for `annotate(..., key_column="rowid")`. Max 500
-rows per batch.
-
-### 20. `inspect_location(x_3011, y_3011, radius_m=100, layers?, per_layer_limit=5)`
-
-One-shot "what's here?" across many layers. For each session layer with
-geometry (or the subset named in `layers`), returns up to `per_layer_limit`
-features within `radius_m` of the point, sorted by distance, each annotated
-with `distance_m`.
-
-Natural conversational pattern: "what's at Sergels torg?" becomes one call
-instead of a chained geocode → spatial(select_by_location) → inspect per
-layer.
-
-### 21. `drop_layer(name)`
-
-Remove a layer from the session. Reversible inside a checkpoint (full layer
-snapshotted); otherwise irreversible.
-
-### 22. `rename_layer(old, new)`
-
-Rename. Reversible inside a checkpoint.
-
-### 23. `set_notes(layer, notes)`
-
-Attach free-text notes to a layer. Surfaces in `list_layers` and `sources`.
-For narrating *why* a layer exists ("filtered to pre-1940 stone buildings
-as a proxy for the historical core") so the reasoning is recoverable from
-the session state alone.
-
-### 24. `checkpoint(name)`
-
-Create a named checkpoint. Subsequent in-place mutations (`add_field`,
-`update_field`, `drop_field`, `annotate`, `drop_layer`, `rename_layer`)
-snapshot their pre-image column-scoped in a hidden side table. Storage cost
-scales with the *diff*, not the full layer. One checkpoint active at a time;
-nested checkpoints are not supported.
-
-### 25. `rollback(name)`
-
-Undo every in-place mutation made since `checkpoint(name)`. Snapshots are
-applied in reverse order then discarded.
-
-### 26. `commit(name)`
-
-Make all mutations since `checkpoint(name)` permanent. Discards the snapshot
-tables and frees the marker. The next mutation requires a fresh `checkpoint`
-to be reversible.
+Returns a layer summary.
 
 ---
 
-## Canonical AI-native workflow
+## 6. `edit_field(op, layer, ...)` — mutate a layer's columns in place
 
-```python
-# Setup
-load_many(["sbk_buildings", "deso_2025"])
-checkpoint("classify_era")
+Five sub-ops. All are reversible inside an active checkpoint covering
+`layer` (see `checkpoint`); without a covering checkpoint they're
+permanent.
 
-# Iteration loop
-out = batch_iterate("sbk_buildings", columns=["objectid", "byggar", "name"], batch_size=200)
-while True:
-    # LLM reasons about the batch → produces {rowid: {"era": ..., "confidence": ...}}
-    tags = classify_in_head(out["rows"])
-    annotate("sbk_buildings", values=tags)
-    if out["exhausted"]: break
-    out = batch_iterate(cursor=out["next_cursor"])
+### `op="add"` (`name`, `expr`, `field_type?`)
 
-# Verify, possibly iterate
-stats("sbk_buildings", columns=["era"], group_by=["era"])
-# if unhappy:
-#     rollback("classify_era")
-# else:
-set_notes("sbk_buildings", "era classified by LLM on 2026-04-19")
-commit("classify_era")
-export("sbk_buildings", format="gpkg")
-```
+Add a new column computed from a SQL expression. QGIS / ArcGIS
+Field-Calculator pattern. The expression is evaluated per row and
+may reference other columns of the same layer or scalar subqueries
+against other session layers. Type inferred from the expression
+result unless `field_type` is set
+(`VARCHAR` / `DOUBLE` / `BIGINT` / `BOOLEAN` / `DATE` / `TIMESTAMP`).
 
-## Response hints
+Example: `edit_field(op="add", layer="buildings", name="area_m2",
+                     expr="ST_Area(geom)")`.
 
-Most mutation tools include a `hint` field in their response flagging
-checkpoint state. E.g. *"Mutation is reversible. Call rollback('classify')
-to undo."* or *"No checkpoint active; this mutation is not reversible."*.
-Intended as teaching moments for LLMs just connecting.
+### `op="update"` (`name`, `expr`, `where?`)
 
----
+Overwrite an existing column's values from a SQL expression,
+optionally restricted by WHERE. Same semantics as `op="add"` but
+the column must exist. `where` limits which rows are updated; omitted
+means all rows.
 
-## What changed in the post-feedback pass
+### `op="drop"` (`name`)
 
-Structured response to the user-testing session friction points:
+Remove a column. Refuses the geometry column — use `layer(op="drop", ...)`
+for the whole layer.
 
-**Tools added (+3 → 29 total):**
-- `describe_dataset(id)`: full attribute schema for a single dataset. Paired
-  with a `verbose=False` default on `search_data` to keep context small.
-- `inspect_locations(points, ...)`: batch variant of `inspect_location`. Up
-  to 500 points per call.
-- `hide(layers)`: inverse of `show`. `layers=None` hides all.
+### `op="classify"` (`name`, `rules=[{when, then}]`, `default?`)
 
-**Response shape changes:**
-- `execute_sql` now returns `truncated: true` + a `warning` when the result
-  hits the 50-row cap, with a pointer to the `result_name=...` pagination path.
-- `annotate` echoes `keys_cap` every time, and includes a `hint` about
-  `create_layer` + `add_field` for >10 k workflows.
-- `inspect_location` reports `unknown_layers` and emits a `hint` when the
-  search radius turns up nothing or when the session has no geometric layers.
-  `columns` parameter filters returned attributes. NULL attributes are
-  elided to keep payload small.
-- Mutation responses now report `covering_checkpoints: [...]` (list of
-  checkpoints that would roll this mutation back), not just a single
-  `active_checkpoint`.
-- `batch_iterate` remembers the first-call `batch_size` across cursor calls,
-  so continuation calls default to the intended size. Explicit `batch_size`
-  on a cursor call still overrides.
-
-**Scoped, concurrent checkpoints:**
-- `checkpoint(name, layers=[...])`: scope to named layers. `layers=None`
-  (default) covers every layer, keeping back-compat.
-- Multiple checkpoints may be active at once. A mutation snapshots against
-  every covering active checkpoint, so nested or parallel workflows don't
-  couple.
-- `rollback` / `commit` now surface `other_active` in their response.
-
-**Public URL in responses:**
-- `show` and `export` return absolute URLs when the server is deployed
-  behind `GEODATA_PUBLIC_URL` (e.g.
-  `https://geo.benjaminhenriksson.com/view/<id>` rather than `/view/<id>`).
-
-**Viewer UX:**
-- Auto-refresh: viewer polls `/api/<sid>/version` every 2 s and re-syncs on
-  change. New layers appear, removed layers disappear, mutated layer data
-  refreshes in-place, no manual reload.
-- Popup precedence: click returns the feature from the *smallest-bbox*
-  layer, not the topmost. Other layers at the same point are listed
-  ("Also at this point: …") so you can drill into them if you want.
-- Layers re-ordered on draw: small-bbox layers drawn on top of large ones,
-  improving click-through and visual legibility.
-- Layer notes shown in the legend row.
-
-**SCB data fixes (re-normalized):**
-- Every SCB parquet now has a unified `value` numeric column. The SCB
-  convention of naming the value column after the first variable
-  (e.g. "Andel av befolkningen i inkomstklass") is gone.
-- Every SCB parquet carries `region_kind` ∈ {`deso`, `regso`, `kommun`,
-  `country`, `other`}, plus `region_code` and `region_name`. Filter with
-  `WHERE region_kind = 'deso'` instead of `LIKE '0180%'` hacks.
-- Catalog entries regenerated for all 31 SCB tables. Audits clean.
-
-**Instructions upgrade:**
-- New "When the LLM should push back, not plough on" section. Explicit
-  guidance to surface warnings / hints / truncation and to name missing
-  data rather than fabricate.
-- "Bulk enrichment pattern" example showing the canonical batch_iterate →
-  annotate loop.
-- Stronger preference for `load_many` over repeated `load` calls.
-- Pointer to `describe_dataset(id)` for attribute schemas.
-
----
-
-## Macro tools (post-feedback pass)
-
-Added to reduce round-trips under the per-turn tool-call caps that most
-web AI clients apply (claude.ai, ChatGPT, Gemini, etc. all impose some
-ceiling on how many tools a single turn can chain):
-
-### `top_n(layer, by, n=10, ascending=False, result_name=None)`
-
-filter + `ORDER BY` + `LIMIT` in one call. Produces a new layer with the
-top (or bottom) `n` rows. `by` is a SQL ordering expression; can be a
-column name, a function call, or a full expression. Provenance inherits
-from `layer`.
-
-### `baseline_stats(layer, expression, group_by=None)`
-
-Descriptive statistics (count / mean / median / p25 / p75 / min / max /
-stddev) for a SQL expression over a whole layer, optionally grouped.
-Returns `{stats: {...}}` for ungrouped or `{groups: [...]}` with
-group-by rows. Use for "compute city-wide median income as a baseline
-before comparing a subset."
-
-### `classify(layer, name, rules=[{when, then}], default=None)`
-
-CASE-WHEN-THEN shorthand. Adds a new column whose value is the `then`
-of the first matching rule. Reversible inside a covering checkpoint.
-Example:
+Add a categorical column whose value is chosen from the first
+matching rule. CASE-WHEN shorthand wrapping `op="add"`. Rules
+evaluated in order; first match wins. `default` sets the value for
+rows matching no rule (NULL if omitted).
 
 ```
-classify("deso", "income_band", rules=[
+edit_field(op="classify", layer="deso", name="income_band", rules=[
     {"when": "median < 300", "then": "low"},
     {"when": "median BETWEEN 300 AND 500", "then": "mid"},
     {"when": "median > 500", "then": "high"},
 ], default="unknown")
 ```
 
-### `export_and_cite(layer, format='gpkg')`
+### `op="annotate"` (`values`, `key_column="rowid"`, `dry_run=False`, `model?`)
 
-`export(layer, format)` + `sources(layer)` in one call. URL + full
-markdown citations. One round-trip for the last step of every
-publishable workflow.
+Attach LLM-classified per-feature attributes in one call. Columns
+are created on the fly if they don't exist (type inferred from the
+values: all-int → BIGINT, int/float mix → DOUBLE, bool → BOOLEAN,
+else VARCHAR). Up to 10,000 keys per call. Pair with
+`inspect(op="batch", ...)` for layers larger than you can reason
+about in one pass.
 
-### `export_many(layers, format='gpkg', merge_geojson=False)`
+```
+edit_field(op="annotate", layer="buildings", values={
+    "1": {"era": "functionalist", "confidence": 0.9, "note": "..."},
+    "2": {"era": "art-nouveau",    "confidence": 0.7},
+})
+```
 
-Export several layers under one 24-h download token.
+`key_column` defaults to `"rowid"` (DuckDB pseudo-column, stable
+within a session). Use a declared key column when one exists.
 
-- `format='gpkg'` (recommended): **one multi-layer `.gpkg` file**. Each
-  input layer preserved as its own GPKG layer with its native geometry
-  and attributes. Opens cleanly in QGIS/ArcGIS.
-- `format='geojson'` + `merge_geojson=True`: single `.geojson` with a
-  merged FeatureCollection; every feature gets `_layer: "<name>"` so
-  downstream consumers can split back apart.
-- `format='geojson'|'csv'|'parquet'` (merge_geojson=False, default for
-  those): one file per layer under the same token dir. List of URLs
-  returned.
+`dry_run=True` previews coverage without writing — returns
+`{dry_run: True, keys_matched, keys_unmatched, new_columns_would_create, ...}`.
+Use this before committing large annotation payloads to catch
+`key_column` mismatches.
 
-HUGEINT columns (a common byproduct of DuckDB's `SUM(CAST(x AS BIGINT))`
-auto-promotion) are auto-coerced to BIGINT at export so GeoJSON's
-JSON-number serialization doesn't fail with the cryptic "precision up to
-19" error.
+`model="claude-opus-4-7"` (or similar) is stored in per-column
+provenance so exported columns can be traced to their author.
+
+The response reports both key-level matching (`keys_matched` /
+`keys_unmatched`) and row-level coverage (`rows_total` /
+`rows_with_any_annotation` / `rows_without_annotation`) so you can
+distinguish "every key I sent hit a row" from "every row in the
+layer received a value". The two differ when your `values` dict
+covers only a subset.
+
+Reversible inside a checkpoint (pre-image snapshotted once per
+column, not per row).
 
 ---
 
-## Canonical join keys across every SCB table
+## 7. `inspect(op, ...)` — explore the session
 
-Every `scb_*` parquet now carries these columns in addition to the
-tabular raw:
+Four sub-ops. All `readOnlyHint`.
+
+### `op="layers"` — session inventory
+
+No arguments. Returns `{n_layers, layers: [{name, feature_count,
+geometry_type, bbox_3011, columns, created_by, parent_layers, notes,
+is_visible}, ...], active_checkpoint, open_checkpoints}`. Call this
+when the LLM needs to recall what it has, or when it looks
+overwhelmed by prior state.
+
+### `op="rows"` (`layer`, `n=10`, `include_geometry=False`, `offset=0`, `where?`)
+
+Sample rows from one layer as a markdown table. Hard caps: 200 rows
+without geometry, 10 rows with geometry (WKT; verbose — request
+only when needed).
+
+Returns `{layer, rows_shown, rows_total, cap, table_md}` where
+`table_md` is the rendered markdown (header + rows + a "N more not
+shown" footer when applicable). The `where` clause is sqlglot-validated
+before being spliced in.
+
+For very large layers use `op="batch"` (resumable cursor).
+
+### `op="batch"` (`layer` OR `cursor`, `columns?`, `batch_size=200`, `where?`)
+
+Paginate through a layer with a resumable cursor. First call: pass
+`layer` + optional `columns` / `where` / `batch_size`. Response
+carries `rows`, `next_cursor`, `exhausted`. Subsequent calls: pass
+`cursor=<next_cursor>` — all other args ignored.
+
+Every batch includes a `rowid` column (DuckDB pseudo-column) suitable
+for `edit_field(op="annotate", key_column="rowid", ...)`.
+
+### `op="at"` (`points`, `radius_m=100.0`, `layers?`, `columns?`, `per_layer_limit=3`)
+
+"What's near each of these points?" across session layers. Up to
+**500 points per call**; `per_layer_limit` caps features per layer
+per point (default 3; 1..25). For each point returns features
+sorted by distance in metres.
+
+`points` is always a list, even for a single point:
+
+```
+inspect(op="at", points=[{"id": "p1", "x_3011": 153844, "y_3011": 6578679}],
+        radius_m=500)
+```
+
+`columns` lets you trim each returned feature to a specific attribute
+set (keeps output small when you only need a name/id).
+
+Returns `{points: [{id, x_3011, y_3011, results: [{layer, features: [{...}]}, ...]}, ...],
+unknown_layers: [...], layers_considered: N}`.
+
+---
+
+## 8. `layer(op, ...)` — visibility + lifecycle
+
+Five sub-ops.
+
+### `op="show"` (`layers`, `title?`, `style?`)
+
+REPLACE the viewer's visible set with `layers` (empty list = show
+nothing). Pass `title=None` to preserve the existing panel title;
+`""` to clear it. Returns `{title, viewer_url, visible_layers,
+unknown_layers, styles}`.
+
+The text response is fully usable on its own — opening the viewer
+is optional.
+
+**Style spec** — see the [Style spec](#show-thematic-styling) section
+at the bottom. Invalid specs reject the whole call so you can fix
+and retry in one round.
+
+### `op="hide"` (`layers?`)
+
+Remove specific layers from the visible set. With `layers=None` /
+omitted, hides all.
+
+### `op="rename"` (`name`, `new_name`)
+
+Rename a layer. Reversible inside a covering checkpoint.
+
+### `op="drop"` (`name`)
+
+Remove a layer from the session. Reversible inside an active
+checkpoint (full layer snapshotted); not reversible otherwise.
+
+### `op="set_notes"` (`name`, `notes`)
+
+Attach free-text narration to a layer. Surfaces in
+`inspect(op="layers")` and `sources(layer)`. Useful for recording
+*why* a layer exists ("filtered to pre-1940 stone buildings as a
+proxy for the historical core") so the reasoning is recoverable from
+session state alone.
+
+---
+
+## 9. `export(layers, format="gpkg", cite=False, ...)`
+
+Export one or many session layers to a downloadable artefact.
+Returns URL(s) valid for 24 h. `layers` accepts a single string or a
+list.
+
+### Formats
+
+- **gpkg** (default, recommended): OGC GeoPackage in native
+  EPSG:3011. Single-layer → one `.gpkg`; multi-layer → one `.gpkg`
+  with every layer inside (QGIS / ArcGIS open it cleanly with each
+  layer's geometry type and attributes preserved). One URL.
+- **geojson**: EPSG:4326 FeatureCollection. Multi-layer emits one
+  file per layer by default; pass `merge_geojson=True` for a single
+  FeatureCollection where every feature has a `_layer` property
+  (polygons / lines / points end up mixed — downstream consumers
+  must tolerate it).
+- **csv**: attribute columns + geometry as WKT.
+- **parquet**: columnar, zstd-compressed, geometry as WKB.
+- **png**: server-rendered styled map artefact. Honors the current
+  `layer(op="show")` style. Paper-toned editorial backdrop (no tiled
+  basemap — the server sandbox denies outbound egress, and the
+  editorial palette reads cleaner than a Carto tile anyway). Args:
+  `title?`, `legend=True`, `width_px=1600`, `height_px=1000`.
+
+### `cite=True`
+
+Bundle a provenance markdown block alongside the URL(s). Single-layer:
+`citations_markdown` on the response. Multi-layer: same key carries
+the deduped union across all input layers. Folds the one-call
+"ship a publishable artefact" pattern.
+
+### Return shape
+
+- Single-layer non-png:
+  `{layer, format, url, file_name, size_bytes, expires_at, provenance, ...}`.
+- Multi-layer: `{files: [{url, size_bytes, layer?}, ...], format,
+  expires_at, ...}` (plus `citations_markdown` when `cite=True`).
+- PNG: `{url, format: "png", width, height, bbox_3011, size_bytes,
+  expires_in_s, hint}`.
+
+URLs are absolute when `GEODATA_PUBLIC_URL` is configured on the
+server; otherwise relative (`/exports/<token>/<filename>`). Links
+auto-expire after 24 h.
+
+---
+
+## 10. `sources(layer=None)`
+
+Return a structured provenance report (publisher, licence, URL,
+retrieval date, operations applied) for a layer or all session
+layers, as markdown. Use this to cite where data came from after a
+multi-step analysis.
+
+Output sections per layer:
+- Header: name, feature count, tool that created it.
+- Derived from: parent layer names (recursively).
+- Operations applied: timeline of tool calls with their descriptions.
+- Source data: one block per upstream dataset (publisher, licence,
+  URL, retrieved-on, llm_sourced flag).
+- Notes: any free-text from `layer(op="set_notes")`.
+- Column provenance: per-column author when columns were written by
+  `edit_field` (with `model` parameter).
+
+---
+
+## 11. `checkpoint(op, name, ...)` — savepoints
+
+Named savepoints that make in-place mutations reversible. A session
+isn't a linear log of edits; it's a set of named savepoints that can
+be rolled back independently. See `docs/design.md` for the rationale.
+
+### `op="create"` (`name`, `layers?`)
+
+Snapshot mutations going forward.
+
+- `layers=None` (default): covers **every** layer. Any in-place
+  mutation is tracked.
+- `layers=["a", "b"]`: covers only those layers. Mutations to other
+  layers are NOT snapshotted under this checkpoint — use a separate
+  scoped checkpoint for them.
+
+Multiple checkpoints can be active simultaneously. A mutation
+covered by more than one active checkpoint is snapshotted for each.
+Storage cost is column-scoped (O(changed columns × rows)), not
+layer-wide. A checkpoint on a 79k-row layer that only rewrites two
+columns stores two 79k-row columns, not 158k duplicates.
+
+### `op="rollback"` (`name`)
+
+Restore every mutation made since `op="create"` for this name.
+Discards the checkpoint and its snapshots.
+
+### `op="commit"` (`name`)
+
+Make all mutations since `op="create"` for this name permanent.
+Discards snapshots, reclaims storage.
+
+### Covered mutations
+
+`edit_field` (add / update / drop / classify / annotate), `layer`
+(rename / drop). `load` / `execute_sql(result_name=...)` / `derive`
+create new layers and are not "mutations" in the checkpoint sense
+(drop the resulting layer if you want to undo them).
+
+---
+
+## Cross-cutting: canonical SCB join keys
+
+Every `scb_*` parquet now carries these six columns in addition to
+the raw `region` / `region_kind` / `region_code` / `region_name`:
 
 - `desokod`: DeSO code (9 chars), equals `region_code` when
   `region_kind='deso'`. Join to `deso_2025.desokod` / `deso_2018.desokod`.
-- `desokod_2025`: 2025-grid equivalent of `desokod`. Bridges 2018 → 2025
-  via `deso_historical_changes`. Equals `desokod` when the DeSO is
-  unchanged since 2018.
-- `regsokod`, `regso_name`: parent RegSO. Joined via `deso_regso_mapping`.
+- `desokod_2025`: 2025-grid equivalent of `desokod`. Bridges 2018 →
+  2025 via `deso_historical_changes`. Equals `desokod` when the
+  DeSO is unchanged since 2018.
+- `regsokod`, `regso_name`: parent RegSO. Joined via
+  `deso_regso_mapping`.
 - `kommunkod`, `kommun_name`: parent kommun. Joined via
   `deso_regso_mapping`.
 
-All six are NULL for non-DeSO rows (RegSO / kommun / country). Prefer
-them over the raw `region` column for joins; they're uniform across
-the 31 SCB tables.
+All six are NULL for non-DeSO rows (RegSO / kommun / country).
+Prefer them over the raw `region` column for joins; they're uniform
+across the 31 SCB tables.
 
 ---
 
 ## Richer default responses
 
-`load` / `filter` / `spatial` / `create_layer` / `top_n` / `classify` /
-`execute_sql` (layer mode) now return a `quick_stats` block and a 3-row
-`sample` by default, in addition to the existing feature_count / bbox /
-attributes / provenance. Skipped for layers above
-`GEODATA_QUICK_STATS_CAP` (200k features by default). Saves the typical
-"call stats() and inspect() after load" round-trip.
+`load`, `derive`, `execute_sql` (layer mode), and the spatial ops
+return a `quick_stats` block and a 3-row `sample` by default, in
+addition to the existing feature_count / bbox / attributes /
+provenance. Skipped for layers above `GEODATA_QUICK_STATS_CAP` (200k
+features by default). Saves the typical "call stats() and inspect()
+after load" round-trip.
 
 ---
 
-## `show` thematic styling
+## `layer(op="show")` thematic styling
 
-`show(layers, style={...})` accepts a per-layer style spec:
+`layer(op="show", layers=[...], style={...})` accepts a per-layer
+style spec:
 
 ```
-show(["buildings"], style={
+layer(op="show", layers=["buildings"], style={
     "buildings": {
         "column": "era",
         "scale": "categorical",
@@ -664,6 +639,50 @@ show(["buildings"], style={
 ```
 
 Linear palettes: `"scale": "linear"` + `"palette": ["#lo", "#hi"]`.
-Unstyled layers keep their default solid color. Styles persist in
-session state and are consumed automatically by the viewer's 2 s
-auto-refresh poll.
+Categorical with no palette auto-assigns from a default set.
+
+Four optional channels per layer:
+
+- **color** (via `column` + `scale` + `palette`) — required for any
+  non-default rendering.
+- **size**: `{"column": "<attr>", "range": [lo, hi]}` — linear map
+  of numeric column → marker size (points/lines only).
+- **opacity**: `{"column": "<attr>", "range": [lo, hi]}` — 0..1.
+- **stroke**: `{"column": "<attr>", "range": [lo, hi]}` — stroke
+  width (polygons/lines only).
+
+Use them to double-encode features (e.g. color = category, size =
+importance). Unstyled layers keep their default solid color. Styles
+persist in session state and are consumed automatically by the
+viewer's 2 s auto-refresh poll.
+
+---
+
+## Error codes
+
+Every error response has `error`, `detail` (prefixed
+`[server-side]`), and `origin` fields. Treat them as coming from the
+MCP server's host, not the client's local machine. Do NOT try to
+mkdir/chmod/debug paths locally — any filesystem references are on
+the server.
+
+- `unknown_dataset` — `catalog(id=...)` or `load(op="catalog")` with
+  a bad id. Call `catalog(query=...)` to list available datasets.
+- `sql_rejected` — `execute_sql` validator blocked the SQL; `detail`
+  names the rule.
+- `sql_failed` — `execute_sql` hit DuckDB execution error; check
+  column names / types.
+- `op_failed` — generic operation error; `detail` explains.
+- `missing_arg` — required argument for the chosen `op` was missing.
+- `unsupported_operation` — `op=...` value isn't one of the accepted
+  literals. Response carries `supported` with the valid set.
+- `too_many_points` — `inspect(op="at")` with > 500 points. Batch
+  smaller.
+- `unknown_layer` — referenced a layer name not in the session.
+  Response carries `available` listing what IS in the session.
+- `invalid_style` — `layer(op="show")` style spec rejected;
+  `detail` names the offending key.
+- `no_match` — `geocode(op="bbox")` found nothing inside Stockholm
+  coverage.
+- `session_expired` — idle > 30 min; response carries a `replay`
+  block with the operation log so you can reconstruct.

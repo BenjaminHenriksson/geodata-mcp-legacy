@@ -46,8 +46,8 @@ are a deployment concern, not part of the public contract.
 
 Loads `catalog.json` at startup, validates entries against the
 `DatasetEntry` dataclass, builds a fuzzy-search corpus (Swedish + English
-combined). One entry per dataset; the full list is what `search_data`
-and `describe_dataset` work over.
+combined). One entry per dataset; the full list is what the `catalog`
+MCP tool works over (search + describe modes).
 
 Key fields per entry: `id`, `name_sv`/`name_en`, descriptions,
 `source_type` (gpkg / parquet), `file_path`, `geometry_type`,
@@ -65,10 +65,10 @@ CRS guessing at load time.
 
 ### `operations/`: the workhorse package
 
-All the verbs the MCP exposes (filter, spatial, stats, execute_sql,
-macro helpers, annotate, add_field, checkpoint/rollback/commit, exports,
-frequencies). Every function is session-scoped; there is no global DuckDB
-connection.
+All the verbs the 11 MCP tools multiplex over — the tool layer in
+`server.py` is a thin dispatch surface; the actual geometry / SQL /
+checkpoint logic lives here. Every function is session-scoped; there
+is no global DuckDB connection.
 
 Split into focused submodules so each file stays readable:
 
@@ -77,8 +77,11 @@ Split into focused submodules so each file stays readable:
 - `sql.py`: `execute_sql` + `_validate_sql` (the sqlglot-backed sandbox).
 - `spatial.py`: clip, buffer, centroid, dissolve, convex_hull,
   intersect, select_by_location.
-- `query.py`: filter, stats, frequencies, baseline_stats, top_n,
-  classify, batch_iterate.
+- `query.py`: filter_layer, stats, frequencies, baseline_stats,
+  top_n, classify, batch_iterate. Of these, `stats` / `frequencies` /
+  `baseline_stats` are internal only — not surfaced as MCP tools
+  (expressible via `execute_sql` with a CTE); the rest drive `derive`
+  and `inspect`.
 - `layers.py`: create_layer, drop_layer, rename_layer, list_layers,
   set_notes, hide_layers.
 - `fields.py`: add_field, update_field, drop_field, annotate.

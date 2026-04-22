@@ -11,7 +11,8 @@ of scope. Honesty over ambition.
   city-plan data. SCB joins with canonical keys, SBK polygons,
   building-level analysis. The 80-percent case of municipal work.
 - **LLM-written attribute columns** with tracked provenance. The
-  annotate → commit → export → cite loop is clean and trustworthy.
+  `edit_field(op="annotate") → checkpoint(op="commit") → export →
+  sources` loop is clean and trustworthy.
 - **Reversible experimentation** via scoped checkpoints. The LLM can
   try things and back out cheaply.
 - **Session persistence** across service restarts. A paused analysis
@@ -117,7 +118,7 @@ Roughly in priority order, by impact-per-day-of-work:
 3. **Routing + isochrones.** Biggest accessibility-analysis unlock.
    Heavy; requires a routing engine. ~4-5 days.
 4. **Audit log for execute_sql.** Plumbing task; straightforward. ~½ day.
-5. **SVG export from render_map.** Small; adds a format. ~½ day.
+5. **SVG export from `export(format="png")`.** Small; adds a format. ~½ day.
 6. **Viewer labelling.** Non-trivial; label placement is its own
    topic. Defer until the demo actually needs it.
 
@@ -128,15 +129,15 @@ Roughly in priority order, by impact-per-day-of-work:
 Some of the current decisions could be reversed if the use case
 demands:
 
-- **Outbound-egress deny.** The sandbox currently blocks `render_map`
-  from using tile basemaps, blocks WMS consumption, blocks Nominatim
-  fallback. If confidence in the `_validate_sql` SQL sandbox and the
-  overall hardening improves, a targeted egress allow-list is
-  defensible.
+- **Outbound-egress deny.** The sandbox currently blocks the PNG
+  renderer from using tile basemaps, blocks WMS consumption, blocks
+  Nominatim fallback. If confidence in the `_validate_sql` SQL
+  sandbox and the overall hardening improves, a targeted egress
+  allow-list is defensible.
 - **Paper-tone default map.** Some users will want standard OSM
   tiles for orientation. The viewer lets them override; the renderer
-  doesn't. Could add a `style="positron"` option to `render_map`
-  post-egress-relaxation.
+  doesn't. Could add a `style="positron"` option to
+  `export(format="png")` post-egress-relaxation.
 - **Single invite code.** Serviceable for small demos; breaks for 50+
   users. Per-user codes with expirations is the natural next step.
 - **No session ACL.** Anyone with a viewer URL sees its contents. This

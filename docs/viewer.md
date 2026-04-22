@@ -184,9 +184,9 @@ needed.
 
 Below the meta row, a small "authored" line:
 
-- `LLM: era, note`: columns written by `annotate`.
-- `derived: slope_deg`: columns written by `add_field` or
-  `update_field` with a SQL expression.
+- `LLM: era, note`: columns written by `edit_field(op="annotate")`.
+- `derived: slope_deg`: columns written by `edit_field(op="add")` or
+  `edit_field(op="update")` with a SQL expression.
 
 These only appear if the server's `_layer_summary` includes
 `column_provenance`. It's a visual cue that the layer carries model- or
@@ -235,7 +235,7 @@ panel rehydrates correctly after a server restart.
 
 There's no "hide panel" toggle for the layers and basemap. The map
 always has panel overlay. If someone wants a clean map for a
-screenshot, `render_map()` is the answer.
+screenshot, `export(format="png")` is the answer.
 
 ---
 
@@ -269,5 +269,6 @@ viewer doesn't burn CPU when it's not being looked at.
   GeoJSON sources transparently.
 - **No clustering.** If a layer has > 10 k points, the map gets visually
   dense. We haven't added clustering because the LLM is better at
-  filtering the layer upstream via `filter()` or `top_n()` than the
-  viewer is at collapsing points post-hoc.
+  filtering the layer upstream via `derive(op="filter")` or
+  `derive(op="top_n")` than the viewer is at collapsing points
+  post-hoc.

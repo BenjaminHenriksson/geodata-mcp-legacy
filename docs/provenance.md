@@ -37,10 +37,10 @@ So any layer three operations deep still knows its original sources.
 
 ### LLM-sourced layers
 
-`create_layer` accepts `llm_sourced=True, llm_source_description="..."`.
-This flags geometry produced by the model (typed coordinates, hand-built
-polygons) as not having a provenance chain back to open data. The
-rendered `sources()` output says:
+`load(op="inline")` flags geometry produced by the model (typed
+coordinates, hand-built polygons) as not having a provenance chain
+back to open data — the `source` argument is mandatory and every row
+carries it. The rendered `sources()` output says:
 
 ```
 **LLM-sourced**: model-drawn polygons
@@ -69,13 +69,15 @@ authoring record:
 ```
 
 The `model` field is whatever string the calling client passes to
-`annotate(model=...)`: `claude-opus-4-7`, `gpt-5`, `gemini-2.5-pro`,
-`qwen3-max`, anything. The server doesn't validate it; it just records
-it so the downstream reviewer can see which model wrote which column.
+`edit_field(op="annotate", model=...)`: `claude-opus-4-7`, `gpt-5`,
+`gemini-2.5-pro`, `qwen3-max`, anything. The server doesn't validate
+it; it just records it so the downstream reviewer can see which model
+wrote which column.
 
 Columns absent from this dict are assumed to come from the loaded
-source (no in-session authoring). The `annotate`, `add_field`,
-`update_field` operations write into this dict; `drop_field` removes.
+source (no in-session authoring). `edit_field` with
+op ∈ {add, update, classify, annotate} writes into this dict;
+op="drop" removes.
 
 ### Why two provenance levels
 
@@ -104,16 +106,16 @@ and the in-session edits in one place.
 ### `sources(layer)` (markdown)
 
 ```
-### Layer: `my_annotated_stadsdelar`  (117 features, created by `annotate`)
+### Layer: `my_annotated_stadsdelar`  (117 features, created by `edit_field`)
 Derived from: `sbk_admin_polygons`
 
 **Operations applied** (root → result):
-- `load(dataset_id='sbk_admin_polygons', ...)` → `sbk_admin_polygons`: loaded
-- `filter(layer='sbk_admin_polygons', where="KATEGORI='Stadsdel'")` → ...
-- `annotate(layer='sbk_admin_polygons', n_keys=117, attributes=['era'],
-            key_column='NAMN')` → `sbk_admin_polygons`: annotated 117/117 keys
-- `add_field(layer='sbk_admin_polygons', name='area_m2', expr='ST_Area(geom)')`
-            → `sbk_admin_polygons`: added area_m2
+- `load(op='catalog', dataset_ids=['sbk_admin_polygons'])` → `sbk_admin_polygons`: loaded
+- `derive(op='filter', layer='sbk_admin_polygons', where="KATEGORI='Stadsdel'")` → ...
+- `edit_field(op='annotate', layer='sbk_admin_polygons', n_keys=117,
+              attributes=['era'], key_column='NAMN')` → annotated 117/117 keys
+- `edit_field(op='add', layer='sbk_admin_polygons', name='area_m2', expr='ST_Area(geom)')`
+              → added area_m2
 
 **Sources** (deduplicated):
 1. **SBK Stadskarta — Administrativa polygoner** (`sbk_admin_polygons`)
@@ -125,9 +127,9 @@ Derived from: `sbk_admin_polygons`
 
 **Column attribution** (columns written in-session, distinct from the
 layer's loaded sources above):
-- `area_m2` — derived via `add_field` at 2026-04-19T16:33:05Z
+- `area_m2` — derived via `edit_field(op='add')` at 2026-04-19T16:33:05Z
     expr: `ST_Area(geom)`
-- `era` — llm via `annotate` at 2026-04-19T16:32:01Z (model: claude-opus-4-7)
+- `era` — llm via `edit_field(op='annotate')` at 2026-04-19T16:32:01Z (model: claude-opus-4-7)
 ```
 
 ### `_layer_summary` (dict, returned by load/filter/show/etc.)
@@ -198,8 +200,8 @@ link.
   can write wrong values into an `era` column; provenance only records
   *that* the LLM wrote them, not whether they're right.
 - **Does not defend against deliberate tampering.** A malicious caller
-  can `update_field` to overwrite genuine values and the column
-  provenance records the override but doesn't prevent it.
+  can `edit_field(op="update", ...)` to overwrite genuine values and
+  the column provenance records the override but doesn't prevent it.
 - **Does not cryptographically sign exports.** The citations are plain
   text in the response; a downstream actor could strip them. If
   non-repudiation becomes a requirement, we'd need signing.
@@ -240,10 +242,10 @@ and [Viewer](viewer) for the on-disk format and panel UX respectively.
 ### Every op carries provenance plumbing
 
 Code is slightly heavier than a minimal implementation. A typical
-derivation like `filter(layer, where)` has to read the parent's
-provenance and write it into the derived `LayerMeta`. `column_provenance`
-adds a stamp-on-write step to every attribute-mutating op. Accepted
-cost.
+derivation like `derive(op="filter", layer, where)` has to read the
+parent's provenance and write it into the derived `LayerMeta`.
+`column_provenance` adds a stamp-on-write step to every
+attribute-mutating op. Accepted cost.
 
 ### Column-provenance overwrites on re-annotate
 

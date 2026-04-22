@@ -1,20 +1,17 @@
-"""FastMCP server exposing the Phase 1 tools.
+"""FastMCP server exposing the Geodata MCP tool surface.
 
-Run for stdio (testing with Claude Desktop / mcp CLI):
+Run stdio (Claude Desktop / mcp CLI):
     uv run python -m geodata_mcp
 
-Run as HTTP/SSE (deployment):
+Run HTTP (deployment, also serves the viewer at /view/{session_id}):
     uv run python -m geodata_mcp --http --port 8000
-
-The HTTP mode also serves the viewer at /view/{session_id}.
 """
 from __future__ import annotations
 
 import argparse
-import contextlib
-import json
+import functools
+import os
 from pathlib import Path
-
 from typing import Literal
 
 from fastmcp import Context, FastMCP
@@ -31,13 +28,12 @@ from .operations import (
     annotate as op_annotate,
     batch_iterate as op_batch_iterate,
     checkpoint as op_checkpoint,
+    classify as op_classify,
     commit as op_commit,
     create_layer as op_create_layer,
     drop_field as op_drop_field,
     drop_layer as op_drop_layer,
     execute_sql as op_execute_sql,
-    baseline_stats as op_baseline_stats,
-    classify as op_classify,
     export_and_cite as op_export_and_cite,
     export_layer as op_export,
     export_layers as op_export_layers,
@@ -46,365 +42,225 @@ from .operations import (
     inspect_location as op_inspect_location,
     inspect_locations as op_inspect_locations,
     list_layers as op_list_layers,
-    reverse_geocode as op_reverse_geocode,
     rename_layer as op_rename_layer,
+    reverse_geocode as op_reverse_geocode,
     rollback as op_rollback,
     set_notes as op_set_notes,
     sources as op_sources,
     spatial_buffer, spatial_centroid, spatial_clip, spatial_convex_hull,
     spatial_dissolve, spatial_intersect, spatial_select_by_location,
-    stats as op_stats,
     top_n as op_top_n,
     update_field as op_update_field,
 )
 from .session import REGISTRY, Session, SessionExpired
 
 ROOT = Path(__file__).resolve().parents[1]
-
-# Public URL prefix for viewer / export links. Empty → relative paths (dev).
-# Production: set GEODATA_PUBLIC_URL=https://geo.benjaminhenriksson.com.
-import os as _os
-PUBLIC_URL = _os.environ.get("GEODATA_PUBLIC_URL", "").rstrip("/")
+PUBLIC_URL = os.environ.get("GEODATA_PUBLIC_URL", "").rstrip("/")
 
 
 def _abs_url(path: str) -> str:
-    """Prepend PUBLIC_URL if set, else return as-is (relative)."""
     if PUBLIC_URL and path.startswith("/"):
         return f"{PUBLIC_URL}{path}"
     return path
 
 
-# One catalog instance for the lifetime of the server.
 CATALOG = Catalog.load()
 
 SERVER_INSTRUCTIONS = """\
 # Geodata MCP — Stockholm open geodata
 
-This server exposes Swedish open geodata (SCB DeSO + Stockholm SBK Stadskarta)
-to LLM clients via a session-scoped DuckDB spatial backend. Everything is
-pre-filtered to Stockholm kommun (kommunkod `0180`) in EPSG:3011.
+Swedish municipal geodata (SCB DeSO + Stockholm SBK Stadskarta + OSM
+addresses) for LLM-driven analysis. Session-scoped DuckDB + Spatial,
+all layers in EPSG:3011 (SWEREF 99 18 00; Stockholm-local metres),
+filtered to Stockholm kommun (kommunkod `0180`). 65 datasets.
 
-## Core workflow pattern
+## Tools (11)
 
-1. `search_data(query, verbose=False)` — fuzzy-find catalog datasets (SV+EN).
-   65 datasets total. `verbose=False` (default) returns compact summaries; call
-   `describe_dataset(id)` for the full attribute schema once you know what you want.
-2. **Prefer `load_many([ids])` over repeated `load(id)`** when you need more
-   than one dataset — one round-trip vs. N. Fall back to single `load` only
-   when per-dataset bbox/where are needed.
-3. Analyse:
-   - `filter` / `spatial` / `stats` / `execute_sql` — derive new layers (immutable).
-   - `add_field` / `update_field` / `drop_field` — mutate a layer's attribute
-     table in place (QGIS Field-Calculator style).
-   - `annotate(layer, {id: {...}})` — attach LLM-classified per-feature
-     attributes in one call (up to 10,000 keys).
-   - `batch_iterate(layer, ...)` — paginate large layers with a cursor to feed
-     `annotate`.
-   - `inspect_location(x, y, radius_m)` — "what's here?" one point, all layers.
-   - `inspect_locations(points, radius_m)` — same but for many points at once.
-4. Visualize: `show(layers)` + open the returned viewer URL.
-5. Cite with `sources(layer)` then `export(layer, format)` for a download URL.
+1. `catalog(query?, id?, verbose?)` — fuzzy-search datasets; pass `id` for full attribute schema.
+2. `geocode(op, ...)` — `"forward"` (name→coords), `"reverse"` (coords→admin area), `"bbox"` (name→bbox).
+3. `load(op, ...)` — `"catalog"` pulls 1..N datasets by id; `"inline"` injects LLM-provided rows (`source` mandatory).
+4. `execute_sql(sql, ...)` — read-only DuckDB+Spatial. 30 s timeout. DDL/DML/file I/O rejected.
+5. `derive(op, ...)` — new layer from existing: `"filter"`, `"top_n"`, `"clip"`, `"intersect"`, `"select_by_location"`, `"buffer"`, `"centroid"`, `"dissolve"`, `"convex_hull"`.
+6. `edit_field(op, layer, ...)` — mutate columns in place: `"add"`, `"update"`, `"drop"`, `"classify"`, `"annotate"`. Reversible inside a checkpoint.
+7. `inspect(op, ...)` — `"layers"` (session inventory), `"rows"` (sample), `"batch"` (cursor pagination), `"at"` (spatial "what's here" for 1..500 points).
+8. `layer(op, ...)` — visibility + lifecycle: `"show"`, `"hide"`, `"rename"`, `"drop"`, `"set_notes"`.
+9. `export(layers, format, cite?)` — gpkg/geojson/csv/parquet/png. `cite=True` bundles provenance markdown. PNG = server-rendered map artefact.
+10. `sources(layer?)` — provenance markdown for citations.
+11. `checkpoint(op, name, ...)` — `"create"` a savepoint, `"rollback"` to undo, `"commit"` to make permanent.
 
-## Reversible mutations via checkpoint / rollback
+## Core workflow
 
-In-place mutations (`add_field`, `update_field`, `drop_field`, `annotate`,
-`drop_layer`, `rename_layer`) are reversible if you wrap them in a checkpoint:
+```
+catalog(query="income")
+geocode(op="forward", name="Tekniska nämndhuset")  # → (152699, 6579781)
+load(op="catalog", dataset_ids=["deso_2025", "scb_income_structure"])
+execute_sql(sql='''
+  WITH here AS (
+    SELECT desokod FROM deso_2025
+    WHERE ST_Contains(geom, ST_Point(152699, 6579781))
+  )
+  SELECT år, value AS mean_tkr
+  FROM scb_income_structure i JOIN here h ON i.desokod_2025 = h.desokod
+  WHERE tabellinnehåll='Medelvärde för samtliga, tkr' AND kön='totalt'
+    AND value IS NOT NULL
+  ORDER BY år DESC LIMIT 3
+''')
+sources()
+```
 
-    checkpoint("before_enrichment")                     # snapshots whatever mutates
-    # ... mutations ...
-    rollback("before_enrichment")                        # undo everything
-    # or
-    commit("before_enrichment")                          # make permanent
+## Reversible in-place mutations via checkpoint
 
-**Scoped checkpoints** — pass `layers=[...]` to restrict the checkpoint to
-specific layers:
+`edit_field` and `layer` ops (rename/drop) are reversible if wrapped in
+a checkpoint:
 
-    checkpoint("era_work", layers=["buildings"])         # only snapshots `buildings`
-    add_field("buildings", "era", "...")                 # covered
-    add_field("roads", "surface", "...")                 # NOT in this checkpoint's scope
+```
+checkpoint(op="create", name="tag", layers=["buildings"])
+edit_field(op="classify", layer="buildings", name="era",
+           rules=[{"when": "byggar<1940", "then": "historic"},
+                  {"when": "byggar>=2000", "then": "modern"}],
+           default="mid")
+# inspect; then either:
+checkpoint(op="rollback", name="tag")    # undo
+checkpoint(op="commit", name="tag")       # make permanent
+```
 
-Multiple checkpoints can be active simultaneously (on non-overlapping or
-overlapping scopes — a mutation snapshots for every active checkpoint that
-covers that layer). Snapshots are column-scoped (O(changed columns × rows)).
-
-## Macro tools — prefer these for common composite patterns
-
-These exist to save round-trips under claude.ai's per-turn tool cap:
-
-- `top_n(layer, by, n=10)` — filter + ORDER BY + LIMIT in one call.
-  Produces a new layer with the top (or bottom) N rows.
-- `baseline_stats(layer, expression, group_by=?)` — count/mean/median/
-  p25/p75/min/max/stddev for an expression over a whole layer (or
-  grouped). Skip the hand-rolled CTE.
-- `classify(layer, name, rules=[{when, then}], default=?)` — CASE-WHEN
-  shorthand that adds a categorical column. One call, checkpoint-aware,
-  logged.
-- `export_and_cite(layer, format='gpkg')` — single-call export +
-  provenance markdown.
-- `export_many(layers, format='gpkg')` — multi-layer export. `gpkg`
-  yields one file with every layer; geojson/csv/parquet yield one file
-  per layer; `merge_geojson=True` emits a single FeatureCollection with
-  a `_layer` property per feature.
+Pass `layers=[...]` to scope the checkpoint; multiple can be active at
+once (column-scoped snapshots, not full-layer copies).
 
 ## Canonical join keys across every SCB table
 
-Every `scb_*` parquet now carries these columns (NULL when
-`region_kind != 'deso'`):
+Every `scb_*` parquet carries: `desokod` (raw), `desokod_2025`
+(bridges 2018→2025 grid changes via `deso_historical_changes`),
+`regsokod`, `regso_name`, `kommunkod`, `kommun_name`. Prefer these
+canonical columns over the raw `region` column — they're uniform
+across all SCB tables and safe to join against DeSO polygons.
 
-  - `desokod` — DeSO code as found in the raw data. Join to
-    `deso_2025.desokod` / `deso_2018.desokod`.
-  - `desokod_2025` — 2025-grid equivalent. If the source table used
-    2018 codes and the DeSO changed between years, this bridges via
-    `deso_historical_changes`. Use this to join against `deso_2025`
-    polygons reliably.
-  - `regsokod`, `regso_name`, `kommunkod`, `kommun_name` — parent
-    RegSO and kommun, looked up via `deso_regso_mapping`.
+## Bulk enrichment
 
-The raw `region` column is still there for provenance. Prefer the
-canonical columns for joins — they're uniform across all SCB tables.
+For layers too large to hold in one prompt (> ~500 features):
 
-## Bulk enrichment pattern (the canonical AI-native loop)
+```
+checkpoint(op="create", name="tag", layers=["sbk_buildings"])
+out = inspect(op="batch", layer="sbk_buildings",
+              columns=["id","name","byggar"], batch_size=500)
+while True:
+    tags = {row["rowid"]: {"era": ..., "confidence": ...} for row in out["rows"]}
+    edit_field(op="annotate", layer="sbk_buildings", values=tags)
+    if out.get("exhausted"): break
+    out = inspect(op="batch", cursor=out["next_cursor"])
+checkpoint(op="commit", name="tag")
+```
 
-    load("sbk_buildings")
-    checkpoint("classify", layers=["sbk_buildings"])
-    out = batch_iterate("sbk_buildings", columns=["id","name","byggar"], batch_size=500)
-    while True:
-        tags = {rowid: {"era": ..., "confidence": ...} for rowid in out.rows}
-        annotate("sbk_buildings", values=tags)
-        if out.exhausted: break
-        out = batch_iterate(cursor=out.next_cursor)    # batch_size honored per call
-    commit("classify")
+For ≤ ~500 features, skip the loop: one `inspect(op="rows", n=500)`
+then one `edit_field(op="annotate", values=...)`.
 
-`annotate` creates columns on the fly. For >10k features, drive it with
-`create_layer(payload)` as a side-table + `add_field` subquery join instead of
-inline JSON.
+## Provenance — mandatory on LLM-injected data
 
-## Layer notes
+`load(op="inline")` REQUIRES `source` — either top-level (applied to
+every row) or per-row `source` field in each dict. Rows inherit source
+through filter/join/export. Short specific sources ("SL.se timetable
+2026-04", "hitta.se lookup 2026-04-19") beat generic ones ("web
+search").
 
-Attach narrative with `set_notes(layer, "text")`. Surfaces in `list_layers`
-and `sources`. Useful for recording *why* a layer exists ("filtered to
-pre-1940 stone buildings as a proxy for the historical core") so the
-reasoning is recoverable from session state alone.
+Columns written by `edit_field` record the LLM author when you pass
+`model="claude-opus-4-7"` (or similar) — exported columns trace back
+to their author.
 
-## Auditability — describe every mutation
+## Every mutation takes `description`
 
-Every mutating tool (`load`, `load_many`, `filter`, `spatial`, `top_n`,
-`classify`, `execute_sql`, `create_layer`, `add_field`, `update_field`,
-`drop_field`, `annotate`, `export`, `export_many`, `export_and_cite`,
-`render_map`, `show`, `hide`, `set_notes`, `drop_layer`, `rename_layer`,
-`checkpoint`, `rollback`, `commit`) accepts a `description: str = ""`
-argument. **Always pass a one-sentence rationale** stating what you're
-doing and why — e.g.:
-
-    filter("buildings", where="byggar < 1940", description=
-        "user asked for pre-war buildings as proxy for the historical core")
-    spatial("clip", layer="streets", by_layer="sodermalm", description=
-        "limit street network to Södermalm before density calc")
-    execute_sql("SELECT ...", description=
-        "compute median income per DeSO, weighted by population")
-
-The user sees these descriptions in their viewer's audit panel together
-with the actual SQL run, so they can verify your work without reading
-code. Operations without a description are visibly flagged as
-undocumented — that erodes trust. Treat the description like a commit
-message: short, specific, in the user's frame ("compute X for Y"), not
-yours ("call ST_Buffer on layer foo").
-
-## Injecting LLM-found data — `source` is mandatory
-
-Every row you inject via `create_layer` must carry a `source` attribute so
-provenance survives filtering, joining, and export. Two ways to provide it:
-
-  - Top-level `source="Booli.se 2026-03 scrape"` — broadcast to every row.
-    Use this when all rows share one origin.
-  - Per-row `source` field in each dict — use when rows come from different
-    origins (some from hitta.se, some from web search, some from the user).
-
-Failing to provide either form returns `missing_arg`. Short, specific
-source strings are the norm ("SL.se timetable 2026-04", "hitta.se manual
-lookup 2026-04-19"), not generic ones like "the internet". When the LLM
-has mixed sources, prefer the per-row form so the user can later filter
-by `source` to audit what came from where.
-
-## Coordinate reference system
-
-- **All session layers are in EPSG:3011** (SWEREF 99 18 00; Stockholm-local metres).
-- Bounding boxes, `x_3011`/`y_3011`, buffer distances: **metres in EPSG:3011**.
-- Geocode results return EPSG:3011 coordinates.
-- Exports to GeoJSON reproject to EPSG:4326; GPKG stays native EPSG:3011.
-
-## Footguns to watch for
-
-- **SCB privacy suppression**: small-population DeSOs have NULL values in
-  statistical tables. Always `WHERE value IS NOT NULL` when computing numeric
-  stats, or you'll get misleading averages.
-- **SCB region column**: every normalized SCB parquet carries `region`,
-  `region_kind` ∈ {`deso`, `regso`, `kommun`, `country`}, `region_code`, and
-  `region_name` columns. Filter by `region_kind = 'deso'` before joining to
-  the DeSO polygon layer — don't use fragile `LIKE` hacks.
-- **DeSO 2018 → 2025 codes changed** in some areas; use
-  `deso_historical_changes` or `deso_regso_mapping` to translate.
-- **Attributes are Swedish**: `byggar` = year built, `antal` = count,
-  `KATEGORI`/`GRUPP` = category/group. Every SCB parquet's value column is
-  now called `value` (unified at normalize time) regardless of the SCB table
-  it came from.
-- **The geometry column is always `geom`** in every normalized layer.
-- **`execute_sql` is read-only and sandboxed**: no INSERT/UPDATE/DELETE/DDL,
-  no file readers, no HTTP URLs, no abs paths. Numeric literals > 10 M are
-  rejected as DoS protection. For writes, use `add_field` / `update_field` /
-  `annotate`.
-
-## When the LLM should push back, not plough on
-
-- If the user's request needs data **not in the catalog** AND a web search
-  can't plausibly fill the gap, say so plainly. Name the missing data.
-  Don't fabricate values or silently substitute a proxy without flagging it.
-- If a tool response carries a `warning`, `hint`, `truncated`, or `capped_at`
-  field, **surface it to the user** rather than proceeding as if the result
-  were complete.
-- If `execute_sql` returns 50 rows and `truncated=True`, either narrow the
-  query or re-run with `result_name="..."` to materialize as a full layer.
-- If the user's bbox / radius / expression yields 0 rows, tell them; don't
-  silently proceed with an empty layer.
-- Small rule of thumb: when in doubt, ask before inventing.
+`load`, `derive`, `edit_field`, `layer`, `export`, `execute_sql`, and
+`checkpoint` all accept `description: str` — a one-sentence rationale
+shown in the viewer's audit panel. Treat it like a commit message:
+short, specific, user-framed ("filter to pre-war buildings for
+historical-core analysis") not implementation-framed ("call ST_Buffer
+on foo"). Operations without a description are visibly flagged as
+undocumented.
 
 ## Never guess a place from raw coordinates
 
-**Do not** assert a neighborhood, kommun part, or district based on
-EPSG:3011 numbers. Coordinates like `(154706, 6572108)` do not tell you
-"this is Mariehäll" or "this is Enskede" — getting this wrong makes the
-MCP look broken when it isn't. If you want to name the place a point
-sits in, call **`reverse_geocode(x_3011, y_3011)`** — it returns the
-containing Stadsdel / Distrikt / Kvarter polygons from SBK's
-administrative layer. Cite those names only, never invent them. Same
-rule for `inspect_location` results — state what the tool returned, not
-an inferred neighborhood.
+EPSG:3011 numbers like `(154706, 6572108)` do NOT tell you "this is
+Mariehäll". Call `geocode(op="reverse", x_3011=..., y_3011=...)` to
+get the containing Stadsdel/Distrikt/Kvarter from SBK's
+administrative layer. Cite those names only — never invent. Same rule
+for `inspect(op="at")` results.
 
-## Fewer, bigger tool calls — claude.ai has per-turn tool-use caps
+## Coordinate reference system
 
-The web interface imposes a limit on tool calls per message. Long
-"N small calls in a row" workflows will hit it. Prefer:
+All session layers in EPSG:3011. Bounding boxes, distances, buffers
+are metres in EPSG:3011. `geocode` returns EPSG:3011 coords. Exports:
+geojson reprojects to EPSG:4326, gpkg stays native EPSG:3011.
 
-1. **`load_many([ids])` over repeated `load(id)`.** One call, N datasets.
-2. **`execute_sql` with CTEs** over chains of `filter` → `spatial` →
-   `stats`. A single multi-step CTE is one call; the chain is three.
-3. **Classify all features in one message** when they fit in your
-   context (< ~500). Call `inspect(layer, n=500)` once, reason over the
-   whole result, then one `annotate(layer, {...})` — not a
-   `batch_iterate` loop. Reserve `batch_iterate` for layers in the
-   thousands.
-4. **`annotate` with multiple attributes at once** rather than separate
-   `add_field` calls per attribute.
-5. **`inspect_locations(points=[...])`** over repeated
-   `inspect_location` calls.
-6. **`checkpoint(layers=[...])` with wide scope** over many narrow ones
-   if the work coheres — one rollback covers the set.
+## Footguns
 
-Rough heuristic: if a step is expressible as a single SQL query or a
-single batch-shaped tool, use that form.
+- **SCB privacy suppression** — small-population DeSOs have NULL
+  values. Always `WHERE value IS NOT NULL` before aggregating.
+- **DeSO 2018 → 2025 grid changes** — use `desokod_2025` for joins,
+  not the raw `region` column.
+- **Swedish attribute names** — `byggar` = year built, `antal` =
+  count, `KATEGORI`/`GRUPP` = category/group. Every SCB value column
+  is named `value`.
+- **Geometry column is always `geom`.**
+- **`execute_sql` is read-only** — no DDL/DML, no HTTP/file readers,
+  no abs paths. Numeric literals > 10M are rejected as DoS
+  protection. For writes use `edit_field`.
 
-## If something goes wrong
+## When to push back, not plough on
 
-Every error response carries `error`, `detail`, and `origin` fields — plus
-`detail` is prefixed with `[server-side]`. **Treat these as coming from
-the MCP server's host, not your local machine.** If you see
-"Permission denied" / "Failed to create directory" / any path-related
-error, do NOT try to mkdir, chmod, or inspect paths on the client
-filesystem — those files live on a different machine. Surface the error
-to the user verbatim and ask how to proceed.
+- If the user needs data not in the catalog and web search can't
+  plausibly fill it, say so plainly. Don't fabricate.
+- If a tool response has `warning`/`hint`/`truncated`/`capped_at`
+  fields, surface them rather than proceeding as complete.
+- If a query yields 0 rows, tell the user — don't silently proceed.
 
-Common codes:
-- `unknown_dataset` — check `search_data()` first
-- `sql_rejected` — validator blocked the SQL; `detail` names the rule
-- `sql_failed` — DuckDB execution error; check column names / types
-- `op_failed` — generic op error; `detail` explains
-- `missing_arg` / `too_many_points` / `unsupported_operation` — client-input
-  shape problems
-- `session_expired` — idle > 30 min; `replay` carries the operation log
+## Errors are server-side, not local
+
+Every error response has `error`, `detail` (prefixed
+`[server-side]`), and `origin` fields. These live on the MCP host —
+do NOT try to mkdir/chmod/debug paths on your local machine based on
+them. Surface the error verbatim to the user.
+
+Common codes: `unknown_dataset`, `sql_rejected`, `sql_failed`,
+`op_failed`, `missing_arg`, `too_many_points`,
+`unsupported_operation`, `session_expired` (carries a `replay` block
+with the operation log so you can reconstruct).
 """
 
 
 mcp = FastMCP("geodata-mcp", instructions=SERVER_INSTRUCTIONS)
 
 
+# ---------------------------------------------------------------------------
 # Common annotation shapes.
+# ---------------------------------------------------------------------------
 _READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 _SAFE_MUTATION = ToolAnnotations(
     readOnlyHint=False, destructiveHint=False,
     idempotentHint=False, openWorldHint=False,
 )
-_IDEMPOTENT_MUTATION = ToolAnnotations(
-    readOnlyHint=False, destructiveHint=False,
-    idempotentHint=True, openWorldHint=False,
-)
-_DESTRUCTIVE_MUTATION = ToolAnnotations(
-    readOnlyHint=False, destructiveHint=True,
-    idempotentHint=False, openWorldHint=False,
-)
 
 
 # ---------------------------------------------------------------------------
-# Parameter aliases — accept a small set of likely-guessed synonyms for the
-# canonical names. Each alias appears in the tool's signature (so it shows up
-# in the tool schema that clients see) but is immediately coalesced into the
-# canonical name at the top of the tool body. ONE place to manage:
-#
-#   describe_dataset  ← id          = dataset_id
-#   load              ← id          = dataset_id
-#   load_many         ← ids, datasets = dataset_ids
-#
-# Add new aliases only when an LLM observably mis-guesses the canonical name.
-# Don't add speculative aliases — two names for one parameter is clutter.
+# Helpers.
 # ---------------------------------------------------------------------------
-
-
-def _pick(*vals):
-    """Return the first non-None value (for coalescing alias parameters)."""
-    for v in vals:
-        if v is not None:
-            return v
-    return None
-
-
-def _attach_hint(out: dict, sess: Session, layer: str) -> dict:
-    """Attach a reversibility `hint` to `out` only when a covering checkpoint
-    exists for `layer`. Otherwise ensure no stale `hint` sticks around —
-    the LLM can still see `reversible` / `covering_checkpoints` fields
-    if it wants to reason about checkpoint state explicitly."""
-    from .operations import _reversible_for_layer
-    covering = _reversible_for_layer(sess, layer)
-    if covering:
-        n = covering[0]
-        out["hint"] = (
-            f"Mutation on '{layer}' is reversible via checkpoint(s) {covering} — "
-            f"call rollback('{n}') to undo, commit('{n}') to make permanent."
-        )
-    else:
-        out.pop("hint", None)
-    return out
-
 
 def _session(ctx: Context | None) -> Session:
-    """Resolve the per-MCP-connection session. If ctx is None (stdio boot time)
-    we fall back to a process-wide 'default' session. For streamable-HTTP each
-    client request carries a session id that FastMCP threads through Context."""
-    sid = getattr(ctx, "session_id", None) if ctx else None
+    """Resolve the per-connection session; fall back to a shared 'default'
+    session for stdio boot / non-HTTP contexts."""
+    sid = None
+    if ctx is not None:
+        try:
+            sid = ctx.session_id
+        except (AttributeError, RuntimeError):
+            # FastMCP raises RuntimeError from the session_id property when
+            # no request context is bound (e.g. direct call_tool() in tests).
+            sid = None
     return REGISTRY.get_or_create(sid or "default")
 
 
 def _audited(tool_name: str):
-    """Wrap an MCP tool body in `Session.audit_context(tool_name, description)`.
-
-    Place between `@mcp.tool(...)` and the function. functools.wraps preserves
-    the signature so FastMCP's schema introspection still sees the original
-    parameters (including the `description` arg the tool now accepts).
-
-    Pulls `description` and `ctx` from kwargs; the wrapped function still
-    re-resolves `_session(ctx)` itself (idempotent via REGISTRY). Args dict
-    captured for the audit log strips `ctx` and any callables.
-    """
-    import functools
-
+    """Wrap an MCP tool body in Session.audit_context. Pulls `description`
+    and `ctx` from kwargs; the wrapped function still resolves
+    _session(ctx) itself (idempotent)."""
     def deco(fn):
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
@@ -413,8 +269,6 @@ def _audited(tool_name: str):
             try:
                 sess = _session(ctx)
             except Exception:
-                # Session resolution failed (rare — registry is in-process);
-                # let the tool body's own try/except surface the error.
                 return fn(*args, **kwargs)
             audit_args = {k: v for k, v in kwargs.items()
                           if k != "ctx" and not callable(v)}
@@ -425,10 +279,6 @@ def _audited(tool_name: str):
     return deco
 
 
-# Stamp every error with a marker that identifies it as coming from the MCP
-# server (remote) rather than the client's local environment. This prevents
-# client LLMs from misdiagnosing e.g. "Permission denied" as a local
-# filesystem issue and trying to mkdir/chmod on their own host.
 _SERVER_ORIGIN = "geodata-mcp server (remote host)"
 _ERR_PREFIX = "[server-side] "
 
@@ -439,8 +289,9 @@ def _server_error(kind: str, detail: str, **extra) -> dict:
         "detail": detail if detail.startswith(_ERR_PREFIX) else _ERR_PREFIX + detail,
         "origin": _SERVER_ORIGIN,
         "note": "This error originated inside the MCP server, not on the "
-                "client/local machine. Do not try to mkdir/chmod/debug paths "
-                "locally — any filesystem references are on the server's host.",
+                "client/local machine. Do not try to mkdir/chmod/debug "
+                "paths locally — filesystem references are on the server's "
+                "host.",
     }
     payload.update(extra)
     return payload
@@ -451,18 +302,29 @@ def _error_response(e: Exception) -> dict:
         return _server_error("session_expired", str(e), replay=e.replay_info)
     if isinstance(e, SqlError):
         return _server_error("sql_rejected", str(e))
-    if isinstance(e, OpError) or isinstance(e, LoadError):
+    if isinstance(e, (OpError, LoadError)):
         return _server_error("op_failed", str(e))
     return _server_error(type(e).__name__, str(e))
 
 
-# ---------- helpers ----------
+def _attach_hint(out: dict, sess: Session, layer: str) -> dict:
+    """Attach a reversibility hint to `out` iff a covering checkpoint
+    exists for `layer`."""
+    from .operations import _reversible_for_layer
+    covering = _reversible_for_layer(sess, layer)
+    if covering:
+        n = covering[0]
+        out["hint"] = (
+            f"Mutation on '{layer}' is reversible via checkpoint(s) {covering} — "
+            f"call checkpoint(op='rollback', name='{n}') to undo, "
+            f"checkpoint(op='commit', name='{n}') to make permanent."
+        )
+    else:
+        out.pop("hint", None)
+    return out
+
 
 def _dataset_summary(d: DatasetEntry, verbose: bool = True) -> dict:
-    """Dataset metadata. `verbose=True` includes the full attribute schema
-    (name/type/description/sample values). `verbose=False` strips attributes —
-    call describe_dataset(id) for the full picture once you know what you
-    want to load."""
     base = {
         "id": d.id,
         "name": d.name_sv,
@@ -482,12 +344,10 @@ def _dataset_summary(d: DatasetEntry, verbose: bool = True) -> dict:
         base["dedupe_hint"] = d.dedupe_hint
     if verbose:
         base["attributes"] = [
-            {
-                "name": a.name, "type": a.type,
-                "description": a.description_sv,
-                "description_en": a.description_en,
-                "sample_values": a.sample_values,
-            }
+            {"name": a.name, "type": a.type,
+             "description": a.description_sv,
+             "description_en": a.description_en,
+             "sample_values": a.sample_values}
             for a in d.attributes
         ]
     else:
@@ -495,16 +355,11 @@ def _dataset_summary(d: DatasetEntry, verbose: bool = True) -> dict:
     return base
 
 
-# Quick-stats cap. Layers larger than this skip the optional stats/sample
-# to keep the response cheap. Tune via env.
-_QUICK_STATS_CAP = int(_os.environ.get("GEODATA_QUICK_STATS_CAP", "200000"))
+_QUICK_STATS_CAP = int(os.environ.get("GEODATA_QUICK_STATS_CAP", "200000"))
 
 
 def _quick_stats_and_sample(sess: Session, name: str, m) -> dict:
-    """Compute a tiny stats block (per-numeric column) + a 3-row sample of
-    non-geometry columns for `name`. Returns an empty dict when the layer
-    is too large, has no declared columns, or the probe fails. Never
-    raises — this is best-effort enrichment."""
+    """Best-effort stats + 3-row sample for layers under the stats cap."""
     if m.feature_count > _QUICK_STATS_CAP:
         return {}
     cols = [c for c in m.attributes if not c.startswith("__")]
@@ -515,7 +370,6 @@ def _quick_stats_and_sample(sess: Session, name: str, m) -> dict:
     from .operations import is_numeric_sql_type
     out: dict = {}
     qname = _qi(name)
-    # Per-numeric quick stats in one SELECT.
     numeric_cols = [c for c in attr_cols if is_numeric_sql_type(m.attributes[c])]
     if numeric_cols:
         parts = []
@@ -536,23 +390,18 @@ def _quick_stats_and_sample(sess: Session, name: str, m) -> dict:
             for k, v in zip(col_names, row):
                 col, _, key = k.partition("__")
                 stats.setdefault(col, {})[key] = v
-            # Filter out columns with no informative distribution:
-            # all-null (count=0) or zero-variance (min==max). Cuts the
-            # "TEXTCHAR is always 0", "TEXT_ANGLE is always 0.0" noise
-            # that the LLM has to pay token cost for.
-            def _is_informative(s: dict) -> bool:
+            def _informative(s: dict) -> bool:
                 if (s.get("count") or 0) == 0:
                     return False
                 mn, mx = s.get("min"), s.get("max")
                 if mn is not None and mx is not None and mn == mx:
                     return False
                 return True
-            stats = {c: s for c, s in stats.items() if _is_informative(s)}
+            stats = {c: s for c, s in stats.items() if _informative(s)}
             if stats:
                 out["quick_stats"] = stats
         except Exception:
             pass
-    # 3-row sample — non-geometry cols only.
     if attr_cols:
         sql = f"SELECT {', '.join(_qi(c) for c in attr_cols)} FROM {qname} LIMIT 3"
         try:
@@ -572,49 +421,69 @@ def _layer_summary(sess: Session, name: str) -> dict:
         "bbox_3011": list(m.bbox) if m.bbox else None,
         "attributes": {k: v for k, v in m.attributes.items() if not k.startswith("__")},
         "provenance": [
-            {
-                "dataset_id": s.dataset_id, "source_name": s.source_name,
-                "publisher": s.publisher, "license": s.license,
-                "url": s.url, "retrieved": s.retrieved,
-                "llm_sourced": s.llm_sourced,
-            }
+            {"dataset_id": s.dataset_id, "source_name": s.source_name,
+             "publisher": s.publisher, "license": s.license,
+             "url": s.url, "retrieved": s.retrieved,
+             "llm_sourced": s.llm_sourced}
             for s in m.provenance
         ],
     }
     if m.notes:
         payload["notes"] = m.notes
-    # Per-column attribution for in-session-authored columns so the LLM and
-    # viewer can distinguish "loaded from source" from "LLM-written on this
-    # date by this tool". Layer-level provenance still covers the loaded
-    # attributes.
     if m.column_provenance:
         payload["column_provenance"] = dict(m.column_provenance)
-    # Quick stats + sample so the LLM doesn't have to follow up with
-    # stats() and inspect() just to orient.
     payload.update(_quick_stats_and_sample(sess, name, m))
     return payload
 
 
-# ---------- tools ----------
+def _qi(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _md_cell(v) -> str:
+    if v is None:
+        return ""
+    s = str(v).replace("\n", " ").replace("|", "\\|")
+    return s if len(s) < 80 else s[:77] + "..."
+
+
+# ---------------------------------------------------------------------------
+# Tools (11).
+# ---------------------------------------------------------------------------
+
 
 @mcp.tool(annotations=_READ_ONLY)
-def search_data(query: str = "", limit: int = 20, verbose: bool = False) -> dict:
-    """Fuzzy-search the catalog of locally available datasets.
+def catalog(
+    query: str = "",
+    id: str | None = None,
+    verbose: bool = False,
+    limit: int = 20,
+) -> dict:
+    """Catalog search + describe. Pass `id` for full metadata of a single
+    dataset (attribute schema, sample values, descriptions); otherwise
+    fuzzy-search the 65-dataset catalog.
 
-    Default is compact output (id, name, description, coverage, temporal, license)
-    to avoid flooding context. Call `describe_dataset(id)` for the full attribute
-    schema of a specific dataset, or pass `verbose=True` here to get everything
-    for every match (can be 20–50 KB).
+    Compact search mode (`verbose=False`) returns id/name/description/
+    coverage/temporal/license per hit. `verbose=True` includes full
+    attribute schema for every hit (can be 20–50 KB). Prefer
+    `catalog(id=...)` to zoom in on one dataset after a compact search.
 
     Args:
-        query: Free-text search (Swedish or English). Empty string returns all
-               datasets up to `limit`.
-        limit: Max matches to return (default 20).
-        verbose: If True, include full attribute schema (name/type/description/
-                 sample values) per dataset. Default False for brevity.
-
-    Returns: list of dataset summaries + total catalog size.
+        query: Free-text search (Swedish or English). Empty = list all up to `limit`.
+        id: If set, return full metadata for that dataset id (ignoring `query`).
+        verbose: If True and `id` is None, include attributes for every hit.
+        limit: Max matches (default 20, cap 200).
     """
+    if id:
+        entry = CATALOG.get(id)
+        if entry is None:
+            return _server_error(
+                "unknown_dataset",
+                f"dataset_id '{id}' is not in the catalog on this server.",
+                dataset_id=id,
+                hint="call catalog() with a query to list datasets — id spelling matters",
+            )
+        return _dataset_summary(entry, verbose=True)
     hits = CATALOG.search(query, limit=max(1, min(int(limit), 200)))
     return {
         "query": query,
@@ -625,507 +494,177 @@ def search_data(query: str = "", limit: int = 20, verbose: bool = False) -> dict
             for d, score in hits
         ],
         "hint": (None if verbose else
-                 "compact mode — call describe_dataset(id) for attribute schema "
-                 "of the one you want to load"),
+                 "compact mode — call catalog(id='...') for full attribute "
+                 "schema of the one you want to load"),
     }
-
-
-@mcp.tool(annotations=_READ_ONLY)
-def describe_dataset(
-    dataset_id: str | None = None,
-    id: str | None = None,  # alias for dataset_id
-) -> dict:
-    """Full metadata for a single catalog dataset — id, descriptions, coverage,
-    temporal range, geometry type, feature count, CRS, publisher, license, and
-    the complete attribute schema (column name, type, bilingual description,
-    sample values).
-
-    Use this after `search_data` when you need to understand a dataset's
-    columns before loading it.
-
-    Args:
-        dataset_id: catalog id (canonical). Also accepts `id` as an alias.
-    """
-    dataset_id = _pick(dataset_id, id)
-    if not dataset_id:
-        return _server_error("missing_arg", "describe_dataset requires `dataset_id` (or alias `id`).")
-    entry = CATALOG.get(dataset_id)
-    if entry is None:
-        return _server_error(
-            "unknown_dataset",
-            f"dataset_id '{dataset_id}' is not in the catalog on this server.",
-            dataset_id=dataset_id,
-            hint="call search_data() to list datasets — id spelling matters",
-        )
-    return _dataset_summary(entry, verbose=True)
 
 
 @mcp.tool(annotations=_READ_ONLY)
 def geocode(
-    name: str,
+    op: Literal["forward", "reverse", "bbox"],
+    name: str | None = None,
+    x_3011: float | None = None,
+    y_3011: float | None = None,
+    buffer_m: float = 0.0,
     limit: int = 5,
     all_kinds: bool = False,
     ctx: Context | None = None,
 ) -> dict:
-    """Look up a place name or street+number in Stockholm; returns EPSG:3011
-    coordinates + bbox.
+    """Place ↔ coordinate lookups, all directions.
 
-    Composite addresses ('Upplandsgatan 15') are spatially paired with nearest
-    AdressText points. Stadsdel/Distrikt/Kvarter matches return polygon-backed
-    bboxes. Everything else is place-name match against NamnText_point labels.
-
-    By default, results are deduplicated across GRUPP — one row per named
-    thing. Set `all_kinds=True` to see every label variant (e.g. both the
-    building-label and the block-label for the same building).
-
-    Args:
-        name: Free-text query.
-        limit: Max number of matches (default 5).
-        all_kinds: If True, keep separate rows for different GRUPP values.
-
-    Returns: list of matches with (name, kind, EPSG:3011 x/y, bbox, score).
-    Empty list means no match within Stockholm coverage.
+    - `op="forward"` (requires `name`): place name / composite street+number
+      → EPSG:3011 coordinates + bbox. Composite addresses are spatially
+      paired with the nearest AdressText point. Stadsdel/Distrikt/Kvarter
+      return polygon-backed bboxes. Pass `all_kinds=True` to keep separate
+      rows for different GRUPP values (else deduped by name).
+    - `op="reverse"` (requires `x_3011`, `y_3011`): EPSG:3011 point →
+      containing Stadsdel / Stadsdelsnämndsområde / Distrikt / Kvarter /
+      Kommun polygons (+ `by_kategori` grouping). **Always use this
+      rather than guessing neighborhoods from coordinates.**
+    - `op="bbox"` (requires `name`): place name → best-match EPSG:3011
+      bbox, optionally expanded by `buffer_m` on each side.
     """
-    sess = _session(ctx)
-    matches = do_geocode(sess.conn, name, limit=limit, all_kinds=all_kinds)
-    return {
-        "query": name,
-        "coverage": "Stockholm kommun",
-        "matches": [
-            {
-                "name": m.name, "kind": m.grupp, "subkind": m.kategori,
-                "x_3011": m.x_3011, "y_3011": m.y_3011,
-                "bbox_3011": list(m.bbox_3011),
-                "score": round(m.score, 4),
-            }
-            for m in matches
-        ],
-    }
-
-
-@mcp.tool(annotations=_READ_ONLY)
-def bbox_from(
-    name: str,
-    buffer_m: float = 0.0,
-    ctx: Context | None = None,
-) -> dict:
-    """Return the EPSG:3011 bounding box of a named place, optionally
-    expanded by a buffer. Thin convenience over `geocode` — collapses the
-    "geocode → eyeball coords → build a bbox by hand" pattern into one call.
-
-    Args:
-        name: place name ("Gamla Stan", "Södermalm", a block, a street).
-        buffer_m: extra metres to expand the box in every direction. 0 keeps
-                  the native envelope of the best geocode match.
-
-    Returns:
-        {name, kind, subkind, score, center_3011, bbox_3011, buffer_m}.
-        If no match is found, returns an error_response with the query.
-    """
-    sess = _session(ctx)
-    matches = do_geocode(sess.conn, name, limit=1)
-    if not matches:
-        return _server_error(
-            "no_match",
-            f"no geocode match within Stockholm coverage for '{name}'.",
-            query=name,
-        )
-    m = matches[0]
-    xmin, ymin, xmax, ymax = m.bbox_3011
-    b = max(0.0, float(buffer_m))
-    if b > 0:
-        xmin -= b; ymin -= b; xmax += b; ymax += b
-    return {
-        "name": m.name,
-        "kind": m.grupp,
-        "subkind": m.kategori,
-        "score": round(m.score, 4),
-        "center_3011": [m.x_3011, m.y_3011],
-        "bbox_3011": [xmin, ymin, xmax, ymax],
-        "buffer_m": b,
-    }
+    try:
+        sess = _session(ctx)
+    except SessionExpired as e:
+        return _error_response(e)
+    if op == "forward":
+        if not name:
+            return _server_error("missing_arg", "geocode op='forward' requires `name`.")
+        matches = do_geocode(sess.conn, name, limit=limit, all_kinds=all_kinds)
+        return {
+            "query": name,
+            "coverage": "Stockholm kommun",
+            "matches": [
+                {"name": m.name, "kind": m.grupp, "subkind": m.kategori,
+                 "x_3011": m.x_3011, "y_3011": m.y_3011,
+                 "bbox_3011": list(m.bbox_3011),
+                 "score": round(m.score, 4)}
+                for m in matches
+            ],
+        }
+    if op == "reverse":
+        if x_3011 is None or y_3011 is None:
+            return _server_error(
+                "missing_arg",
+                "geocode op='reverse' requires `x_3011` and `y_3011`.",
+            )
+        admin_path = str(ROOT / "data/normalized/sbk/Adm_area.gpkg")
+        try:
+            return op_reverse_geocode(sess, float(x_3011), float(y_3011), admin_path)
+        except Exception as e:
+            return _error_response(e)
+    if op == "bbox":
+        if not name:
+            return _server_error("missing_arg", "geocode op='bbox' requires `name`.")
+        matches = do_geocode(sess.conn, name, limit=1)
+        if not matches:
+            return _server_error(
+                "no_match",
+                f"no geocode match within Stockholm coverage for '{name}'.",
+                query=name,
+            )
+        m = matches[0]
+        xmin, ymin, xmax, ymax = m.bbox_3011
+        b = max(0.0, float(buffer_m))
+        if b > 0:
+            xmin -= b; ymin -= b; xmax += b; ymax += b
+        return {
+            "name": m.name, "kind": m.grupp, "subkind": m.kategori,
+            "score": round(m.score, 4),
+            "center_3011": [m.x_3011, m.y_3011],
+            "bbox_3011": [xmin, ymin, xmax, ymax],
+            "buffer_m": b,
+        }
+    return _server_error("unsupported_operation",
+                         f"op={op!r} not supported",
+                         supported=["forward", "reverse", "bbox"])
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
 @_audited("load")
 def load(
-    dataset_id: str | None = None,
-    id: str | None = None,  # alias for dataset_id
+    op: Literal["catalog", "inline"],
+    dataset_ids: list[str] | None = None,
+    data: list[dict] | None = None,
+    source: str | None = None,
+    geometry_column: str | None = None,
+    crs: str = "EPSG:4326",
     bbox_3011: list[float] | None = None,
-    limit: int | None = None,
-    layer_name: str | None = None,
     where: str | None = None,
     intersect_layer: str | None = None,
+    layer_name: str | None = None,
+    limit: int | None = None,
     description: str = "",
     ctx: Context | None = None,
 ) -> dict:
-    """Load a catalog dataset into the session as a queryable layer.
+    """Pull catalog datasets into the session OR inject LLM-provided rows.
 
-    Filters (AND-combined, applied before the feature cap):
-      bbox_3011:       [xmin, ymin, xmax, ymax] in EPSG:3011
-      where:           SQL WHERE clause on attributes (no semicolons).
-                       Example: "KATEGORI = 'Stadsdel' AND NAMN = 'SÖDERMALM'"
-      intersect_layer: Name of an already-loaded layer whose geometry defines
-                       the spatial restriction. Preferred over hand-crafted
-                       bboxes for irregular polygons (e.g. clip to a Stadsdel).
+    - `op="catalog"` (requires `dataset_ids`): load 1..N datasets.
+      When exactly one id is given, per-dataset filters apply:
+      `bbox_3011`, `where`, `intersect_layer`, `layer_name`.
+      When multiple ids are given, only `bbox_3011` and `limit` apply
+      (mirrors the old bulk-load semantics). Server cap: 100,000
+      features per dataset.
 
-    Server-enforced cap: 100,000 features per load.
+    - `op="inline"` (requires `data`): inject LLM-provided rows as a
+      new layer. Up to 1,000 rows. **`source` is MANDATORY** — either
+      top-level (broadcast to all rows) or as a per-row `source` field.
+      Rows carry `source` through filter/join/export for audit trail.
+      If a column holds WKT strings, name it in `geometry_column`
+      (parsed and reprojected from `crs` → EPSG:3011).
 
-    Args:
-        dataset_id: catalog id (canonical). Also accepts `id` as an alias.
-
-    Returns layer summary: name, feature_count, bbox, attribute schema, provenance.
+    Returns: `{loaded: [layer_summary, ...], errors: [...], n_loaded: N}`.
     """
-    dataset_id = _pick(dataset_id, id)
-    if not dataset_id:
-        return _server_error("missing_arg", "load requires `dataset_id` (or alias `id`).")
-    entry = CATALOG.get(dataset_id)
-    if entry is None:
-        return _server_error(
-            "unknown_dataset",
-            f"dataset_id '{dataset_id}' is not in the catalog on this server.",
-            dataset_id=dataset_id,
-            hint="Call search_data() to list available datasets.",
-        )
-    bbox_tuple = tuple(bbox_3011) if bbox_3011 and len(bbox_3011) == 4 else None
     try:
         sess = _session(ctx)
-        meta = load_dataset(
-            sess, entry,
-            bbox_3011=bbox_tuple, limit=limit, layer_name=layer_name,
-            where=where, intersect_layer=intersect_layer,
-        )
-    except Exception as e:
+    except SessionExpired as e:
         return _error_response(e)
-    return _layer_summary(sess, meta.name)
 
-
-@mcp.tool(annotations=_SAFE_MUTATION)
-@_audited("filter")
-def filter(
-    layer: str, where: str,
-    result_name: str | None = None,
-    description: str = "",
-    ctx: Context | None = None,
-) -> dict:
-    """Apply a SQL WHERE clause to an existing session layer; emit a new layer.
-
-    The WHERE expression accepts **any DuckDB-compatible predicate**, including
-    spatial predicates on the `geom` column:
-
-      - Attribute: `KATEGORI = 'Flerbostadshus' AND NAMN IS NOT NULL`
-      - Spatial point-in-polygon: `ST_Contains(geom, ST_Point(153700, 6578000))`
-      - Spatial distance:         `ST_DWithin(geom, ST_Point(x, y), 200)`
-      - Mixed:  `KATEGORI='Flerbostadshus' AND ST_Contains(geom, <polygon>)`
-
-    For "features of A that relate to any feature of B" use
-    `spatial(operation='select_by_location', ...)` instead — that handles
-    cross-layer predicates directly.
-
-    Args:
-        layer: Source layer name (from a previous load/filter/spatial result).
-        where: SQL WHERE expression (no ';'). DuckDB spatial functions available.
-        result_name: Optional name for the new layer; defaults to "<layer>_filtered".
-
-    Provenance of the source layer is inherited.
-    """
-    try:
-        sess = _session(ctx)
-        meta = filter_layer(sess, layer, where, result_name=result_name)
-    except Exception as e:
-        return _error_response(e)
-    return _layer_summary(sess, meta.name)
-
-
-SpatialOp = Literal[
-    "clip", "intersect", "select_by_location",
-    "buffer", "centroid", "dissolve", "convex_hull",
-]
-SpatialPredicate = Literal["intersects", "within", "contains", "dwithin"]
-
-
-@mcp.tool(annotations=_SAFE_MUTATION)
-@_audited("spatial")
-def spatial(
-    operation: SpatialOp,
-    layer: str | None = None,
-    by_layer: str | None = None,
-    a_layer: str | None = None,
-    b_layer: str | None = None,
-    distance_m: float | None = None,
-    by_columns: list[str] | None = None,
-    aggregate: bool = False,
-    predicate: SpatialPredicate = "intersects",
-    result_name: str | None = None,
-    description: str = "",
-    ctx: Context | None = None,
-) -> dict:
-    """Spatial operation producing a new layer.
-
-    Supported operations:
-
-      - **select_by_location** (layer, by_layer, predicate) — features of
-        `layer` kept unchanged (same geometry + same attributes) where their
-        geom relates to ANY feature in `by_layer` by `predicate`. This is
-        the classic "buildings in this district" / "DeSO containing this
-        point" operation — use this when you want a spatial WHERE.
-        Predicates: 'intersects' (default), 'within', 'contains', 'dwithin'.
-        'dwithin' requires `distance_m` (metres, EPSG:3011).
-
-      - **clip** (layer, by_layer) — trim `layer`'s geometries to the union
-        of `by_layer`'s geometries. Geometries are MODIFIED.
-
-      - **intersect** (a_layer, b_layer) — GEOMETRIC intersection overlay:
-        one row per intersecting pair, geometry = `ST_Intersection(a, b)`
-        (often changes geometry kind). For a spatial join that keeps A's
-        geometry, use `select_by_location` instead.
-
-      - **buffer** (layer, distance_m) — `ST_Buffer` in EPSG:3011 metres.
-
-      - **centroid** (layer) — per-feature `ST_Centroid`.
-
-      - **dissolve** (layer, by_columns?) — union geometries; optionally
-        grouped by attribute columns. Adds a `feature_count` column.
-
-      - **convex_hull** (layer, aggregate?) — per-feature hull, or a single
-        aggregate hull of all geometries with `aggregate=true`.
-
-    Args:
-        operation: one of the op names above.
-        layer / by_layer: used by clip, select_by_location, buffer,
-                          centroid, dissolve, convex_hull.
-        a_layer / b_layer: used by intersect (overlay).
-        distance_m: required by buffer; also by select_by_location when
-                    predicate='dwithin'.
-        by_columns: optional group-by for dissolve.
-        aggregate: flip convex_hull to aggregate mode.
-        predicate: for select_by_location.
-        result_name: optional name for the resulting layer.
-    """
-    try:
-        sess = _session(ctx)
-        if operation == "clip":
-            if not layer or not by_layer:
-                return _server_error("missing_arg", "clip requires `layer` and `by_layer`.")
-            meta = spatial_clip(sess, layer, by_layer, result_name=result_name)
-        elif operation == "select_by_location":
-            if not layer or not by_layer:
-                return _server_error("missing_arg", "select_by_location requires `layer` and `by_layer`.")
-            meta = spatial_select_by_location(
-                sess, layer, by_layer,
-                predicate=predicate,
-                distance_m=distance_m,
-                result_name=result_name,
+    if op == "inline":
+        if not data:
+            return _server_error("missing_arg", "load op='inline' requires `data`.")
+        try:
+            meta = op_create_layer(
+                sess, layer_name or "inline", data,
+                source=source, geometry_column=geometry_column, crs=crs,
             )
-        elif operation == "intersect":
-            if not a_layer or not b_layer:
-                return _server_error("missing_arg", "intersect requires `a_layer` and `b_layer`.")
-            meta = spatial_intersect(sess, a_layer, b_layer, result_name=result_name)
-        elif operation == "buffer":
-            if not layer or distance_m is None:
-                return _server_error("missing_arg", "buffer requires `layer` and `distance_m`.")
-            meta = spatial_buffer(sess, layer, float(distance_m), result_name=result_name)
-        elif operation == "centroid":
-            if not layer:
-                return _server_error("missing_arg", "centroid requires `layer`.")
-            meta = spatial_centroid(sess, layer, result_name=result_name)
-        elif operation == "dissolve":
-            if not layer:
-                return _server_error("missing_arg", "dissolve requires `layer`.")
-            meta = spatial_dissolve(sess, layer, by_columns=by_columns, result_name=result_name)
-        elif operation == "convex_hull":
-            if not layer:
-                return _server_error("missing_arg", "convex_hull requires `layer`.")
-            meta = spatial_convex_hull(sess, layer, aggregate=aggregate, result_name=result_name)
-        else:
-            return _server_error(
-                "unsupported_operation",
-                f"operation '{operation}' is not supported by the server.",
-                operation=operation,
-                supported=list(SpatialOp.__args__),
-            )
-    except Exception as e:
-        return _error_response(e)
-    return _layer_summary(sess, meta.name)
+        except Exception as e:
+            return _error_response(e)
+        return {
+            "loaded": [_layer_summary(sess, meta.name)],
+            "errors": [],
+            "n_loaded": 1,
+        }
 
+    if op == "catalog":
+        if not dataset_ids:
+            return _server_error("missing_arg", "load op='catalog' requires `dataset_ids`.")
+        bbox_tuple = tuple(bbox_3011) if bbox_3011 and len(bbox_3011) == 4 else None
+        results, errors = [], []
+        single = len(dataset_ids) == 1
+        for did in dataset_ids:
+            entry = CATALOG.get(did)
+            if entry is None:
+                errors.append({"dataset_id": did, "error": "unknown_dataset"})
+                continue
+            try:
+                if single:
+                    meta = load_dataset(
+                        sess, entry,
+                        bbox_3011=bbox_tuple, limit=limit, layer_name=layer_name,
+                        where=where, intersect_layer=intersect_layer,
+                    )
+                else:
+                    meta = load_dataset(sess, entry, bbox_3011=bbox_tuple, limit=limit)
+                results.append(_layer_summary(sess, meta.name))
+            except Exception as e:
+                errors.append({"dataset_id": did, "error": type(e).__name__, "detail": str(e)})
+        return {"loaded": results, "errors": errors, "n_loaded": len(results)}
 
-@mcp.tool(annotations=_READ_ONLY)
-def stats(
-    layer: str,
-    columns: list[str] | None = None,
-    group_by: list[str] | None = None,
-    limit: int = 100,
-    ctx: Context | None = None,
-) -> str:
-    """Summarize a layer as a markdown table.
-
-    For each numeric column in `columns` returns count / min / avg / max. For
-    string columns returns count / distinct_count. With `group_by`, produces
-    one row per distinct combination of those columns (ordered by count DESC).
-
-    Args:
-        layer: Source layer.
-        columns: Columns to summarize. If None, all numeric columns are used.
-        group_by: Optional list of grouping columns.
-        limit: Row cap (default 100).
-    """
-    try:
-        return op_stats(_session(ctx), layer, columns=columns, group_by=group_by, limit=limit)
-    except Exception as e:
-        return f"[server-side error from {_SERVER_ORIGIN}] {type(e).__name__}: {e}"
-
-
-@mcp.tool(annotations=_READ_ONLY)
-def frequencies(
-    layer: str,
-    column: str,
-    limit: int = 50,
-    ctx: Context | None = None,
-) -> dict:
-    """Return value counts for `column` on `layer`, sorted by frequency.
-
-    Answers the "what categories are in this column and how many of each"
-    question in one call — a very common follow-up after load() when
-    deciding how to classify, filter, or style a layer.
-
-    Args:
-        layer: session layer.
-        column: column name.
-        limit: max distinct values (default 50, cap 1000).
-
-    Returns: {layer, column, n_total, n_null, n_distinct,
-              rows: [{value, count}, ...], truncated?}
-    """
-    try:
-        from .operations import frequencies as op_frequencies
-        return op_frequencies(_session(ctx), layer, column, limit=limit)
-    except Exception as e:
-        return _error_response(e)
-
-
-# ---------- macro helpers: filter+order+limit, baseline_stats, classify,
-# export_and_cite. Each bundles a common multi-step workflow into a single
-# tool call so claude.ai's per-turn cap isn't burned on chained primitives.
-
-
-@mcp.tool(annotations=_SAFE_MUTATION)
-@_audited("top_n")
-def top_n(
-    layer: str,
-    by: str,
-    n: int = 10,
-    ascending: bool = False,
-    result_name: str | None = None,
-    description: str = "",
-    ctx: Context | None = None,
-) -> dict:
-    """filter + ORDER BY + LIMIT in one call. Produces a new layer with the
-    top (or bottom) `n` rows of `layer` sorted by the `by` expression.
-
-    Args:
-        layer: source layer.
-        by: SQL ordering expression (e.g. "population", "ST_Area(geom)",
-            "median_income DESC NULLS LAST").
-        n: row cap (default 10).
-        ascending: True → smallest first. Default False (largest first).
-        result_name: optional layer name; defaults to "<layer>_top<n>".
-
-    Provenance inherits from `layer`.
-    """
-    try:
-        sess = _session(ctx)
-        meta = op_top_n(sess, layer, by, n=n, ascending=ascending,
-                         result_name=result_name)
-    except Exception as e:
-        return _error_response(e)
-    return _layer_summary(sess, meta.name)
-
-
-@mcp.tool(annotations=_READ_ONLY)
-def baseline_stats(
-    layer: str,
-    expression: str,
-    group_by: list[str] | None = None,
-    ctx: Context | None = None,
-) -> dict:
-    """Descriptive statistics (count, mean, median, p25, p75, min, max,
-    stddev) for a SQL expression evaluated over a whole layer, optionally
-    grouped. Designed for "compute the city-wide median income as a
-    baseline for comparing a subset" — saves the hand-written CTE the
-    LLM would otherwise emit every time.
-
-    Args:
-        layer: source layer.
-        expression: SQL scalar expression on the layer's columns (e.g.
-                    "median_income", "ST_Area(geom) / 1e6").
-        group_by: optional list of columns to group by.
-    """
-    try:
-        return op_baseline_stats(_session(ctx), layer, expression,
-                                   group_by=group_by)
-    except Exception as e:
-        return _error_response(e)
-
-
-@mcp.tool(annotations=_SAFE_MUTATION)
-@_audited("classify")
-def classify(
-    layer: str,
-    name: str,
-    rules: list[dict],
-    default: str | None = None,
-    description: str = "",
-    ctx: Context | None = None,
-) -> dict:
-    """Add a categorical column whose value is chosen from the first
-    matching rule in `rules`. Essentially a CASE WHEN ... THEN ... ELSE ...
-    expression wrapped as `add_field`.
-
-    Args:
-        layer: target layer.
-        name: new column name.
-        rules: list of `{"when": <sql predicate>, "then": <literal>}`.
-               Evaluated in order; first match wins.
-        default: value for rows matching no rule (optional; NULL if omitted).
-
-    Reversible inside a covering checkpoint. Stores the compiled CASE
-    expression in the operation log for provenance.
-
-    Example:
-        classify("deso", "income_band", rules=[
-            {"when": "median < 300", "then": "low"},
-            {"when": "median BETWEEN 300 AND 500", "then": "mid"},
-            {"when": "median > 500", "then": "high"},
-        ], default="unknown")
-    """
-    try:
-        sess = _session(ctx)
-        out = op_classify(sess, layer, name, rules=rules, default=default)
-        _attach_hint(out, sess, layer)
-        return out
-    except Exception as e:
-        return _error_response(e)
-
-
-@mcp.tool(annotations=_SAFE_MUTATION)
-@_audited("export_and_cite")
-def export_and_cite(
-    layer: str,
-    format: str = "gpkg",
-    description: str = "",
-    ctx: Context | None = None,
-) -> dict:
-    """Shortcut for `export(layer, format)` + `sources(layer)`. Returns
-    everything the caller needs to ship a publishable artifact (URL + full
-    markdown citations) in a single call."""
-    try:
-        sess = _session(ctx)
-        out = op_export_and_cite(sess, layer, fmt=format)
-        if "url" in out:
-            out["url"] = _abs_url(out["url"])
-        return out
-    except Exception as e:
-        return _error_response(e)
+    return _server_error("unsupported_operation",
+                         f"op={op!r} not supported",
+                         supported=["catalog", "inline"])
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
@@ -1139,27 +678,26 @@ def execute_sql(
 ) -> dict:
     """Run a validated, read-only SQL query against session layers.
 
-    Only a single SELECT/WITH/UNION is accepted — DDL/DML is rejected by a
-    sqlglot-based parser. DuckDB spatial functions are available. Session
-    layers are referenced by their names as regular tables.
+    Only a single SELECT/WITH/UNION is accepted — DDL/DML is rejected
+    by a sqlglot-based parser. DuckDB spatial functions are available.
+    Session layers are referenced by their names as regular tables.
 
     Layer-vs-table decision:
-      1. If `geometry_column` is passed, layer mode is forced with that column
-         cast to GEOMETRY.
-      2. Else the tool runs `DESCRIBE (sql)` and promotes to layer if any
-         column has DuckDB type starting with `GEOMETRY`.
-      3. Otherwise it returns up to 50 rows as a markdown table. If a column
-         named `geom`/`geometry` exists but got demoted to BLOB (common with
-         cross-layer expressions), the response carries a `geometry_hint`
-         telling you to retry with `geometry_column='…'`.
+      1. If `geometry_column` is passed, layer mode is forced.
+      2. Else the tool runs DESCRIBE (sql) and promotes to layer if
+         any column has type starting with `GEOMETRY`.
+      3. Otherwise it returns up to 50 rows as a markdown table. If a
+         column named `geom`/`geometry` exists but got demoted to
+         BLOB, the response carries a `geometry_hint` telling you to
+         retry with `geometry_column='...'`.
 
-    30-second wall-clock timeout, 256 MB per-session memory limit.
+    30-second wall-clock timeout, 256 MB per-session memory.
 
     Args:
         sql: Read-only SQL. No semicolons, no DDL, no multi-statement.
-        description: Free-text label stored in the operation log.
+        description: Free-text rationale stored in the audit log.
         result_name: Optional name if the query yields a layer.
-        geometry_column: Explicit geometry-column hint; forces layer mode.
+        geometry_column: Explicit geometry-column hint.
     """
     try:
         return op_execute_sql(
@@ -1177,378 +715,458 @@ def execute_sql(
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
-@_audited("create_layer")
-def create_layer(
-    name: str,
-    data: list[dict],
-    source: str | None = None,
-    geometry_column: str | None = None,
-    crs: str = "EPSG:4326",
+@_audited("derive")
+def derive(
+    op: Literal["filter", "top_n", "clip", "intersect",
+                "select_by_location", "buffer", "centroid",
+                "dissolve", "convex_hull"],
+    layer: str | None = None,
+    by_layer: str | None = None,
+    a_layer: str | None = None,
+    b_layer: str | None = None,
+    where: str | None = None,
+    distance_m: float | None = None,
+    by_columns: list[str] | None = None,
+    aggregate: bool = False,
+    predicate: Literal["intersects", "within", "contains", "dwithin"] = "intersects",
+    by: str | None = None,
+    n: int = 10,
+    ascending: bool = False,
+    result_name: str | None = None,
     description: str = "",
     ctx: Context | None = None,
 ) -> dict:
-    """Inject LLM-provided data as a new session layer.
+    """Produce a new layer from an existing one. Provenance inherits
+    from the source.
 
-    Use this when you bring data that isn't in the catalog — e.g. a manually
-    curated lookup table, a transcription of external research, a simulated
-    result — to join with catalog layers. The data is materialized in the
-    session's DuckDB instance so all other tools (filter, spatial, stats,
-    execute_sql, sources) can use it.
-
-    **`source` is mandatory** — every row of the resulting layer carries a
-    `source` attribute so the origin survives filtering, joining, and
-    export. You can provide provenance two ways:
-
-      - Top-level `source="Booli.se 2026-03 scrape"` — broadcast to every
-        row. Use when all rows share one origin.
-      - Per-row `source` field inside each dict — use when rows come from
-        different origins (some from hitta.se, some from web search). The
-        top-level `source` then fills gaps for rows that omit it.
-
-    The call fails if neither form is provided. Short, specific source
-    strings are best ("SL.se timetable 2026-04", "manual count 2026-04-19"),
-    not generic ones like "the internet" or "web search".
+    - `op="filter"` (layer, where): SQL WHERE → new layer. Supports
+      spatial predicates on `geom` (e.g. `ST_DWithin(geom, ...)`).
+    - `op="top_n"` (layer, by, n?, ascending?): filter + ORDER BY +
+      LIMIT in one call. `by` is an SQL ordering expression.
+    - `op="clip"` (layer, by_layer): trim `layer`'s geometries to the
+      union of `by_layer`'s. Geometries MODIFIED.
+    - `op="intersect"` (a_layer, b_layer): geometric overlay, one row
+      per intersecting pair.
+    - `op="select_by_location"` (layer, by_layer, predicate): spatial
+      WHERE — keep features of `layer` relating to ANY feature of
+      `by_layer`. Predicates: intersects / within / contains / dwithin
+      (the latter needs `distance_m`).
+    - `op="buffer"` (layer, distance_m): ST_Buffer in EPSG:3011 metres.
+    - `op="centroid"` (layer): per-feature ST_Centroid.
+    - `op="dissolve"` (layer, by_columns?): union geometries, grouped.
+    - `op="convex_hull"` (layer, aggregate?): per-feature hull, or one
+      aggregate hull for the whole layer with `aggregate=True`.
 
     Args:
-        name: Desired layer name. Collisions are suffixed (`_2`, `_3`, …).
-        data: Up to 1,000 rows. List of dicts; each dict is one row with
-              identical keys. Values may be any JSON-serializable scalar.
-              A `source` key on each dict is preserved; otherwise the
-              top-level `source` is auto-added.
-        source: Required unless every row already has its own `source`.
-                Short free-text description of where you got this data.
-        geometry_column: If one of the columns contains WKT strings (e.g.
-                         "POINT(18.07 59.33)" or "POLYGON((…))"), name it here.
-                         It'll be parsed and reprojected to EPSG:3011.
-        crs: EPSG code of the input geometry. Default 'EPSG:4326' (lng/lat).
-
-    Returns the new layer's summary.
+        result_name: Optional name for the new layer (auto-generated if omitted).
+        description: One-sentence rationale for the audit log.
     """
     try:
         sess = _session(ctx)
-        meta = op_create_layer(
-            sess, name, data,
-            source=source, geometry_column=geometry_column, crs=crs,
-        )
+        if op == "filter":
+            if not layer or not where:
+                return _server_error("missing_arg",
+                                     "derive op='filter' requires `layer` and `where`.")
+            meta = filter_layer(sess, layer, where, result_name=result_name)
+        elif op == "top_n":
+            if not layer or not by:
+                return _server_error("missing_arg",
+                                     "derive op='top_n' requires `layer` and `by`.")
+            meta = op_top_n(sess, layer, by, n=n, ascending=ascending,
+                            result_name=result_name)
+        elif op == "clip":
+            if not layer or not by_layer:
+                return _server_error("missing_arg",
+                                     "derive op='clip' requires `layer` and `by_layer`.")
+            meta = spatial_clip(sess, layer, by_layer, result_name=result_name)
+        elif op == "intersect":
+            if not a_layer or not b_layer:
+                return _server_error("missing_arg",
+                                     "derive op='intersect' requires `a_layer` and `b_layer`.")
+            meta = spatial_intersect(sess, a_layer, b_layer, result_name=result_name)
+        elif op == "select_by_location":
+            if not layer or not by_layer:
+                return _server_error(
+                    "missing_arg",
+                    "derive op='select_by_location' requires `layer` and `by_layer`.",
+                )
+            meta = spatial_select_by_location(
+                sess, layer, by_layer,
+                predicate=predicate, distance_m=distance_m,
+                result_name=result_name,
+            )
+        elif op == "buffer":
+            if not layer or distance_m is None:
+                return _server_error("missing_arg",
+                                     "derive op='buffer' requires `layer` and `distance_m`.")
+            meta = spatial_buffer(sess, layer, float(distance_m), result_name=result_name)
+        elif op == "centroid":
+            if not layer:
+                return _server_error("missing_arg", "derive op='centroid' requires `layer`.")
+            meta = spatial_centroid(sess, layer, result_name=result_name)
+        elif op == "dissolve":
+            if not layer:
+                return _server_error("missing_arg", "derive op='dissolve' requires `layer`.")
+            meta = spatial_dissolve(sess, layer, by_columns=by_columns,
+                                    result_name=result_name)
+        elif op == "convex_hull":
+            if not layer:
+                return _server_error("missing_arg", "derive op='convex_hull' requires `layer`.")
+            meta = spatial_convex_hull(sess, layer, aggregate=aggregate,
+                                       result_name=result_name)
+        else:
+            return _server_error(
+                "unsupported_operation",
+                f"op={op!r} not supported",
+                supported=["filter", "top_n", "clip", "intersect",
+                           "select_by_location", "buffer", "centroid",
+                           "dissolve", "convex_hull"],
+            )
     except Exception as e:
         return _error_response(e)
     return _layer_summary(sess, meta.name)
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
-@_audited("export")
-def export(
+@_audited("edit_field")
+def edit_field(
+    op: Literal["add", "update", "drop", "classify", "annotate"],
     layer: str,
-    format: str = "geojson",
+    name: str | None = None,
+    expr: str | None = None,
+    field_type: str | None = None,
+    where: str | None = None,
+    rules: list[dict] | None = None,
+    default: str | None = None,
+    values: dict | None = None,
+    key_column: str = "rowid",
+    dry_run: bool = False,
+    model: str | None = None,
     description: str = "",
     ctx: Context | None = None,
 ) -> dict:
-    """Export a session layer to a downloadable file. Returns a URL valid for 24 h.
+    """Mutate a layer's columns in place. Reversible inside an active
+    `checkpoint(op='create', ...)` covering this layer.
 
-    Supported formats:
-      - **geojson**: EPSG:4326 FeatureCollection (portable)
-      - **gpkg**: OGC GeoPackage in native EPSG:3011
-      - **csv**: attribute columns + geometry as WKT
-      - **parquet**: columnar, zstd-compressed, geometry as WKB
-
-    The returned URL is absolute when PUBLIC_URL is configured, otherwise
-    relative (`/exports/<token>/<filename>`). Links auto-expire after 24 h.
-    """
-    try:
-        out = op_export(_session(ctx), layer, fmt=format)
-        if "url" in out:
-            out["url"] = _abs_url(out["url"])
-        return out
-    except Exception as e:
-        return _error_response(e)
-
-
-@mcp.tool(annotations=_SAFE_MUTATION)
-@_audited("export_many")
-def export_many(
-    layers: list[str],
-    format: str = "gpkg",
-    merge_geojson: bool = False,
-    description: str = "",
-    ctx: Context | None = None,
-) -> dict:
-    """Export multiple layers together under one 24-h download token.
-
-    Format semantics:
-      - `format="gpkg"` (default, recommended) → one `.gpkg` file with
-        every layer inside. GeoPackage supports multi-layer natively, so
-        this produces a single artifact that opens cleanly in QGIS/ArcGIS
-        with each layer's geometry type and attributes preserved. One URL.
-      - `format="geojson"` with `merge_geojson=True` → one `.geojson`
-        file; a single FeatureCollection where every feature has a
-        `_layer` property naming its source. One URL. (Polygons, lines,
-        and points end up mixed — downstream consumers must tolerate
-        mixed geometry.)
-      - `format="geojson"` / `"csv"` / `"parquet"` (merge_geojson=False)
-        → one file per layer under the same token directory. List of URLs.
-
-    Provenance is the deduped union across all input layers, same shape
-    as single `export`.
-    """
-    try:
-        out = op_export_layers(_session(ctx), layers, fmt=format,
-                                merge_geojson=merge_geojson)
-        # Rewrite all URLs absolute.
-        for f in out.get("files", []):
-            if "url" in f:
-                f["url"] = _abs_url(f["url"])
-        return out
-    except Exception as e:
-        return _error_response(e)
-
-
-@mcp.tool(annotations=_SAFE_MUTATION)
-@_audited("render_map")
-def render_map(
-    layers: list[str],
-    title: str | None = None,
-    legend: bool = True,
-    width_px: int = 1600,
-    height_px: int = 1000,
-    description: str = "",
-    ctx: Context | None = None,
-) -> dict:
-    """Render the given layers to a PNG and return a download URL.
-
-    Unlike `show()` (which points the caller at the interactive viewer),
-    this produces a self-contained image suitable for embedding in a
-    report, slide, or Slack message. Honors the same style spec as
-    `show()` — call `show(layers, style=...)` first if you want themed
-    colors, then `render_map(layers)` for the export.
-
-    Design: editorial paper-toned backdrop (no tiled basemap — the
-    server sandbox denies outbound egress, and the editorial palette
-    reads cleaner than a Carto tile anyway). Includes title, scale bar,
-    and legend derived from the active style.
-
-    Args:
-        layers: layer names to render.
-        title: optional figure title; falls back to the session's
-               current `show()` title.
-        legend: include a per-layer legend (default True).
-        width_px, height_px: output dimensions. Defaults to 1600×1000.
-
-    Returns: {url, format='png', width, height, bbox_3011,
-              files: [{url, size_bytes}], hint}.
+    - `op="add"` (name, expr, field_type?): new column computed from a
+      SQL expression. Type inferred unless `field_type` is set
+      (VARCHAR/DOUBLE/BIGINT/BOOLEAN/DATE/TIMESTAMP).
+    - `op="update"` (name, expr, where?): overwrite an existing
+      column's values; optional WHERE restriction.
+    - `op="drop"` (name): remove a column. Refuses the geometry
+      column (use `layer(op='drop', ...)` for the whole layer).
+    - `op="classify"` (name, rules=[{when, then}], default?): CASE-WHEN
+      shorthand adding a categorical column. Rules evaluated in order;
+      first match wins.
+    - `op="annotate"` (values={key: {attr: val, ...}}, key_column?,
+      dry_run?, model?): bulk LLM-classified per-feature attributes.
+      Columns created on the fly (type inferred). Up to 10,000 keys.
+      `key_column` defaults to `"rowid"` (DuckDB pseudo-column, stable
+      within a session). `dry_run=True` previews coverage without
+      writing. `model="claude-opus-4-7"` or similar is stored in
+      per-column provenance.
     """
     try:
         sess = _session(ctx)
-        from . import render as _render
-        import secrets as _secrets, time as _time
-        token = _secrets.token_urlsafe(12)
-        out_dir = EXPORT_ROOT / token
-        info = _render.render_map_png(
-            sess, layers, out_dir,
-            title=title, legend=legend,
-            width_px=int(width_px), height_px=int(height_px),
-        )
-        size = (out_dir / info["filename"]).stat().st_size
-        url = _abs_url(f"/exports/{token}/{info['filename']}")
-        return {
-            "url": url,
-            "format": "png",
-            "width": info["width"],
-            "height": info["height"],
-            "bbox_3011": info["bbox_3011"],
-            "size_bytes": size,
-            "expires_in_s": EXPORT_TTL_S,
-            "hint": ("PNG artefact rendered server-side. Paper-toned "
-                     "editorial backdrop, no tiles. Embed in docs, slides, "
-                     "or messages directly; no further processing needed."),
-        }
+        if op == "add":
+            if not name or not expr:
+                return _server_error("missing_arg",
+                                     "edit_field op='add' requires `name` and `expr`.")
+            out = op_add_field(sess, layer, name, expr, field_type=field_type)
+        elif op == "update":
+            if not name or not expr:
+                return _server_error("missing_arg",
+                                     "edit_field op='update' requires `name` and `expr`.")
+            out = op_update_field(sess, layer, name, expr, where=where)
+        elif op == "drop":
+            if not name:
+                return _server_error("missing_arg",
+                                     "edit_field op='drop' requires `name`.")
+            out = op_drop_field(sess, layer, name)
+        elif op == "classify":
+            if not name or not rules:
+                return _server_error("missing_arg",
+                                     "edit_field op='classify' requires `name` and `rules`.")
+            out = op_classify(sess, layer, name, rules=rules, default=default)
+        elif op == "annotate":
+            if values is None:
+                return _server_error("missing_arg",
+                                     "edit_field op='annotate' requires `values`.")
+            out = op_annotate(sess, layer, values, key_column=key_column,
+                              dry_run=dry_run, model=model)
+        else:
+            return _server_error(
+                "unsupported_operation",
+                f"op={op!r} not supported",
+                supported=["add", "update", "drop", "classify", "annotate"],
+            )
+        _attach_hint(out, sess, layer)
+        return out
     except Exception as e:
         return _error_response(e)
-
-
-@mcp.tool(annotations=_READ_ONLY)
-def sources(layer: str | None = None, ctx: Context | None = None) -> str:
-    """Return a structured provenance report (publisher, license, URL,
-    retrieval date, operations applied) for a layer or all session layers.
-
-    Use this to cite where data came from after a multi-step analysis.
-    """
-    return op_sources(_session(ctx), layer)
 
 
 @mcp.tool(annotations=_READ_ONLY)
 def inspect(
-    layer: str,
+    op: Literal["layers", "rows", "batch", "at"],
+    layer: str | None = None,
     n: int = 10,
     include_geometry: bool = False,
     offset: int = 0,
     where: str | None = None,
+    columns: list[str] | None = None,
+    batch_size: int = 200,
+    cursor: str | None = None,
+    points: list[dict] | None = None,
+    radius_m: float = 100.0,
+    layers: list[str] | None = None,
+    per_layer_limit: int = 3,
     ctx: Context | None = None,
-) -> str:
-    """Show raw rows from a session layer as a markdown table.
+) -> dict:
+    """Explore the session — inventory, row samples, cursor-paginated
+    reads, and spatial "what's here" lookups.
 
-    Hard caps: 200 rows without geometry, 10 rows with geometry (WKT). Geometry
-    is verbose — only request it when you actually need to see coordinates. For
-    inspecting very large layers column-wise, use `batch_iterate` instead — it
-    returns a resumable cursor.
-
-    Args:
-        layer: Layer name from a previous load/filter/spatial result.
-        n: Rows to return (default 10; capped at 200 without geometry, 10 with).
-        include_geometry: If True, append a 'geom_wkt' column.
-        offset: Row offset for pagination.
-        where: Optional SQL WHERE expression (no semicolons).
+    - `op="layers"`: inventory of every session layer + checkpoint state.
+    - `op="rows"` (layer, n?, include_geometry?, offset?, where?):
+      sample rows from `layer` as a markdown table (returned in
+      `table_md`). Caps: 200 rows without geometry, 10 with.
+    - `op="batch"` (layer or cursor, columns?, where?, batch_size?):
+      cursor-paginated reader for large layers. First call: pass
+      `layer`. Subsequent calls: pass `cursor` from the previous
+      response. Each row carries `rowid` (DuckDB pseudo-column,
+      suitable for `edit_field(op='annotate', key_column='rowid', ...)`).
+    - `op="at"` (points=[{id?, x_3011, y_3011}], radius_m?, layers?,
+      columns?, per_layer_limit?): "what's near each of these
+      points?" across session layers. Up to 500 points per call.
+      `per_layer_limit` caps features per layer per point (default 3).
     """
     try:
         sess = _session(ctx)
     except SessionExpired as e:
-        return f"[server-side error from {_SERVER_ORIGIN}] {e}"
-    meta = sess.layers.get(layer)
-    if meta is None:
-        return (f"[server-side error from {_SERVER_ORIGIN}] unknown layer "
-                f"'{layer}' in this session. Available: {list(sess.layers)}")
+        return _error_response(e)
 
-    cap = 10 if include_geometry else 200
-    n = max(1, min(int(n), cap))
-
-    geom_col = meta.attributes.get("__geom_col__") or ""
-    cols = [c for c in meta.attributes if not c.startswith("__")]
-    select_cols = []
-    for c in cols:
-        if c == geom_col:
-            if include_geometry:
-                select_cols.append(f'ST_AsText({_qi(c)}) AS geom_wkt')
-            # else skip — geometry omitted
-        else:
-            select_cols.append(_qi(c))
-
-    where_sql = ""
-    if where:
-        from .operations import _assert_predicate as _p, OpError as _OE
+    if op == "layers":
         try:
-            _p(where, "where")
-        except _OE as e:
-            return f"[server-side error from {_SERVER_ORIGIN}] {e}"
-        where_sql = f" WHERE {where}"
-    sql = (
-        f"SELECT {', '.join(select_cols)} FROM {_qi(layer)}"
-        f"{where_sql} LIMIT {n} OFFSET {int(offset)}"
-    )
-    try:
-        rows = sess.conn.execute(sql).fetchall()
-        col_names = [d[0] for d in sess.conn.description]
-    except Exception as e:
-        return f"[server-side error from {_SERVER_ORIGIN}] {type(e).__name__}: {e}"
+            return op_list_layers(sess)
+        except Exception as e:
+            return _error_response(e)
 
-    if not rows:
-        return f"(no rows; {meta.feature_count} in layer)"
-    md = ["| " + " | ".join(col_names) + " |",
-          "|" + "|".join(["---"] * len(col_names)) + "|"]
-    for r in rows:
-        md.append("| " + " | ".join(_md_cell(v) for v in r) + " |")
-    suffix_parts = []
-    # L2 fix: if the cap or requested `n` left more rows unseen, say so
-    # explicitly. Before this change 187 and 201 rows were indistinguishable
-    # from the caller's side.
-    effective_total = meta.feature_count
-    if where:
+    if op == "batch":
+        if cursor is None and not layer:
+            return _server_error(
+                "missing_arg",
+                "inspect op='batch' requires `layer` on the first call or `cursor` to continue.",
+            )
         try:
-            cnt = sess.conn.execute(
-                f"SELECT COUNT(*) FROM {_qi(layer)} WHERE {where}"
-            ).fetchone()
-            effective_total = int(cnt[0]) if cnt else effective_total
-        except Exception:
-            pass
-    seen = int(offset) + len(rows)
-    remaining = max(0, effective_total - seen)
-    if remaining > 0:
-        more = (f"\n\n_{remaining} more row{'s' if remaining != 1 else ''} "
-                f"not shown; raise `n` (cap {cap}) or `offset` to see them._")
-        suffix_parts.append(more)
-    if include_geometry:
-        suffix_parts.append("\n\n_geom_wkt is large — request only when needed._")
-    suffix = "".join(suffix_parts)
-    header = f"Showing {len(rows)} of {effective_total}"
-    if where:
-        header += f" (filtered; layer has {meta.feature_count})"
-    header += f" rows in `{layer}`."
-    return header + "\n\n" + "\n".join(md) + suffix
+            return op_batch_iterate(
+                sess, layer or "",
+                columns=columns, batch_size=batch_size,
+                cursor=cursor, where=where,
+            )
+        except Exception as e:
+            return _error_response(e)
+
+    if op == "at":
+        if not points:
+            return _server_error("missing_arg", "inspect op='at' requires `points`.")
+        if len(points) > 500:
+            return _server_error(
+                "too_many_points",
+                f"got {len(points)}, cap is 500. Batch into smaller calls.",
+            )
+        try:
+            return op_inspect_locations(
+                sess, points,
+                radius_m=radius_m, layers=layers,
+                columns=columns, per_layer_limit=per_layer_limit,
+            )
+        except Exception as e:
+            return _error_response(e)
+
+    if op == "rows":
+        if not layer:
+            return _server_error("missing_arg", "inspect op='rows' requires `layer`.")
+        meta = sess.layers.get(layer)
+        if meta is None:
+            return _server_error(
+                "unknown_layer",
+                f"unknown layer '{layer}' in this session.",
+                available=list(sess.layers),
+            )
+        cap = 10 if include_geometry else 200
+        n_rows = max(1, min(int(n), cap))
+        geom_col = meta.attributes.get("__geom_col__") or ""
+        cols = [c for c in meta.attributes if not c.startswith("__")]
+        select_cols = []
+        for c in cols:
+            if c == geom_col:
+                if include_geometry:
+                    select_cols.append(f'ST_AsText({_qi(c)}) AS geom_wkt')
+            else:
+                select_cols.append(_qi(c))
+        where_sql = ""
+        if where:
+            from .operations import _assert_predicate as _p, OpError as _OE
+            try:
+                _p(where, "where")
+            except _OE as e:
+                return _server_error("op_failed", str(e))
+            where_sql = f" WHERE {where}"
+        sql = (
+            f"SELECT {', '.join(select_cols)} FROM {_qi(layer)}"
+            f"{where_sql} LIMIT {n_rows} OFFSET {int(offset)}"
+        )
+        try:
+            rows = sess.conn.execute(sql).fetchall()
+            col_names = [d[0] for d in sess.conn.description]
+        except Exception as e:
+            return _server_error(type(e).__name__, str(e))
+        effective_total = meta.feature_count
+        if where:
+            try:
+                cnt = sess.conn.execute(
+                    f"SELECT COUNT(*) FROM {_qi(layer)} WHERE {where}"
+                ).fetchone()
+                effective_total = int(cnt[0]) if cnt else effective_total
+            except Exception:
+                pass
+        if not rows:
+            return {
+                "layer": layer, "rows_shown": 0,
+                "rows_total": effective_total, "cap": cap,
+                "table_md": f"(no rows; {meta.feature_count} in layer)",
+            }
+        md = ["| " + " | ".join(col_names) + " |",
+              "|" + "|".join(["---"] * len(col_names)) + "|"]
+        for r in rows:
+            md.append("| " + " | ".join(_md_cell(v) for v in r) + " |")
+        header = f"Showing {len(rows)} of {effective_total}"
+        if where:
+            header += f" (filtered; layer has {meta.feature_count})"
+        header += f" rows in `{layer}`."
+        parts = [header, "", "\n".join(md)]
+        seen = int(offset) + len(rows)
+        remaining = max(0, effective_total - seen)
+        if remaining > 0:
+            parts.append(
+                f"\n_{remaining} more row{'s' if remaining != 1 else ''} "
+                f"not shown; raise `n` (cap {cap}) or `offset` to see them._"
+            )
+        if include_geometry:
+            parts.append("\n_geom_wkt is large — request only when needed._")
+        return {
+            "layer": layer,
+            "rows_shown": len(rows),
+            "rows_total": effective_total,
+            "cap": cap,
+            "table_md": "\n".join(parts),
+        }
+
+    return _server_error("unsupported_operation",
+                         f"op={op!r} not supported",
+                         supported=["layers", "rows", "batch", "at"])
 
 
-@mcp.tool(annotations=_IDEMPOTENT_MUTATION)
-@_audited("show")
-def show(
-    layers: list[str],
+@mcp.tool(annotations=_SAFE_MUTATION)
+@_audited("layer")
+def layer(
+    op: Literal["show", "hide", "rename", "drop", "set_notes"],
+    name: str | None = None,
+    new_name: str | None = None,
+    notes: str | None = None,
+    layers: list[str] | None = None,
     title: str | None = None,
     style: dict | None = None,
     description: str = "",
     ctx: Context | None = None,
 ) -> dict:
-    """Mark layers visible in the viewer and return their summaries + viewer URL.
+    """Layer visibility + lifecycle.
 
-    The text response is fully usable on its own — opening the viewer is optional.
+    - `op="show"` (layers, title?, style?): REPLACE the viewer's
+      visible set with `layers`. Pass `title=None` to preserve the
+      existing panel title; `""` to clear it. `style` is a per-layer
+      styling spec (see below).
+    - `op="hide"` (layers?): remove `layers` from the visible set.
+      With no `layers`, hides all.
+    - `op="rename"` (name, new_name): rename a layer. Reversible in a
+      covering checkpoint.
+    - `op="drop"` (name): remove a layer. Reversible in a covering
+      checkpoint (full layer snapshotted).
+    - `op="set_notes"` (name, notes): attach free-text narration to a
+      layer. Shown in `inspect(op="layers")` and `sources(layer)`.
 
-    Args:
-        layers: names of session layers to make visible.
-        title: optional title rendered in the viewer's panel header and
-            browser tab. Passing `None` preserves any previously-set title.
-            Pass `""` to clear it.
-        style: optional per-layer styling with up to four visual channels.
+    Style spec (op="show"):
 
-            Shape:
-                style = {
-                    "<layer_name>": {
-                        # color channel (required to render anything non-default)
-                        "column": "<attribute_name>",
-                        "scale": "categorical" | "linear",
-                        "palette": {"val1": "#rrggbb", ...}  # categorical
-                                 | ["#lo", "#hi"]            # linear
-                                 | None                       # auto-assign
-                                                              # (categorical)
-
-                        # optional extra channels — each maps a numeric
-                        # column to a linear range. Use them to
-                        # double-encode features (e.g. color=category,
-                        # size=importance).
-                        "size":    {"column": "<attr>", "range": [3, 12]},
-                        "opacity": {"column": "<attr>", "range": [0.3, 1.0]},
-                        "stroke":  {"column": "<attr>", "range": [0.5, 3.0]},
-                    }
-                }
-
-          Examples:
-
-          # 1) color by category with an auto-assigned palette
-          show(["places"], style={
-              "places": {"column": "era", "scale": "categorical"},
-          })
-
-          # 2) two channels: color = category, size = population
-          show(["deso_income"], style={
-              "deso_income": {
-                  "column": "income_bracket", "scale": "categorical",
-                  "palette": {"low": "#B05B3B", "mid": "#9A7A42", "high": "#6B7348"},
-                  "size": {"column": "population", "range": [4, 14]},
-              },
-          })
-
-          Layers without a style entry fall back to their default color.
-          The full style is stored in session state and consumed by the
-          viewer automatically on its next auto-refresh poll.
+        style = {
+          "<layer>": {
+            "column": "<attr>", "scale": "categorical" | "linear",
+            "palette": {"v": "#rrggbb", ...} | ["#lo", "#hi"] | None,
+            "size":    {"column": "<attr>", "range": [lo, hi]},
+            "opacity": {"column": "<attr>", "range": [lo, hi]},
+            "stroke":  {"column": "<attr>", "range": [lo, hi]},
+          }
+        }
     """
     try:
         sess = _session(ctx)
     except SessionExpired as e:
         return _error_response(e)
-    missing = []
-    for n in layers:
-        if n not in sess.layers:
-            missing.append(n)
-    sess.visible_layers = [n for n in layers if n in sess.layers]
+
+    if op == "show":
+        return _do_show(sess, layers or [], title=title, style=style)
+
+    if op == "hide":
+        try:
+            out = op_hide_layers(sess, layers)
+            out["viewer_url"] = _abs_url(f"/view/{sess.id}")
+            return out
+        except Exception as e:
+            return _error_response(e)
+
+    if op == "rename":
+        if not name or not new_name:
+            return _server_error("missing_arg",
+                                 "layer op='rename' requires `name` and `new_name`.")
+        try:
+            out = op_rename_layer(sess, name, new_name)
+            _attach_hint(out, sess, new_name)
+            return out
+        except Exception as e:
+            return _error_response(e)
+
+    if op == "drop":
+        if not name:
+            return _server_error("missing_arg", "layer op='drop' requires `name`.")
+        try:
+            out = op_drop_layer(sess, name)
+            _attach_hint(out, sess, name)
+            return out
+        except Exception as e:
+            return _error_response(e)
+
+    if op == "set_notes":
+        if not name or notes is None:
+            return _server_error("missing_arg",
+                                 "layer op='set_notes' requires `name` and `notes`.")
+        try:
+            return op_set_notes(sess, name, notes)
+        except Exception as e:
+            return _error_response(e)
+
+    return _server_error(
+        "unsupported_operation",
+        f"op={op!r} not supported",
+        supported=["show", "hide", "rename", "drop", "set_notes"],
+    )
+
+
+def _do_show(sess: Session, layers_in: list[str],
+             title: str | None, style: dict | None) -> dict:
+    missing = [n for n in layers_in if n not in sess.layers]
+    sess.visible_layers = [n for n in layers_in if n in sess.layers]
     if title is not None:
         sess.visible_title = decode_unicode_escapes(title) or None
-    # Style validation — color channel + optional size/opacity/stroke
-    # channels. Invalid specs reject the whole call so the LLM can fix and
-    # retry in one round.
+
     VALID_SCALES = {"categorical", "linear"}
     CHANNEL_KEYS = ("size", "opacity", "stroke")
     if style:
@@ -1573,7 +1191,8 @@ def show(
                     return _server_error(
                         "invalid_style",
                         f"style[{lname!r}].{ch} must be a dict like "
-                        f"{{'column': '...', 'range': [lo, hi]}}, got {type(ch_spec).__name__}",
+                        f"{{'column': '...', 'range': [lo, hi]}}, "
+                        f"got {type(ch_spec).__name__}",
                     )
                 if not ch_spec.get("column"):
                     return _server_error(
@@ -1588,14 +1207,10 @@ def show(
                         f"style[{lname!r}].{ch}.range must be [lo, hi] numbers, got {rng!r}",
                     )
             sess.visible_styles[lname] = spec
-    # Drop styles for layers that are no longer visible.
+
     sess.visible_styles = {k: v for k, v in sess.visible_styles.items()
-                            if k in sess.visible_layers}
+                           if k in sess.visible_layers}
     sess.bump_version()
-    # Trimmed per-layer summary: `show()` is the visibility-toggle entry
-    # point, not the "tell me everything about this layer" one. Heavy
-    # fields (quick_stats, sample, provenance) stay on load/filter/spatial
-    # responses where they're actually useful.
     compact = []
     for n in sess.visible_layers:
         m = sess.layers[n]
@@ -1614,488 +1229,154 @@ def show(
     }
 
 
-# ---------- P1 tool wrappers ----------
-
-
-@mcp.tool(annotations=_READ_ONLY)
-def list_layers(ctx: Context | None = None) -> dict:
-    """Inventory of every layer in the current session.
-
-    Returns: `n_layers`, per-layer `{name, feature_count, geometry_type,
-    bbox_3011, columns, created_by, parent_layers, notes, is_visible}`,
-    plus `active_checkpoint` and `open_checkpoints`. Call this when the LLM
-    needs to recall what it has or when it looks overwhelmed by prior state.
-    """
-    try:
-        return op_list_layers(_session(ctx))
-    except Exception as e:
-        return _error_response(e)
-
-
 @mcp.tool(annotations=_SAFE_MUTATION)
-@_audited("load_many")
-def load_many(
-    dataset_ids: list[str] | None = None,
-    ids: list[str] | None = None,        # alias for dataset_ids
-    datasets: list[str] | None = None,   # alias for dataset_ids
-    bbox_3011: list[float] | None = None,
-    limit: int | None = None,
+@_audited("export")
+def export(
+    layers: str | list[str],
+    format: Literal["gpkg", "geojson", "csv", "parquet", "png"] = "gpkg",
+    cite: bool = False,
+    merge_geojson: bool = False,
+    title: str | None = None,
+    legend: bool = True,
+    width_px: int = 1600,
+    height_px: int = 1000,
     description: str = "",
     ctx: Context | None = None,
 ) -> dict:
-    """Bulk-load several catalog datasets in one call. Identical semantics to
-    `load` but applied across a list. The same bbox/limit apply to every
-    dataset in the list — use single `load` calls if you need per-dataset
-    arguments.
+    """Export one or many session layers to a downloadable artefact.
+    Returns URL(s) valid for 24 h.
+
+    Formats:
+      - **gpkg** (default): OGC GeoPackage in native EPSG:3011.
+        Single-layer → one .gpkg file. Multi-layer → one .gpkg with
+        every layer inside (QGIS-friendly).
+      - **geojson**: EPSG:4326 FeatureCollection. Multi-layer emits
+        one file per layer by default; pass `merge_geojson=True` for
+        a single FeatureCollection with a `_layer` property.
+      - **csv**: attribute columns + geometry as WKT.
+      - **parquet**: columnar, zstd-compressed, geometry as WKB.
+      - **png**: server-rendered styled map artefact (paper-toned
+        editorial backdrop). Honors the current `show(...)` style.
+        `title`/`legend`/`width_px`/`height_px` only apply here.
 
     Args:
-        dataset_ids: list of catalog ids (canonical). Also accepts `ids` or
-                     `datasets` as aliases.
-
-    Returns: a list of summaries, plus a list of `errors` (per-dataset).
+        layers: Single layer name or list.
+        format: Output format (default 'gpkg').
+        cite: If True, include a provenance markdown block alongside
+              the URL(s) (folds the old `export_and_cite` pattern).
+        merge_geojson: For geojson multi-layer, emit one combined file.
     """
-    dataset_ids = _pick(dataset_ids, ids, datasets)
-    if not dataset_ids:
-        return _server_error(
-            "missing_arg",
-            "load_many requires `dataset_ids` (or alias `ids` / `datasets`).",
-        )
-    results = []
-    errors = []
-    bbox_tuple = tuple(bbox_3011) if bbox_3011 and len(bbox_3011) == 4 else None
     try:
         sess = _session(ctx)
     except SessionExpired as e:
         return _error_response(e)
-    for did in dataset_ids:
-        entry = CATALOG.get(did)
-        if entry is None:
-            errors.append({"dataset_id": did, "error": "unknown_dataset"})
-            continue
+    layers_list = [layers] if isinstance(layers, str) else list(layers)
+
+    if format == "png":
+        if not layers_list:
+            return _server_error("missing_arg",
+                                 "export format='png' requires at least one layer.")
         try:
-            meta = load_dataset(sess, entry, bbox_3011=bbox_tuple, limit=limit)
-            results.append(_layer_summary(sess, meta.name))
+            from . import render as _render
+            import secrets
+            token = secrets.token_urlsafe(12)
+            out_dir = EXPORT_ROOT / token
+            info = _render.render_map_png(
+                sess, layers_list, out_dir,
+                title=title, legend=legend,
+                width_px=int(width_px), height_px=int(height_px),
+            )
+            size = (out_dir / info["filename"]).stat().st_size
+            url = _abs_url(f"/exports/{token}/{info['filename']}")
+            return {
+                "url": url, "format": "png",
+                "width": info["width"], "height": info["height"],
+                "bbox_3011": info["bbox_3011"],
+                "size_bytes": size,
+                "expires_in_s": EXPORT_TTL_S,
+                "hint": ("PNG artefact rendered server-side. Paper-toned "
+                         "editorial backdrop, no tiles. Embed directly in "
+                         "docs, slides, or messages."),
+            }
         except Exception as e:
-            errors.append({"dataset_id": did, "error": type(e).__name__, "detail": str(e)})
-    return {"loaded": results, "errors": errors, "n_loaded": len(results)}
+            return _error_response(e)
 
-
-@mcp.tool(annotations=_SAFE_MUTATION)
-@_audited("add_field")
-def add_field(
-    layer: str, name: str, expr: str,
-    field_type: str | None = None,
-    description: str = "",
-    ctx: Context | None = None,
-) -> dict:
-    """Add a new column to a layer in place, computed from a SQL expression.
-
-    QGIS / ArcGIS Field Calculator pattern. The expression is evaluated per row
-    and may reference other columns of the same layer or scalar subqueries
-    against other session layers. Type is inferred unless `field_type` is set
-    (VARCHAR / DOUBLE / BIGINT / BOOLEAN / DATE / TIMESTAMP).
-
-    Reversible when inside an active `checkpoint(...)`. Use for:
-      - era classifications: `CASE WHEN byggar < 1900 THEN 'pre-modern' END`
-      - area/density: `ST_Area(geom)`, `population / ST_Area(geom)`
-      - joins as columns: `(SELECT val FROM my_lookup WHERE id = layer.id)`
-
-    Args:
-        layer: target layer.
-        name: new column name (must not already exist — see `update_field`).
-        expr: DuckDB SQL scalar expression.
-        field_type: optional type override. If None, inferred.
-    """
     try:
-        sess = _session(ctx)
-        out = op_add_field(sess, layer, name, expr, field_type=field_type)
-        _attach_hint(out, sess, layer)
-        return out
-    except Exception as e:
-        return _error_response(e)
-
-
-@mcp.tool(annotations=_SAFE_MUTATION)
-@_audited("update_field")
-def update_field(
-    layer: str, name: str, expr: str,
-    where: str | None = None,
-    description: str = "",
-    ctx: Context | None = None,
-) -> dict:
-    """Overwrite an existing column's values from a SQL expression, optionally
-    restricted by WHERE. In place. Reversible inside a checkpoint.
-
-    Args:
-        layer: target layer.
-        name: column to overwrite.
-        expr: DuckDB SQL scalar expression.
-        where: optional WHERE clause restricting which rows are updated.
-    """
-    try:
-        sess = _session(ctx)
-        out = op_update_field(sess, layer, name, expr, where=where)
-        _attach_hint(out, sess, layer)
-        return out
-    except Exception as e:
-        return _error_response(e)
-
-
-@mcp.tool(annotations=_SAFE_MUTATION)
-@_audited("drop_field")
-def drop_field(layer: str, name: str, description: str = "",
-               ctx: Context | None = None) -> dict:
-    """Remove a column from a layer. In place. Reversible inside a checkpoint.
-    Refuses to drop the geometry column — use drop_layer for that."""
-    try:
-        sess = _session(ctx)
-        out = op_drop_field(sess, layer, name)
-        _attach_hint(out, sess, layer)
-        return out
-    except Exception as e:
-        return _error_response(e)
-
-
-@mcp.tool(annotations=_SAFE_MUTATION)
-@_audited("annotate")
-def annotate(
-    layer: str,
-    values: dict,
-    key_column: str = "rowid",
-    dry_run: bool = False,
-    model: str | None = None,
-    description: str = "",
-    ctx: Context | None = None,
-) -> dict:
-    """Attach LLM-classified per-feature attributes in one call.
-
-    Payload shape:
-        values = {
-            "<key>": {"era": "functionalist", "confidence": 0.9, "note": "..."},
-            "<key>": {"era": "art-nouveau",    "confidence": 0.7, ...},
-            ...
-        }
-
-    Columns are created on the fly if they don't exist (type inferred from the
-    values: all-int → BIGINT, int/float mix → DOUBLE, bool → BOOLEAN, else
-    VARCHAR). Up to 10,000 keys per call. Pair with `batch_iterate` for layers
-    larger than you can reason about in one pass.
-
-    The response reports both key-level matching (keys_matched / keys_unmatched)
-    and row-level coverage (rows_total / rows_with_any_annotation /
-    rows_without_annotation) — so you can distinguish "every key I sent hit a
-    row" from "every row in the layer received a value". The two differ when
-    your `values` dict covers only a subset of the layer.
-
-    Args:
-        layer: target layer.
-        values: {key_value: {attr_name: val, ...}} — many features per call.
-        key_column: column to match on. Default 'rowid' (DuckDB pseudo-column,
-                    stable within a session). Use a declared key column when
-                    one exists.
-        dry_run: if True, preview coverage without writing. Returns
-                 `{dry_run: True, keys_matched, keys_unmatched,
-                 new_columns_would_create, ...}`. Use this before committing
-                 large annotation payloads to catch key_column mismatches.
-        model: optional author id ("claude-sonnet-4-6", etc.) stored in
-               per-column provenance so exported columns can be traced
-               to their author.
-
-    Reversible inside a checkpoint (pre-image snapshotted once per column).
-    """
-    try:
-        sess = _session(ctx)
-        out = op_annotate(sess, layer, values, key_column=key_column,
-                          dry_run=dry_run, model=model)
-        _attach_hint(out, sess, layer)
+        if len(layers_list) == 1:
+            if cite:
+                out = op_export_and_cite(sess, layers_list[0], fmt=format)
+            else:
+                out = op_export(sess, layers_list[0], fmt=format)
+        else:
+            out = op_export_layers(sess, layers_list, fmt=format,
+                                   merge_geojson=merge_geojson)
+            if cite:
+                # Bundle provenance markdown for the combined export.
+                cite_md = op_sources(sess, None)
+                out["citation_md"] = cite_md
+        if "url" in out:
+            out["url"] = _abs_url(out["url"])
+        for f in out.get("files", []):
+            if "url" in f:
+                f["url"] = _abs_url(f["url"])
         return out
     except Exception as e:
         return _error_response(e)
 
 
 @mcp.tool(annotations=_READ_ONLY)
-def batch_iterate(
-    layer: str | None = None,
-    columns: list[str] | None = None,
-    batch_size: int = 200,
-    cursor: str | None = None,
-    where: str | None = None,
-    ctx: Context | None = None,
-) -> dict:
-    """Paginate through a layer with a resumable cursor. Use for layers too
-    large to fit in a single inspect/annotate call.
-
-    First call: pass `layer` (and optionally `columns`, `where`, `batch_size`).
-    The response carries `rows`, `next_cursor`, and `exhausted`.
-    Subsequent calls: pass `cursor=<next_cursor>` — all other args ignored.
-    Finish when `next_cursor` is None.
-
-    Every batch includes a `rowid` column (DuckDB pseudo-column) suitable for
-    `annotate(..., key_column='rowid')`.
-
-    Args:
-        layer: source layer name (first call only).
-        columns: column subset (first call only). Defaults to all non-geometry.
-        batch_size: 1 to 500 rows per batch (default 200).
-        cursor: opaque token from a previous batch.
-        where: SQL WHERE to restrict the iteration (first call only).
+def sources(layer: str | None = None, ctx: Context | None = None) -> str:
+    """Structured provenance report (publisher, licence, URL,
+    retrieval date, operations applied) for a layer or all session
+    layers, as markdown. Use this to cite where data came from after
+    a multi-step analysis.
     """
-    try:
-        sess = _session(ctx)
-        if cursor is None and not layer:
-            return _server_error(
-                "missing_arg",
-                "first call requires `layer`; subsequent calls use `cursor`.",
-            )
-        return op_batch_iterate(
-            sess, layer or "",  # layer is required for the first call
-            columns=columns, batch_size=batch_size,
-            cursor=cursor, where=where,
-        )
-    except Exception as e:
-        return _error_response(e)
-
-
-@mcp.tool(annotations=_READ_ONLY)
-def reverse_geocode(
-    x_3011: float,
-    y_3011: float,
-    ctx: Context | None = None,
-) -> dict:
-    """Identify the administrative areas that contain an EPSG:3011 point.
-
-    Use this whenever you want to name the neighborhood / district / block a
-    coordinate sits in — **do not guess place names from raw coordinates.**
-    Returns all containing polygons from SBK's `Adm_area` layer
-    (Stadsdel, Stadsdelsnämndsområde, Distrikt, Kvarter, Kommun) plus a
-    convenience `by_kategori` grouping.
-
-    Args:
-        x_3011, y_3011: EPSG:3011 coordinate.
-
-    If the point is outside SBK's coverage, returns empty `containing` with
-    a warning — state that the location is unidentifiable, do not invent.
-    """
-    try:
-        sess = _session(ctx)
-        admin_path = str(ROOT / "data/normalized/sbk/Adm_area.gpkg")
-        return op_reverse_geocode(sess, x_3011, y_3011, admin_path)
-    except Exception as e:
-        return _error_response(e)
-
-
-@mcp.tool(annotations=_READ_ONLY)
-def inspect_location(
-    x_3011: float,
-    y_3011: float,
-    radius_m: float = 100.0,
-    layers: list[str] | None = None,
-    columns: list[str] | None = None,
-    per_layer_limit: int = 3,
-    ctx: Context | None = None,
-) -> dict:
-    """What's here? One-shot spatial lookup near a point across many layers.
-
-    Returns, for each session layer with geometry (or the specified subset),
-    up to `per_layer_limit` features whose geometry is within `radius_m` of
-    (x_3011, y_3011), sorted by distance. Each feature carries its attributes
-    plus a `distance_m` float.
-
-    Args:
-        x_3011, y_3011: query point in EPSG:3011.
-        radius_m: search radius in metres (default 100).
-        layers: optional subset of layer names; defaults to all with geometry.
-                Unknown names are reported in `unknown_layers`.
-        columns: optional attribute subset to return per feature (keeps output
-                 small when you only need a name/id).
-        per_layer_limit: 1..25, default 3 (kept small to limit context bloat —
-                         raise explicitly if you need more).
-    """
-    try:
-        sess = _session(ctx)
-        return op_inspect_location(
-            sess, x_3011, y_3011,
-            radius_m=radius_m, layers=layers,
-            columns=columns,
-            per_layer_limit=per_layer_limit,
-        )
-    except Exception as e:
-        return _error_response(e)
-
-
-@mcp.tool(annotations=_READ_ONLY)
-def inspect_locations(
-    points: list[dict],
-    radius_m: float = 100.0,
-    layers: list[str] | None = None,
-    columns: list[str] | None = None,
-    per_layer_limit: int = 3,
-    ctx: Context | None = None,
-) -> dict:
-    """Batch variant of `inspect_location`: "what's near each of these points?"
-    in one call.
-
-    Args:
-        points: list of `{"id": str|int, "x_3011": float, "y_3011": float}` dicts.
-                If `id` is omitted, the list index is used.
-        radius_m, layers, columns, per_layer_limit: same as inspect_location.
-
-    Cap: 500 points per call.
-
-    Returns: `{points: [{id, x_3011, y_3011, results: [{layer, features}, ...]}, ...],
-               unknown_layers: [...], layers_considered: N}`.
-    """
-    try:
-        sess = _session(ctx)
-        if len(points) > 500:
-            return _server_error(
-                "too_many_points",
-                f"got {len(points)}, cap is 500. Batch into smaller calls.",
-            )
-        return op_inspect_locations(
-            sess, points,
-            radius_m=radius_m, layers=layers,
-            columns=columns, per_layer_limit=per_layer_limit,
-        )
-    except Exception as e:
-        return _error_response(e)
-
-
-@mcp.tool(annotations=_SAFE_MUTATION)
-@_audited("drop_layer")
-def drop_layer(name: str, description: str = "",
-               ctx: Context | None = None) -> dict:
-    """Remove a layer from the session. Reversible inside an active checkpoint
-    (full layer snapshotted); not reversible otherwise.
-    """
-    try:
-        sess = _session(ctx)
-        out = op_drop_layer(sess, name)
-        _attach_hint(out, sess, name)
-        return out
-    except Exception as e:
-        return _error_response(e)
-
-
-@mcp.tool(annotations=_SAFE_MUTATION)
-@_audited("rename_layer")
-def rename_layer(old: str, new: str, description: str = "",
-                 ctx: Context | None = None) -> dict:
-    """Rename a layer. Reversible inside an active checkpoint."""
-    try:
-        sess = _session(ctx)
-        out = op_rename_layer(sess, old, new)
-        _attach_hint(out, sess, new)
-        return out
-    except Exception as e:
-        return _error_response(e)
-
-
-@mcp.tool(annotations=_IDEMPOTENT_MUTATION)
-@_audited("hide")
-def hide(
-    layers: list[str] | None = None,
-    description: str = "",
-    ctx: Context | None = None,
-) -> dict:
-    """Hide layers in the viewer. Inverse of `show`. With no args, hides all.
-
-    Args:
-        layers: layer names to hide. None/empty → hide all.
-    """
-    try:
-        sess = _session(ctx)
-        out = op_hide_layers(sess, layers)
-        out["viewer_url"] = _abs_url(f"/view/{sess.id}")
-        return out
-    except Exception as e:
-        return _error_response(e)
-
-
-@mcp.tool(annotations=_IDEMPOTENT_MUTATION)
-@_audited("set_notes")
-def set_notes(layer: str, notes: str, description: str = "",
-              ctx: Context | None = None) -> dict:
-    """Attach free-text notes to a layer. Shown in list_layers and sources.
-    Useful for "why does this layer exist" narration that will help you (or a
-    colleague reading the export) later."""
-    try:
-        return op_set_notes(_session(ctx), layer, notes)
-    except Exception as e:
-        return _error_response(e)
+    return op_sources(_session(ctx), layer)
 
 
 @mcp.tool(annotations=_SAFE_MUTATION)
 @_audited("checkpoint")
 def checkpoint(
+    op: Literal["create", "rollback", "commit"],
     name: str,
     layers: list[str] | None = None,
     description: str = "",
     ctx: Context | None = None,
 ) -> dict:
-    """Create a named checkpoint. Subsequent in-place mutations (`add_field`,
-    `update_field`, `drop_field`, `annotate`, `drop_layer`, `rename_layer`)
-    are snapshotted so that `rollback(name)` can undo them. `commit(name)`
-    discards the snapshots and makes the mutations permanent.
+    """Named savepoints that make in-place mutations reversible.
 
-    Scope:
-        layers=None (default): covers **every** layer in the session. Any
-            in-place mutation is tracked.
-        layers=["a", "b"]: covers only those layers. Mutations to other
-            layers are NOT snapshotted and can't be rolled back via this
-            checkpoint — use a separate scoped checkpoint for them.
+    - `op="create"` (name, layers?): snapshot mutations going forward.
+      Pass `layers=[...]` to scope to specific layers; omit for
+      whole-session coverage. Multiple checkpoints can be active at
+      once (column-scoped snapshots, not full-layer copies).
+    - `op="rollback"` (name): restore all covered mutations; discard
+      the checkpoint and its snapshots.
+    - `op="commit"` (name): make covered mutations permanent; discard
+      snapshots, reclaim storage.
 
-    Multiple checkpoints can be active simultaneously. A mutation covered by
-    more than one active checkpoint is snapshotted for each. Storage cost is
-    column-scoped (O(changed columns × rows)), not layer-wide.
+    Covered mutations: `edit_field` (add/update/drop/classify/annotate)
+    and `layer` (rename/drop).
     """
     try:
-        return op_checkpoint(_session(ctx), name, layers=layers)
+        sess = _session(ctx)
+        if op == "create":
+            return op_checkpoint(sess, name, layers=layers)
+        if op == "rollback":
+            return op_rollback(sess, name)
+        if op == "commit":
+            return op_commit(sess, name)
+        return _server_error(
+            "unsupported_operation",
+            f"op={op!r} not supported",
+            supported=["create", "rollback", "commit"],
+        )
     except Exception as e:
         return _error_response(e)
 
 
-@mcp.tool(annotations=_SAFE_MUTATION)
-@_audited("rollback")
-def rollback(name: str, description: str = "",
-             ctx: Context | None = None) -> dict:
-    """Restore every in-place mutation made since `checkpoint(name)`. Discards
-    the checkpoint and its snapshots."""
-    try:
-        return op_rollback(_session(ctx), name)
-    except Exception as e:
-        return _error_response(e)
-
-
-@mcp.tool(annotations=_SAFE_MUTATION)
-@_audited("commit")
-def commit(name: str, description: str = "",
-           ctx: Context | None = None) -> dict:
-    """Make all mutations since `checkpoint(name)` permanent. Discards
-    snapshots, reclaims storage."""
-    try:
-        return op_commit(_session(ctx), name)
-    except Exception as e:
-        return _error_response(e)
-
-
-# ---------- helpers ----------
-
-def _qi(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
-
-
-def _md_cell(v) -> str:
-    if v is None:
-        return ""
-    s = str(v).replace("\n", " ").replace("|", "\\|")
-    return s if len(s) < 80 else s[:77] + "..."
-
-
-# HTTP/Starlette composition lives in `.http_app`. Keeping it out of this
-# file means the module that owns the MCP tool surface stays focused on
-# tools, and stdio mode never imports Starlette.
-
+# ---------------------------------------------------------------------------
+# Entry point.
+# ---------------------------------------------------------------------------
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -2104,7 +1385,6 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     args = parser.parse_args()
 
-    # Idle sessions GC to disk + structured SessionExpired on next touch.
     REGISTRY.start_gc()
 
     if args.http:
@@ -2116,7 +1396,6 @@ def main() -> None:
         )
         uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     else:
-        # stdio for direct MCP-client use
         mcp.run()
 
 

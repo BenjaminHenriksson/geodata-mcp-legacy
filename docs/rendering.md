@@ -17,11 +17,11 @@ of them can, by themselves:
   an active spec.
 - Add a scale bar at the right length for the map extent.
 
-So `render_map` exists. Give it a list of visible layers; it returns a
-PNG URL valid for 24 hours. The model takes that URL and embeds the
-image in whatever document it composes. No PDF-layout tool needed on
-our side, regardless of which client (claude.ai, ChatGPT, Gemini, etc.)
-is driving.
+So `export(format="png")` exists. Give it a list of layers; it
+returns a PNG URL valid for 24 hours. The model takes that URL and
+embeds the image in whatever document it composes. No PDF-layout tool
+needed on our side, regardless of which client (claude.ai, ChatGPT,
+Gemini, etc.) is driving.
 
 This follows the [AI-native principle](design): build the render (hard
 for the model alone), skip the document assembly (easy for the model
@@ -84,7 +84,7 @@ knowledge of the city.
 
 ## Style spec reuse
 
-The same spec `show()` accepts is the one `render_map` reads:
+The same spec `layer(op="show")` accepts is the one `export(format="png")` reads:
 
 ```python
 sess.visible_styles = {
@@ -192,7 +192,7 @@ vector data, the simpler stack is the right call.
 
 ## Integration with exports
 
-`render_map` writes into the same `data/exports/<token>/<file>` path
+`export(format="png")` writes into the same `data/exports/<token>/<file>` path
 that GPKG and parquet exports use. A fresh 12-char `secrets.token_urlsafe`
 token is generated per render. The token directory is created lazily;
 the PNG lands inside.

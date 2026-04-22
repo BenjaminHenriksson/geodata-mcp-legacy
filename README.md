@@ -5,7 +5,7 @@ provenance and schema normalization.** Stockholm Stadsbyggnadskontorets city
 map, SCB demographic statistical areas (DeSO 2018 + 2025), SCB's DeSO-keyed
 statistical tables, and OpenStreetMap addresses, all pre-joined to
 canonical keys and exposed to any MCP client through a session-scoped
-DuckDB spatial backend. 66 datasets, one viewer, 38 tools shaped for how
+DuckDB spatial backend. 66 datasets, one viewer, 11 tools shaped for how
 LLMs actually reason.
 
 - **Live:** `https://geo.benjaminhenriksson.com`
@@ -29,61 +29,32 @@ LLMs actually reason.
 
 ## What it does
 
-38 tools across four categories. All carry MCP `toolAnnotations`
-(`readOnlyHint` / `destructiveHint=false`) so MCP clients (claude.ai,
-ChatGPT, Gemini, Qwen, Claude Desktop / Code, and the rest) can
-auto-approve safe calls without per-action permission prompts.
+11 tools. All carry MCP `toolAnnotations` (`readOnlyHint` /
+`destructiveHint=false`) so MCP clients (claude.ai, ChatGPT, Gemini,
+Qwen, Claude Desktop / Code, and the rest) can auto-approve safe
+calls without per-action permission prompts. Five of them take an
+`op: Literal[...]` enum that picks the sub-operation; the valid
+values are visible in the tool schema.
 
-**Discovery & read-only**
 | Tool | What it does |
 |---|---|
-| `search_data` | Fuzzy-search the 65-dataset catalog (compact output by default) |
-| `describe_dataset` | Full attribute schema for a single dataset |
-| `geocode` | Place-name + composite street-number lookup against SBK labels + polygons |
-| `list_layers` | Inventory of all session layers + notes + checkpoint coverage |
-| `inspect` | Sample rows from any layer (200 attribute cap / 10 with geometry) |
-| `inspect_location` | "What's here?" Features near a point across many layers in one call |
-| `inspect_locations` | Batch variant. Up to 500 points per call |
-| `batch_iterate` | Cursor-paginated read for layers too large to inspect in one shot |
-| `stats` | Aggregation tables (min/avg/max/count, grouped) |
+| `catalog` | Fuzzy-search the 65-dataset catalog; pass `id` for full attribute schema |
+| `geocode` | Forward (name → coords), reverse (coords → admin area), or bbox (name → bbox) |
+| `load` | Pull 1..N catalog datasets, or inject LLM-provided rows (`source` mandatory) |
+| `execute_sql` | Read-only DuckDB + Spatial SQL, sqlglot-validated, 30 s timeout |
+| `derive` | New layer from existing: `filter`, `top_n`, `clip`, `intersect`, `select_by_location`, `buffer`, `centroid`, `dissolve`, `convex_hull` |
+| `edit_field` | Mutate columns in place: `add`, `update`, `drop`, `classify`, `annotate`. Reversible inside a checkpoint |
+| `inspect` | `layers` (inventory), `rows` (sample, ≤200), `batch` (cursor-paginate), `at` (spatial "what's here", ≤500 points) |
+| `layer` | Visibility + lifecycle: `show`, `hide`, `rename`, `drop`, `set_notes` |
+| `export` | Single or multi layer → gpkg/geojson/csv/parquet/png; optional citation bundle |
 | `sources` | Walks the provenance chain → markdown citations |
-
-**Layer creation & session state**
-| Tool | What it does |
-|---|---|
-| `load` | Read one catalog dataset into the session; bbox/attribute/intersect filters |
-| `load_many` | Bulk-load several datasets in one call |
-| `filter` | SQL WHERE on an existing session layer → new layer |
-| `spatial` | `select_by_location` / `clip` / `intersect` / `buffer` / `centroid` / `dissolve` / `convex_hull` |
-| `execute_sql` | Read-only DuckDB SQL escape hatch, sqlglot-validated, 30 s timeout |
-| `create_layer` | Inject LLM-provided data as a layer (1 k row cap, WKT geom, `llm_sourced=True`) |
-| `export` | Write to GeoJSON/GPKG/CSV/Parquet, 24 h download URL (absolute when `PUBLIC_URL` is set) |
-| `show` | Mark layers visible in the viewer (viewer auto-refreshes on change) |
-| `hide` | Inverse of `show`. Remove layers from the viewer |
-| `set_notes` | Attach free-text narration to a layer (surfaces in `list_layers`/`sources`) |
-
-**In-place layer mutation** (QGIS Field-Calculator pattern; reversible in a covering checkpoint)
-| Tool | What it does |
-|---|---|
-| `add_field` | Add a new column computed by a SQL expression |
-| `update_field` | Overwrite an existing column; optional WHERE |
-| `drop_field` | Remove a column (not the geometry column) |
-| `annotate` | Bulk per-feature LLM-classified attributes (10 k-key cap, `keys_cap` echoed on every call) |
-| `drop_layer` | Remove a layer from the session |
-| `rename_layer` | Rename a layer |
-
-**Transaction control.** Scoped, concurrent
-| Tool | What it does |
-|---|---|
-| `checkpoint` | Create a named checkpoint (optional `layers=[...]` scope). Multiple can be active at once |
-| `rollback` | Undo every mutation covered by this checkpoint |
-| `commit` | Make mutations permanent, discard snapshots |
+| `checkpoint` | `create` a named savepoint, `rollback` to it, or `commit` it. Scoped + concurrent |
 
 Full tool reference: **[`docs/tools.md`](docs/tools.md)**, plus the
 published docs at [`geo.benjaminhenriksson.com/docs`](https://geo.benjaminhenriksson.com/docs)
 (design rationale, architecture, data model, sessions, viewer,
 provenance, rendering, roadmap). The server also publishes top-level
-`instructions` at connection time, a ~10 KB workflow primer the model
+`instructions` at connection time, a ~6 KB workflow primer the model
 (Claude, ChatGPT, Gemini, Qwen, etc.) reads before the first tool call.
 
 ---
@@ -156,7 +127,7 @@ claude mcp add --transport http geodata \
   --header "Authorization: Bearer $TOKEN"
 ```
 
-Restart the client. The 38 tools appear automatically. The same
+Restart the client. The 11 tools appear automatically. The same
 bearer-on-`/mcp` pattern works for any CLI-style MCP client (Codex,
 custom scripts, in-house tools); only the `add` command syntax
 differs.
@@ -202,39 +173,37 @@ toggles. The session's URL is unguessable per connection.
 
 ```python
 # Via any MCP client, in natural language the LLM emits:
-geocode(name="Tekniska nämndhuset")                      # → (152699, 6579781)
-load(dataset_id="deso_2025", layer_name="deso")
+geocode(op="forward", name="Tekniska nämndhuset")        # → (152699, 6579781)
+load(op="catalog", dataset_ids=["deso_2025", "scb_income_structure"])
 execute_sql(sql="""
-  SELECT desokod FROM "deso"
-  WHERE ST_Contains(geom, ST_Point(152699, 6579781))
-""")                                                      # → 0180C4220
-
-load(dataset_id="scb_income_structure", layer_name="income")
-execute_sql(sql="""
-  SELECT år, "Inkomststruktur nettoinkomst" AS mean_tkr
-  FROM "income"
-  WHERE region = '0180C4220' AND inkomstkomponent='nettoinkomst'
-    AND tabellinnehåll='Medelvärde för samtliga, tkr' AND kön='totalt'
-    AND "Inkomststruktur nettoinkomst" IS NOT NULL
+  WITH here AS (
+    SELECT desokod FROM deso_2025
+    WHERE ST_Contains(geom, ST_Point(152699, 6579781))
+  )
+  SELECT år, value AS mean_tkr
+  FROM scb_income_structure i JOIN here h ON i.desokod_2025 = h.desokod
+  WHERE tabellinnehåll='Medelvärde för samtliga, tkr' AND kön='totalt'
+    AND inkomstkomponent='nettoinkomst' AND value IS NOT NULL
   ORDER BY år DESC LIMIT 3
 """)
 
-sources(layer="deso")   # → markdown citation block
+sources(layer="deso_2025")   # → markdown citation block
 ```
 
 Actual answer: this DeSO's mean net income in 2024 was **632 tkr** (Stockholm
 kommun average 453 tkr; national 358 tkr), ~83rd percentile among 544 Stockholm
-DeSOs. See `docs/tools.md` for the raw transcript.
+DeSOs. See `docs/tools.md` for the full reference.
 
 ### "Show me all buildings in Södermalm"
 
 ```python
-load(dataset_id="sbk_admin_polygons", layer_name="admin")
-filter(layer="admin", where="KATEGORI='Stadsdel' AND NAMN='SÖDERMALM'",
+load(op="catalog", dataset_ids=["sbk_admin_polygons"], layer_name="admin")
+derive(op="filter", layer="admin",
+       where="KATEGORI='Stadsdel' AND NAMN='SÖDERMALM'",
        result_name="sodermalm")
-load(dataset_id="sbk_buildings", intersect_layer="sodermalm",
-     layer_name="bldg_sodermalm")
-show(layers=["sodermalm", "bldg_sodermalm"])
+load(op="catalog", dataset_ids=["sbk_buildings"],
+     intersect_layer="sodermalm", layer_name="bldg_sodermalm")
+layer(op="show", layers=["sodermalm", "bldg_sodermalm"])
 ```
 
 3,173 buildings clipped by the actual Stadsdel polygon.
@@ -242,16 +211,15 @@ show(layers=["sodermalm", "bldg_sodermalm"])
 ### "Where do my favorite cafés sit in the DeSO grid?"
 
 ```python
-create_layer(name="favorite_cafes",
-             data=[{"name": "Drop Coffee", "rating": 4.6, "geom_wkt": "POINT(18.0658 59.3177)"},
-                   {"name": "Café Pascal", "rating": 4.4, "geom_wkt": "POINT(18.0525 59.3427)"}],
-             source="Personal visits 2026-04", geometry_column="geom_wkt")
+load(op="inline", layer_name="favorite_cafes",
+     data=[{"name": "Drop Coffee", "rating": 4.6, "geom_wkt": "POINT(18.0658 59.3177)"},
+           {"name": "Café Pascal", "rating": 4.4, "geom_wkt": "POINT(18.0525 59.3427)"}],
+     source="Personal visits 2026-04", geometry_column="geom_wkt")
 execute_sql(sql="""
   SELECT c.name, c.rating, d.desokod
-  FROM "favorite_cafes" c JOIN "deso" d ON ST_Contains(d.geom, c.geom)
+  FROM favorite_cafes c JOIN deso_2025 d ON ST_Contains(d.geom, c.geom)
 """)
-export(layer="favorite_cafes", format="gpkg")
-sources()
+export(layers="favorite_cafes", format="gpkg", cite=True)
 ```
 
 ---
@@ -264,7 +232,7 @@ sources()
 - **30 SBK Stadskarta layers**: buildings, addresses, place names, administrative areas, streets, water, contours, etc. (Stockholm kommun, EPSG:3011)
 - **31 SCB statistical tables** keyed by DeSO/RegSO/kommun/Riket: population, households, income, employment, housing stock, buildings-by-age, land use, cars (Stockholm DeSOs + Stockholm RegSOs + country aggregate)
 
-Run `search_data("")` to list them all. Full source notes in
+Run `catalog()` to list them all. Full source notes in
 [`DATA_SUMMARY.md`](DATA_SUMMARY.md) and [`sources.md`](sources.md).
 
 ---
@@ -279,7 +247,7 @@ Cloudflare edge → Caddy → geodata-mcp service on 127.0.0.1:8765
                          │
                          ├── FastMCP 3.x (streamable HTTP)
                          │     per-connection session UUIDs
-                         │     12 tools
+                         │     11 tools
                          │
                          ├── DuckDB 1.5 + Spatial
                          │     256 MB memory_limit per session
@@ -341,7 +309,7 @@ geodata-mcp/
 ├── DATA_SUMMARY.md              — human-readable catalogue
 ├── pyproject.toml + uv.lock
 ├── geodata_mcp/
-│   ├── server.py                — FastMCP + 38 @mcp.tool wrappers + main entry
+│   ├── server.py                — FastMCP + 11 @mcp.tool wrappers + main entry
 │   ├── http_app.py              — Starlette routes + middleware (built only with --http)
 │   ├── catalog.py               — rapidfuzz-backed catalog search
 │   ├── session.py               — per-connection sessions, GC, persistence, SQL audit

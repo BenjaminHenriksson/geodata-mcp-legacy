@@ -72,10 +72,10 @@ affecting session integrity.
 
 Every table the session has created:
 
-- Layer tables (from `load`, `filter`, `spatial`, `execute_sql`, macros)
-  with their geometry columns.
+- Layer tables (from `load`, `derive`, `execute_sql`) with their
+  geometry columns.
 - `_snap_<checkpoint_id>_<layer>_<column>` tables: pre-image snapshots
-  captured at checkpoint time, used by `rollback`.
+  captured at checkpoint time, used by `checkpoint(op="rollback")`.
 - DuckDB's own catalog metadata (column types, constraints).
 
 ### What's in `<id>.meta.json`
@@ -90,7 +90,7 @@ Python-side state that DuckDB doesn't know about:
   timestamp, plus `correlation_id` / `description` / `status` /
   `duration_ms` / `error` from the audit context. Used for
   `sources(layer)` and for LLM recovery.
-- `cursors`: state for `batch_iterate` pagination.
+- `cursors`: state for `inspect(op="batch")` pagination.
 - `checkpoints`: checkpoint metadata (id, snapshot refs, scope). Note
   the actual snapshot *data* lives in DuckDB tables, not here.
 - `next_checkpoint_id`, `active_checkpoint`, `version`.
@@ -153,17 +153,18 @@ interval. The 60-second cadence is tuned to this.
 
 Checkpoints work across persistence:
 
-- `checkpoint("x", layers=["a"])` records in-memory. The checkpoint
-  metadata is part of the dirty-flush cycle, so it survives restart.
+- `checkpoint(op="create", name="x", layers=["a"])` records in-memory.
+  The checkpoint metadata is part of the dirty-flush cycle, so it
+  survives restart.
 - Snapshot tables (`_snap_<id>_<layer>_<col>`) are created in DuckDB at
   mutation time. They persist to disk automatically because they're
   just tables in the DB file.
 - After restart, `s.checkpoints` rebuilds from the sidecar. Snapshot
-  tables are already there. `rollback("x")` executes the same SQL path
-  as before.
+  tables are already there. `checkpoint(op="rollback", name="x")`
+  executes the same SQL path as before.
 
-Tested end-to-end: checkpoint → mutate → restart → rollback reverses the
-mutation correctly.
+Tested end-to-end: `checkpoint(op="create")` → mutate → restart →
+`checkpoint(op="rollback")` reverses the mutation correctly.
 
 ---
 

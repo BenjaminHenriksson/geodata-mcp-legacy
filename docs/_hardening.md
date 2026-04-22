@@ -15,9 +15,8 @@ Callers are semi-trusted:
   and is talking to the server through OAuth 2.1 + PKCE.
 - Inside a session, the caller (effectively an LLM emitting tool
   calls) has broad read access to 66 pre-normalised Swedish open
-  datasets and can issue DuckDB SQL via `execute_sql`, `filter`,
-  `add_field`, `update_field`, `spatial`, `classify`, and the macro
-  helpers.
+  datasets and can issue DuckDB SQL via `execute_sql`, `derive`, and
+  `edit_field`.
 - The LLM is considered prone to mistakes but not actively malicious.
   The MCP client is treated the same way.
 - The data the server hosts is *open* (CC0 / ODbL / CC BY). Secrets
@@ -147,9 +146,10 @@ serves a mutated asset the browser refuses to execute it.
 - `_quote_ident` on every identifier interpolation (layer/column
   names).
 - `_EPSG_RE = r"EPSG:\d{4,6}"`: strict whitelist on CRS strings;
-  remediates the 2026-04-18 HIGH finding against `create_layer`.
+  remediates the 2026-04-18 HIGH finding against inline-load CRS
+  input (`load(op="inline")`).
 - `decode_unicode_escapes` on free-text user fields (title, notes,
-  annotate values) to decode the over-escaped `\uXXXX` some MCP
+  annotation values) to decode the over-escaped `\uXXXX` some MCP
   clients emit; handles surrogate pairs, rejects lone surrogates
   (otherwise downstream UTF-8 encoding breaks).
 - Every display surface uses `textContent` or `escapeHtml`;
@@ -328,8 +328,8 @@ All findings addressed in commits leading up to this doc:
 
 Previous HIGH fixed earlier this cycle:
 
-- SQL injection in `create_layer`'s `crs` parameter: regex whitelist
-  (commit 36bf3cb).
+- SQL injection in the inline-load `crs` parameter (then `create_layer`,
+  now folded into `load(op="inline")`): regex whitelist (commit 36bf3cb).
 
 No HIGH or MEDIUM findings remain.
 

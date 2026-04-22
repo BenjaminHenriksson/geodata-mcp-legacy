@@ -1294,9 +1294,11 @@ def export(
                 "bbox_3011": info["bbox_3011"],
                 "size_bytes": size,
                 "expires_in_s": EXPORT_TTL_S,
-                "hint": ("PNG artefact rendered server-side. Paper-toned "
-                         "editorial backdrop, no tiles. Embed directly in "
-                         "docs, slides, or messages."),
+                "hint": ("PNG artefact rendered server-side. Carto Positron "
+                         "tiled basemap underlay (from a pre-warmed local "
+                         "cache — no runtime egress) plus desaturated "
+                         "vector overlay. Embed directly in docs, slides, "
+                         "or messages."),
             }
         except Exception as e:
             return _error_response(e)

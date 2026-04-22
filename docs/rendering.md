@@ -62,23 +62,43 @@ Default dimensions: 1600 × 1000 px at 150 DPI. Typical output size
 
 ---
 
-## Why no tiled basemap
+## The basemap: pre-warmed local cache, no runtime egress
 
-Two reasons:
+The renderer composites a **Carto Positron tiled basemap** under the
+vector overlay. The tiles are read from a local on-disk cache at
+`data/basemap/positron/{z}/{x}/{y}.png`, not fetched at runtime.
 
-1. **The systemd sandbox denies outbound egress.** Carto / Mapbox /
-   MapTiler tile fetches would fail. Solvable by allow-listing
-   CDN IP ranges, but that's brittle (CDN ranges churn) and opens a
-   general-purpose egress channel.
-2. **The paper palette is the visual identity.** A Carto Positron tile
-   underneath pushes the overall colour toward grey; a paper ivory
-   reads more like a field-journal excerpt. The editorial register is
-   deliberate.
+**Why a cache rather than a live fetch.** The service unit runs with
+`IPAddressDeny=any` + `IPAddressAllow=localhost` — a cgroup-BPF
+egress filter that blocks all outbound traffic except loopback. That
+posture is load-bearing for the sandbox (see `_security.md`): an LLM
+induced to emit `SELECT read_csv('http://...')` or similar can't
+reach the network at all. Allow-listing a tile CDN would be a crack
+in that wall (CDN ranges churn, and any allow-list is a foothold),
+so instead we pre-warm the cache offline.
 
-The viewer (not rendered; interactive) uses Positron because
-orientation matters when you're panning and zooming. For a static
-image, orientation comes from the scale bar + the bbox + the reader's
-knowledge of the city.
+**How the cache is populated.** `scripts/fetch_basemap.py` runs on a
+machine with internet (typically once at deploy time, or when
+extending coverage), downloads tiles for the Stockholm kommun bbox
+at zooms 10–13 (~230 tiles, ~4 MB), and writes them to the cache
+directory. The service never does this; the cache lives on the
+service's read-only bind-mount.
+
+**Fallback.** If the cache directory is missing or empty (e.g. a
+first deploy before `fetch_basemap.py` has run), `render.py` falls
+back to a paper-only backdrop with a faint cartographer's grid.
+The render still succeeds; it just has no tile underlay.
+
+**Extending coverage.** To add a new city or higher zoom levels,
+edit the bbox / `ZOOM_LEVELS` in `scripts/fetch_basemap.py`, rerun
+offline, and commit the new tiles under the gitignored
+`data/basemap/` tree (deploy pulls tiles out-of-band, the same way
+the normalized data is deployed). The runtime service posture
+doesn't change.
+
+The viewer (interactive, browser-side) fetches Positron tiles
+directly from Carto — that path is outside our sandbox, limited by
+the user's browser and Cloudflare, not the service.
 
 ---
 

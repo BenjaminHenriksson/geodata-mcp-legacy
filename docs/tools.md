@@ -501,10 +501,12 @@ list.
 - **csv**: attribute columns + geometry as WKT.
 - **parquet**: columnar, zstd-compressed, geometry as WKB.
 - **png**: server-rendered styled map artefact. Honors the current
-  `layer(op="show")` style. Paper-toned editorial backdrop (no tiled
-  basemap — the server sandbox denies outbound egress, and the
-  editorial palette reads cleaner than a Carto tile anyway). Args:
-  `title?`, `legend=True`, `width_px=1600`, `height_px=1000`.
+  `layer(op="show")` style. Carto Positron tiled basemap underlay
+  (read from a pre-warmed local cache — the runtime service has no
+  outbound egress, so tiles are fetched ahead of deploy via
+  `scripts/fetch_basemap.py`). If the cache is missing, the renderer
+  falls back to a paper-toned backdrop with a faint cartographer's
+  grid. Args: `title?`, `legend=True`, `width_px=1600`, `height_px=1000`.
 
 ### `cite=True`
 

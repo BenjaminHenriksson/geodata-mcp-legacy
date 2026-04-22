@@ -65,16 +65,24 @@ Three different names for the same kind of field:
 **Fix direction**: pick one (`table_md`), rename the other two,
 update docs.
 
-### 4. Doc drift on PNG rendering & basemap (HOLD)
+### 4. Doc drift on PNG rendering & basemap (resolved — doc-only)
 
-Docs say "Paper-toned editorial backdrop (no tiled basemap — the
+Docs said "Paper-toned editorial backdrop (no tiled basemap — the
 server sandbox denies outbound egress…)". Agent D's rendered PNG
-clearly has OSM/Carto tiles with attribution, implying egress was
-relaxed at some point and the docs weren't updated. **Held** for
-security review: re-enabling outbound egress has implications for
-the sandbox posture documented in `docs/_security.md` and
-`docs/_hardening.md`, so this needs human eyes before we touch
-either code or docs.
+clearly had OSM/Carto tiles with attribution, implying egress had
+been relaxed. **Investigated on 2026-04-22; egress is NOT relaxed.**
+Tiles are served from a pre-warmed local cache at
+`data/basemap/positron/{z}/{x}/{y}.png` (~230 tiles, ~4 MB for
+Stockholm kommun, zooms 10–13), populated offline by
+`scripts/fetch_basemap.py`. The service unit's `IPAddressDeny=any`
+is still load-bearing and enforced at runtime. The claim "no tiled
+basemap" was never correct for renders with a populated cache; the
+architecture was always "cached tiles, not live fetches".
+
+**Fix applied**: `docs/rendering.md`, `docs/design.md`,
+`docs/tools.md`, and the `hint` string in the `export(format="png")`
+response updated to accurately describe the cache-based design and
+the fallback path when the cache is missing.
 
 ---
 
@@ -172,8 +180,10 @@ pattern would save the `SELECT DISTINCT` step.
 
 ## Status
 
-- **Fixed in the same session as this report**: bugs 1, 2, 3.
-- **Held for security review**: bug 4 (basemap / egress).
+- **Fixed in the same session as this report**: bugs 1, 2, 3, 4.
+  (Bug 4 was a doc-only fix after security-posture investigation
+  confirmed the sandbox was still enforcing egress-deny; the tiles
+  come from a pre-warmed local cache, not runtime fetches.)
 - **Design decisions open**: signals A, B, C, D, E — to be decided
   deliberately, not auto-applied.
 

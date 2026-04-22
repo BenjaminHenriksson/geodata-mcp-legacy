@@ -156,10 +156,14 @@ The layer colour palette is deliberately desaturated: cartographer's inks
 (burnt umber, raw sienna, verdigris, antique brass) rather than the
 neon-on-dark of dashboards. No colour is meant to "pop"; they coexist.
 
-Rendered PNG exports (via `export(format='png')`) follow the same rules. No tiled
-basemap (the systemd sandbox denies outbound egress anyway). Just paper
-background, faint cartographer's grid, vector overlay, scale bar, and
-legend.
+Rendered PNG exports (via `export(format='png')`) follow the same
+palette rules: desaturated vector overlay, eyebrow + title + scale
+bar + legend. The underlay is a Carto Positron tiled basemap read
+from a pre-warmed local cache (`data/basemap/positron/`); the
+runtime service has no outbound egress, so tiles are fetched ahead
+of deploy via `scripts/fetch_basemap.py`. If the cache is absent
+the renderer falls back to a paper-only backdrop with a faint
+cartographer's grid. See `rendering.md` for details.
 
 ---
 

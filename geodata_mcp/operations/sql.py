@@ -264,7 +264,7 @@ def execute_sql(
         "rows": len(result),
         "capped_at": EXECUTE_SQL_MARKDOWN_ROW_CAP,
         "description": description,
-        "markdown": "\n".join(md),
+        "table_md": "\n".join(md),
     }
     if len(result) >= EXECUTE_SQL_MARKDOWN_ROW_CAP:
         payload["truncated"] = True

@@ -2,6 +2,7 @@
 top_n, classify, batch_iterate."""
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 from ..loader import LoadError as OpError, _quote_ident
@@ -16,6 +17,28 @@ from ._util import (
     _sql_literal,
     is_numeric_sql_type,
 )
+
+
+_TRAILING_ORDER_RE = re.compile(
+    r"\s+(ASC|DESC)(\s+NULLS\s+(FIRST|LAST))?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _split_order_direction(by: str) -> tuple[str, str | None]:
+    """Split `'col DESC NULLS LAST'` into `('col', 'DESC NULLS LAST')`.
+
+    If `by` ends with an ordering keyword (`ASC|DESC`, optionally with
+    `NULLS FIRST|LAST`), strip it and return it separately so the
+    caller can honour it instead of double-appending its own. Returns
+    `(expr, None)` when no trailing keyword is found.
+    """
+    m = _TRAILING_ORDER_RE.search(by)
+    if not m:
+        return by, None
+    expr = by[: m.start()].rstrip()
+    direction = " ".join(m.group(0).split()).upper()
+    return expr, direction
 
 
 # ---------- filter ----------
@@ -285,21 +308,30 @@ def top_n(
 
     Args:
         layer: source layer.
-        by: SQL ordering expression (e.g. "population", "ST_Area(geom)").
+        by: SQL ordering expression. Either a bare expression
+            (`"population"`, `"ST_Area(geom)"`) with direction set via
+            `ascending`, OR an expression with a trailing `ASC`/`DESC`
+            (optionally followed by `NULLS FIRST`/`NULLS LAST`). If
+            the trailing direction is present it wins over `ascending`.
         n: row cap (default 10).
         ascending: True → smallest first. Default False (largest first).
+            Ignored when `by` already carries a direction.
         result_name: optional layer name; defaults to "<layer>_top<n>".
 
     Provenance inherits from `layer`.
     """
     meta = _require_layer(session, layer)
-    _assert_single_sql_expression(by, "by")
+    expr, embedded_direction = _split_order_direction(by)
+    _assert_single_sql_expression(expr, "by")
     new_name = session.unique_layer_name(result_name or f"{layer}_top{n}")
-    direction = "ASC" if ascending else "DESC"
+    if embedded_direction:
+        direction_clause = embedded_direction
+    else:
+        direction_clause = ("ASC" if ascending else "DESC") + " NULLS LAST"
     sql = (
         f"CREATE TABLE {_quote_ident(new_name)} AS "
         f"SELECT * FROM {_quote_ident(layer)} "
-        f"ORDER BY ({by}) {direction} NULLS LAST LIMIT {int(n)}"
+        f"ORDER BY ({expr}) {direction_clause} LIMIT {int(n)}"
     )
     try:
         session.conn.execute(sql)

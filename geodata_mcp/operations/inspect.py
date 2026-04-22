@@ -36,6 +36,14 @@ def sources(session: Session, layer: str | None = None) -> str:
     if layer and layer not in session.layers:
         return (f"[server-side error from geodata-mcp server] unknown layer "
                 f"'{layer}' in this session. Available: {list(session.layers)}")
+    if not targets:
+        return (
+            "_No layers in this session yet._ Call `load(op='catalog', "
+            "dataset_ids=[...])` to pull catalog datasets, or "
+            "`load(op='inline', data=[...], source='...')` to inject "
+            "LLM-provided rows. Then call `sources()` again to get a "
+            "provenance citation block."
+        )
     out: list[str] = []
     for lname in targets:
         m = session.layers[lname]

@@ -101,7 +101,13 @@ _CSP_HTML = (
     "connect-src 'self' https:; "
     "frame-ancestors 'none'; "
     "base-uri 'self'; "
-    "form-action 'self'"
+    # form-action applies transitively to redirect chains after a POST.
+    # The consent form at /oauth/authorize redirects to an OAuth client's
+    # redirect_uri (claude.ai, chatgpt.com, etc.), which is not 'self'.
+    # Relaxing to https: lets any HTTPS OAuth callback work; the form is
+    # server-rendered with no script-injection surface, so the remaining
+    # CSP protections (script-src, frame-ancestors) carry the weight.
+    "form-action 'self' https:"
 )
 
 

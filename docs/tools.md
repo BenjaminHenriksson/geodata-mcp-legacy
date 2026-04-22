@@ -242,8 +242,10 @@ Session layers are referenced by their names as regular tables.
 
 ### Returns
 
-- **Table mode** (no geometry detected): `{rows, columns,
-  markdown_table, row_count, truncated}`.
+- **Table mode** (no geometry detected): `{mode: "table", rows: <count>,
+  capped_at, description, table_md, truncated?, warning?,
+  geometry_hint?}`. The `table_md` field carries the rendered markdown
+  table; `rows` is the row count (integer, not the rows themselves).
 - **Layer mode**: a layer summary identical to `load` / `derive`.
   Pass `result_name` to name it explicitly; otherwise auto-generated.
 

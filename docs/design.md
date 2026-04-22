@@ -36,7 +36,7 @@ style, and compositing a styled vector overlay onto a cached Carto
 Positron basemap is a task the LLM can't do without us.
 
 This principle rules out about half the tools one would naïvely implement
-on a GIS backend, and it's why the tool surface is compact (12 tools)
+on a GIS backend, and it's why the tool surface is compact (13 tools)
 despite covering a wide workflow. Sub-operations are multiplexed via
 `op: Literal[...]` enums on tools like `derive`, `edit_field`, and
 `layer` — the LLM's mental model is coarser than the underlying ops
@@ -59,7 +59,7 @@ On top of that, we track **per-column provenance**: when `edit_field`
 writes a column (add / update / classify / annotate), the session
 remembers who wrote it, with what expression, and optionally what
 model. So an exported attribute can be traced to "LLM-written on
-2026-04-19 by `edit_field(op='annotate', model='gpt-5')`" (or
+2026-04-19 by `annotate(model='gpt-5')`" (or
 `claude-opus-4-7`, or any other model identifier the calling client
 passes), distinct from "loaded from `sbk_admin_polygons.gpkg`".
 
@@ -88,7 +88,7 @@ A session isn't a linear log of edits. It's a set of named savepoints
 that can be rolled back independently.
 
     checkpoint(op="create", name="before_enrichment", layers=["buildings"])
-    # ... edit_field(op="annotate" | "add" | "classify", ...) ...
+    # ... annotate(...) / edit_field(op="add" | "classify", ...) ...
     checkpoint(op="rollback", name="before_enrichment")   # undo just the buildings work
 
 Checkpoints capture *column snapshots* (pre-images of the columns about
@@ -111,7 +111,7 @@ Rollbacks are independent.
 
 Why this matters: LLM-driven enrichment is iterative and frequently
 wrong. Without a scoped checkpoint model, a single bad
-`edit_field(op="annotate", ...)` call becomes a session-ending event.
+`annotate(...)` call becomes a session-ending event.
 With it, the LLM can experiment cheaply.
 
 ---

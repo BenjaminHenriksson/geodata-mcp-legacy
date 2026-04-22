@@ -69,7 +69,7 @@ authoring record:
 ```
 
 The `model` field is whatever string the calling client passes to
-`edit_field(op="annotate", model=...)`: `claude-opus-4-7`, `gpt-5`,
+`annotate(model=...)`: `claude-opus-4-7`, `gpt-5`,
 `gemini-2.5-pro`, `qwen3-max`, anything. The server doesn't validate
 it; it just records it so the downstream reviewer can see which model
 wrote which column.
@@ -112,8 +112,8 @@ Derived from: `sbk_admin_polygons`
 **Operations applied** (root → result):
 - `load(op='catalog', dataset_ids=['sbk_admin_polygons'])` → `sbk_admin_polygons`: loaded
 - `derive(op='filter', layer='sbk_admin_polygons', where="KATEGORI='Stadsdel'")` → ...
-- `edit_field(op='annotate', layer='sbk_admin_polygons', n_keys=117,
-              attributes=['era'], key_column='NAMN')` → annotated 117/117 keys
+- `annotate(layer='sbk_admin_polygons', n_keys=117,
+            attributes=['era'], key_column='NAMN')` → annotated 117/117 keys
 - `edit_field(op='add', layer='sbk_admin_polygons', name='area_m2', expr='ST_Area(geom)')`
               → added area_m2
 
@@ -129,7 +129,7 @@ Derived from: `sbk_admin_polygons`
 layer's loaded sources above):
 - `area_m2` — derived via `edit_field(op='add')` at 2026-04-19T16:33:05Z
     expr: `ST_Area(geom)`
-- `era` — llm via `edit_field(op='annotate')` at 2026-04-19T16:32:01Z (model: claude-opus-4-7)
+- `era` — llm via `annotate` at 2026-04-19T16:32:01Z (model: claude-opus-4-7)
 ```
 
 ### `_layer_summary` (dict, returned by load/filter/show/etc.)

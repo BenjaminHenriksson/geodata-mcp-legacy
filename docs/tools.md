@@ -1,6 +1,6 @@
 # MCP tool reference
 
-**12 tools.** Endpoint: `https://geo.benjaminhenriksson.com/mcp`
+**13 tools.** Endpoint: `https://geo.benjaminhenriksson.com/mcp`
 (OAuth 2.1 + PKCE via invite code for web custom-connector flows
 like claude.ai, ChatGPT, Gemini, and the rest; legacy shared bearer
 for CLI / desktop clients that haven't shipped OAuth yet). Every
@@ -24,15 +24,16 @@ instead of ploughing on.
 3. **`load`** — pull catalog datasets or inject LLM-provided rows.
 4. **`execute_sql`** — read-only DuckDB + Spatial SQL sandbox.
 5. **`derive`** — new layer from existing (filter / spatial / top_n).
-6. **`edit_field`** — add / update / drop / classify / annotate columns.
-7. **`inspect`** — session inventory, rows, cursor pagination, spatial "what's here" (`readOnlyHint`).
-8. **`layer`** — show / hide / rename / drop / set_notes.
-9. **`export`** — data artefact: gpkg / geojson / csv / parquet; optional citation bundle.
-10. **`render_map`** — server-rendered styled PNG map with Carto Positron basemap underlay.
-11. **`sources`** — provenance markdown (`readOnlyHint`).
-12. **`checkpoint`** — create / rollback / commit savepoints.
+6. **`edit_field`** — expression-driven column mutations: add / update / drop / classify.
+7. **`annotate`** — data-driven bulk per-feature attribute writes from a dict payload.
+8. **`inspect`** — session inventory, rows, cursor pagination, spatial "what's here" (`readOnlyHint`).
+9. **`layer`** — show / hide / rename / drop / set_notes.
+10. **`export`** — data artefact: gpkg / geojson / csv / parquet; optional citation bundle.
+11. **`render_map`** — server-rendered styled PNG map with Carto Positron basemap underlay.
+12. **`sources`** — provenance markdown (`readOnlyHint`).
+13. **`checkpoint`** — create / rollback / commit savepoints.
 
-Tools 1, 2, 7, 11 are read-only. The rest mutate session state (load
+Tools 1, 2, 8, 12 are read-only. The rest mutate session state (load
 creates layers, edit_field mutates columns, etc.) but are non-destructive
 (reversible if wrapped in a checkpoint where applicable).
 
@@ -305,11 +306,15 @@ Returns a layer summary.
 
 ---
 
-## 6. `edit_field(op, layer, ...)` — mutate a layer's columns in place
+## 6. `edit_field(op, layer, ...)` — expression-driven column mutations
 
-Five sub-ops. All are reversible inside an active checkpoint covering
-`layer` (see `checkpoint`); without a covering checkpoint they're
-permanent.
+Four sub-ops. **Expression-driven**: one SQL expression applied
+uniformly across all (or `where`-restricted) rows. For
+**data-driven** bulk writes where the LLM has specific per-row
+values to apply, use the dedicated `annotate` tool (section 7).
+
+All are reversible inside an active checkpoint covering `layer`
+(see `checkpoint`); without a covering checkpoint they're permanent.
 
 ### `op="add"` (`name`, `expr`, `field_type?`)
 
@@ -350,46 +355,64 @@ edit_field(op="classify", layer="deso", name="income_band", rules=[
 ], default="unknown")
 ```
 
-### `op="annotate"` (`values`, `key_column="rowid"`, `dry_run=False`, `model?`)
+---
 
-Attach LLM-classified per-feature attributes in one call. Columns
-are created on the fly if they don't exist (type inferred from the
-values: all-int → BIGINT, int/float mix → DOUBLE, bool → BOOLEAN,
-else VARCHAR). Up to 10,000 keys per call. Pair with
+## 7. `annotate(layer, values, key_column="rowid", dry_run=False, model=None)`
+
+**Data-driven** bulk attribute writes. Use this when the LLM has
+specific knowledge per row (read a sample, classify each
+individually, write the classifications back) rather than a single
+SQL expression covering all rows uniformly — for the latter use
+`edit_field(op="classify", ...)`.
+
+### Payload shape
+
+```
+values = {
+    "<key>": {"era": "functionalist", "confidence": 0.9, "note": "..."},
+    "<key>": {"era": "art-nouveau",    "confidence": 0.7},
+    ...
+}
+
+annotate(layer="buildings", values=values)
+```
+
+Columns are created on the fly if they don't exist (type inferred
+from the values: all-int → BIGINT, int/float mix → DOUBLE, bool →
+BOOLEAN, else VARCHAR). Up to 10,000 keys per call. Pair with
 `inspect(op="batch", ...)` for layers larger than you can reason
 about in one pass.
 
-```
-edit_field(op="annotate", layer="buildings", values={
-    "1": {"era": "functionalist", "confidence": 0.9, "note": "..."},
-    "2": {"era": "art-nouveau",    "confidence": 0.7},
-})
-```
+### Args
 
-`key_column` defaults to `"rowid"` (DuckDB pseudo-column, stable
-within a session). Use a declared key column when one exists.
+- `layer: str` — target layer.
+- `values: dict` — `{key_value: {attr_name: val, ...}}`. Many
+  features per call.
+- `key_column: str = "rowid"` — column to match on. Default is the
+  DuckDB `rowid` pseudo-column, which is stable within a session.
+  Use a declared key column when one exists (e.g. `"NAMN"`, `"id"`).
+- `dry_run: bool = False` — if True, preview coverage without
+  writing. Returns `{dry_run: True, keys_matched, keys_unmatched,
+  new_columns_would_create, ...}`. Use before committing large
+  payloads to catch `key_column` mismatches.
+- `model: str | None = None` — author id (`"claude-opus-4-7"`,
+  `"gpt-5"`, etc.) stored in per-column provenance so exported
+  columns can be traced to their author.
 
-`dry_run=True` previews coverage without writing — returns
-`{dry_run: True, keys_matched, keys_unmatched, new_columns_would_create, ...}`.
-Use this before committing large annotation payloads to catch
-`key_column` mismatches.
+### Response
 
-`model="claude-opus-4-7"` (or similar) is stored in per-column
-provenance so exported columns can be traced to their author.
-
-The response reports both key-level matching (`keys_matched` /
-`keys_unmatched`) and row-level coverage (`rows_total` /
-`rows_with_any_annotation` / `rows_without_annotation`) so you can
-distinguish "every key I sent hit a row" from "every row in the
-layer received a value". The two differ when your `values` dict
-covers only a subset.
+Reports both key-level matching (`keys_matched` / `keys_unmatched`)
+and row-level coverage (`rows_total` / `rows_with_any_annotation` /
+`rows_without_annotation`) — so you can distinguish "every key I
+sent hit a row" from "every row in the layer received a value". The
+two differ when your `values` dict covers only a subset.
 
 Reversible inside a checkpoint (pre-image snapshotted once per
-column, not per row).
+column, not once per row).
 
 ---
 
-## 7. `inspect(op, ...)` — explore the session
+## 8. `inspect(op, ...)` — explore the session
 
 Four sub-ops. All `readOnlyHint`.
 
@@ -406,7 +429,7 @@ overwhelmed by prior state.
 Sample rows from one layer as a markdown table. Hard caps: 200 rows
 without geometry, 10 rows with geometry (WKT; verbose — request
 only when needed). Set `include_rowid=True` to prepend a `rowid`
-column — useful when you plan to `edit_field(op="annotate",
+column — useful when you plan to `annotate(layer,
 key_column="rowid", values={…})` against the sampled rows without
 switching to `op="batch"`.
 
@@ -425,7 +448,7 @@ carries `rows`, `next_cursor`, `exhausted`. Subsequent calls: pass
 `cursor=<next_cursor>` — all other args ignored.
 
 Every batch includes a `rowid` column (DuckDB pseudo-column) suitable
-for `edit_field(op="annotate", key_column="rowid", ...)`.
+for `annotate(layer, key_column="rowid", values=...)`.
 
 ### `op="at"` (`points`, `radius_m=100.0`, `layers?`, `columns?`, `per_layer_limit=3`)
 
@@ -449,7 +472,7 @@ unknown_layers: [...], layers_considered: N}`.
 
 ---
 
-## 8. `layer(op, ...)` — visibility + lifecycle
+## 9. `layer(op, ...)` — visibility + lifecycle
 
 Five sub-ops.
 
@@ -491,12 +514,12 @@ session state alone.
 
 ---
 
-## 9. `export(layers, format="gpkg", cite=False, ...)`
+## 10. `export(layers, format="gpkg", cite=False, ...)`
 
 Export one or many session layers to a downloadable **data** artefact
 (gpkg / geojson / csv / parquet). Returns URL(s) valid for 24 h.
 `layers` accepts a single string or a list. For PNG map images use
-**`render_map`** (tool 10) — `export` is data-only.
+**`render_map`** (tool 11) — `export` is data-only.
 
 ### Formats
 
@@ -532,7 +555,7 @@ auto-expire after 24 h.
 
 ---
 
-## 10. `render_map(layers, title=None, legend=True, width_px=1600, height_px=1000)`
+## 11. `render_map(layers, title=None, legend=True, width_px=1600, height_px=1000)`
 
 Render session layers to a styled PNG map and return a download URL.
 Split from `export` because rendering has genuinely different
@@ -574,7 +597,7 @@ set. Expires after 24 h.
 
 ---
 
-## 11. `sources(layer=None)`
+## 12. `sources(layer=None)`
 
 Return a structured provenance report (publisher, licence, URL,
 retrieval date, operations applied) for a layer or all session
@@ -593,7 +616,7 @@ Output sections per layer:
 
 ---
 
-## 12. `checkpoint(op, name, ...)` — savepoints
+## 13. `checkpoint(op, name, ...)` — savepoints
 
 Named savepoints that make in-place mutations reversible. A session
 isn't a linear log of edits; it's a set of named savepoints that can
@@ -627,10 +650,11 @@ Discards snapshots, reclaims storage.
 
 ### Covered mutations
 
-`edit_field` (add / update / drop / classify / annotate), `layer`
-(rename / drop). `load` / `execute_sql(result_name=...)` / `derive`
-create new layers and are not "mutations" in the checkpoint sense
-(drop the resulting layer if you want to undo them).
+`edit_field` (add / update / drop / classify), `annotate`, and
+`layer` (rename / drop). `load` / `execute_sql(result_name=...)` /
+`derive` create new layers and are not "mutations" in the
+checkpoint sense (drop the resulting layer if you want to undo
+them).
 
 ---
 

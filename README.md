@@ -5,7 +5,7 @@ provenance and schema normalization.** Stockholm Stadsbyggnadskontorets city
 map, SCB demographic statistical areas (DeSO 2018 + 2025), SCB's DeSO-keyed
 statistical tables, and OpenStreetMap addresses, all pre-joined to
 canonical keys and exposed to any MCP client through a session-scoped
-DuckDB spatial backend. 66 datasets, one viewer, 12 tools shaped for how
+DuckDB spatial backend. 66 datasets, one viewer, 13 tools shaped for how
 LLMs actually reason.
 
 - **Live:** `https://geo.benjaminhenriksson.com`
@@ -29,7 +29,7 @@ LLMs actually reason.
 
 ## What it does
 
-12 tools. All carry MCP `toolAnnotations` (`readOnlyHint` /
+13 tools. All carry MCP `toolAnnotations` (`readOnlyHint` /
 `destructiveHint=false`) so MCP clients (claude.ai, ChatGPT, Gemini,
 Qwen, Claude Desktop / Code, and the rest) can auto-approve safe
 calls without per-action permission prompts. Five of them take an
@@ -43,7 +43,8 @@ values are visible in the tool schema.
 | `load` | Pull 1..N catalog datasets, or inject LLM-provided rows (`source` mandatory) |
 | `execute_sql` | Read-only DuckDB + Spatial SQL, sqlglot-validated, 30 s timeout |
 | `derive` | New layer from existing: `filter`, `top_n`, `clip`, `intersect`, `select_by_location`, `buffer`, `centroid`, `dissolve`, `convex_hull` |
-| `edit_field` | Mutate columns in place: `add`, `update`, `drop`, `classify`, `annotate`. Reversible inside a checkpoint |
+| `edit_field` | Expression-driven column mutations: `add`, `update`, `drop`, `classify`. Reversible inside a checkpoint |
+| `annotate` | Data-driven bulk per-feature attribute writes from a `{key: {attr: val, ...}}` dict; creates columns on the fly |
 | `inspect` | `layers` (inventory), `rows` (sample, ≤200), `batch` (cursor-paginate), `at` (spatial "what's here", ≤500 points) |
 | `layer` | Visibility + lifecycle: `show`, `hide`, `rename`, `drop`, `set_notes` |
 | `export` | Data-only: single or multi layer → gpkg/geojson/csv/parquet; optional citation bundle |
@@ -128,7 +129,7 @@ claude mcp add --transport http geodata \
   --header "Authorization: Bearer $TOKEN"
 ```
 
-Restart the client. The 12 tools appear automatically. The same
+Restart the client. The 13 tools appear automatically. The same
 bearer-on-`/mcp` pattern works for any CLI-style MCP client (Codex,
 custom scripts, in-house tools); only the `add` command syntax
 differs.
@@ -248,7 +249,7 @@ Cloudflare edge → Caddy → geodata-mcp service on 127.0.0.1:8765
                          │
                          ├── FastMCP 3.x (streamable HTTP)
                          │     per-connection session UUIDs
-                         │     12 tools
+                         │     13 tools
                          │
                          ├── DuckDB 1.5 + Spatial
                          │     256 MB memory_limit per session
@@ -310,7 +311,7 @@ geodata-mcp/
 ├── DATA_SUMMARY.md              — human-readable catalogue
 ├── pyproject.toml + uv.lock
 ├── geodata_mcp/
-│   ├── server.py                — FastMCP + 12 @mcp.tool wrappers + main entry
+│   ├── server.py                — FastMCP + 13 @mcp.tool wrappers + main entry
 │   ├── http_app.py              — Starlette routes + middleware (built only with --http)
 │   ├── catalog.py               — rapidfuzz-backed catalog search
 │   ├── session.py               — per-connection sessions, GC, persistence, SQL audit

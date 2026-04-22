@@ -184,7 +184,7 @@ needed.
 
 Below the meta row, a small "authored" line:
 
-- `LLM: era, note`: columns written by `edit_field(op="annotate")`.
+- `LLM: era, note`: columns written by `annotate`.
 - `derived: slope_deg`: columns written by `edit_field(op="add")` or
   `edit_field(op="update")` with a SQL expression.
 

@@ -282,16 +282,34 @@ async def run_coverage(mcp) -> None:
     except Exception as e:
         _record("edit_field.classify", False, repr(e))
 
+    # annotate is now its own tool (split out of edit_field).
     try:
-        d = await _call(mcp, "edit_field", {
-            "op": "annotate", "layer": "d_top", "key_column": "desokod",
+        d = await _call(mcp, "annotate", {
+            "layer": "d_top", "key_column": "desokod",
             "values": {"0180C1010": {"note": "stress_test"}},
             "dry_run": True,
         })
-        _record("edit_field.annotate(dry_run)", d.get("dry_run") is True,
+        _record("annotate(dry_run)", d.get("dry_run") is True,
                 f"matched={d.get('keys_matched')}")
     except Exception as e:
-        _record("edit_field.annotate(dry_run)", False, repr(e))
+        _record("annotate(dry_run)", False, repr(e))
+
+    try:
+        d = await _call(mcp, "annotate", {
+            "layer": "d_top", "key_column": "desokod",
+            "values": {"0180C1010": {"test_tag": "a"}},
+        })
+        _record("annotate(live write)", not _is_error(d),
+                f"new_cols={d.get('new_columns_created')} "
+                f"matched={d.get('keys_matched')}")
+    except Exception as e:
+        _record("annotate(live write)", False, repr(e))
+
+    try:
+        d = await _call(mcp, "annotate", {"layer": "d_top"})
+        _record("annotate(missing values)", _is_error(d), d.get("error"))
+    except Exception as e:
+        _record("annotate(missing values)", False, repr(e))
 
     try:
         d = await _call(mcp, "edit_field", {

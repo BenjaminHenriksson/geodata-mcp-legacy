@@ -74,20 +74,21 @@ addresses) for LLM-driven analysis. Session-scoped DuckDB + Spatial,
 all layers in EPSG:3011 (SWEREF 99 18 00; Stockholm-local metres),
 filtered to Stockholm kommun (kommunkod `0180`). 65 datasets.
 
-## Tools (12)
+## Tools (13)
 
 1. `catalog(query?, id?, verbose?)` — fuzzy-search datasets; pass `id` for full attribute schema.
 2. `geocode(op, ...)` — `"forward"` (name→coords), `"reverse"` (coords→admin area), `"bbox"` (name→bbox).
 3. `load(op, ...)` — `"catalog"` pulls 1..N datasets by id; `"inline"` injects LLM-provided rows (`source` mandatory).
 4. `execute_sql(sql, ...)` — read-only DuckDB+Spatial. 30 s timeout. DDL/DML/file I/O rejected.
 5. `derive(op, ...)` — new layer from existing: `"filter"`, `"top_n"`, `"clip"`, `"intersect"`, `"select_by_location"` (supports `center_3011`+`distance_m` for bare point+radius), `"buffer"`, `"centroid"`, `"dissolve"`, `"convex_hull"`.
-6. `edit_field(op, layer, ...)` — mutate columns in place: `"add"`, `"update"`, `"drop"`, `"classify"`, `"annotate"`. Reversible inside a checkpoint.
-7. `inspect(op, ...)` — `"layers"` (session inventory), `"rows"` (sample, with optional `include_rowid`), `"batch"` (cursor pagination), `"at"` (spatial "what's here" for 1..500 points).
-8. `layer(op, ...)` — visibility + lifecycle: `"show"`, `"hide"`, `"rename"`, `"drop"`, `"set_notes"`.
-9. `export(layers, format, cite?)` — data-only: gpkg/geojson/csv/parquet. `cite=True` bundles provenance markdown.
-10. `render_map(layers, ...)` — server-rendered styled PNG with Carto Positron basemap underlay. Honours the current `layer(op="show")` style.
-11. `sources(layer?)` — provenance markdown for citations.
-12. `checkpoint(op, name, ...)` — `"create"` a savepoint, `"rollback"` to undo, `"commit"` to make permanent.
+6. `edit_field(op, layer, ...)` — expression-driven column mutations: `"add"`, `"update"`, `"drop"`, `"classify"`. Reversible inside a checkpoint.
+7. `annotate(layer, values, ...)` — data-driven bulk per-feature attribute writes from a `{key: {attr: val, ...}}` dict. Use when the LLM has specific per-row knowledge; use `edit_field(op="classify")` when a uniform CASE-WHEN applies.
+8. `inspect(op, ...)` — `"layers"` (session inventory), `"rows"` (sample, with optional `include_rowid`), `"batch"` (cursor pagination), `"at"` (spatial "what's here" for 1..500 points).
+9. `layer(op, ...)` — visibility + lifecycle: `"show"`, `"hide"`, `"rename"`, `"drop"`, `"set_notes"`.
+10. `export(layers, format, cite?)` — data-only: gpkg/geojson/csv/parquet. `cite=True` bundles provenance markdown.
+11. `render_map(layers, ...)` — server-rendered styled PNG with Carto Positron basemap underlay. Honours the current `layer(op="show")` style.
+12. `sources(layer?)` — provenance markdown for citations.
+13. `checkpoint(op, name, ...)` — `"create"` a savepoint, `"rollback"` to undo, `"commit"` to make permanent.
 
 ## Core workflow
 
@@ -146,14 +147,14 @@ out = inspect(op="batch", layer="sbk_buildings",
               columns=["id","name","byggar"], batch_size=500)
 while True:
     tags = {row["rowid"]: {"era": ..., "confidence": ...} for row in out["rows"]}
-    edit_field(op="annotate", layer="sbk_buildings", values=tags)
+    annotate(layer="sbk_buildings", values=tags)
     if out.get("exhausted"): break
     out = inspect(op="batch", cursor=out["next_cursor"])
 checkpoint(op="commit", name="tag")
 ```
 
-For ≤ ~500 features, skip the loop: one `inspect(op="rows", n=500)`
-then one `edit_field(op="annotate", values=...)`.
+For ≤ ~500 features, skip the loop: one `inspect(op="rows", n=500,
+include_rowid=True)` then one `annotate(layer="...", values=...)`.
 
 ## Provenance — mandatory on LLM-injected data
 
@@ -850,7 +851,7 @@ def derive(
 @mcp.tool(annotations=_SAFE_MUTATION)
 @_audited("edit_field")
 def edit_field(
-    op: Literal["add", "update", "drop", "classify", "annotate"],
+    op: Literal["add", "update", "drop", "classify"],
     layer: str,
     name: str | None = None,
     expr: str | None = None,
@@ -858,15 +859,17 @@ def edit_field(
     where: str | None = None,
     rules: list[dict] | None = None,
     default: str | None = None,
-    values: dict | None = None,
-    key_column: str = "rowid",
-    dry_run: bool = False,
-    model: str | None = None,
     description: str = "",
     ctx: Context | None = None,
 ) -> dict:
-    """Mutate a layer's columns in place. Reversible inside an active
-    `checkpoint(op='create', ...)` covering this layer.
+    """Expression-driven column mutations on a session layer — one SQL
+    expression applied uniformly across all (or `where`-restricted)
+    rows. Reversible inside an active `checkpoint(op='create', ...)`
+    covering this layer.
+
+    For **data-driven** bulk attribute writes (LLM-classified
+    per-feature values from a `{key: {attr: val, ...}}` dict), use
+    the dedicated `annotate` tool instead.
 
     - `op="add"` (name, expr, field_type?): new column computed from a
       SQL expression. Type inferred unless `field_type` is set
@@ -878,13 +881,6 @@ def edit_field(
     - `op="classify"` (name, rules=[{when, then}], default?): CASE-WHEN
       shorthand adding a categorical column. Rules evaluated in order;
       first match wins.
-    - `op="annotate"` (values={key: {attr: val, ...}}, key_column?,
-      dry_run?, model?): bulk LLM-classified per-feature attributes.
-      Columns created on the fly (type inferred). Up to 10,000 keys.
-      `key_column` defaults to `"rowid"` (DuckDB pseudo-column, stable
-      within a session). `dry_run=True` previews coverage without
-      writing. `model="claude-opus-4-7"` or similar is stored in
-      per-column provenance.
     """
     try:
         sess = _session(ctx)
@@ -908,18 +904,81 @@ def edit_field(
                 return _server_error("missing_arg",
                                      "edit_field op='classify' requires `name` and `rules`.")
             out = op_classify(sess, layer, name, rules=rules, default=default)
-        elif op == "annotate":
-            if values is None:
-                return _server_error("missing_arg",
-                                     "edit_field op='annotate' requires `values`.")
-            out = op_annotate(sess, layer, values, key_column=key_column,
-                              dry_run=dry_run, model=model)
         else:
             return _server_error(
                 "unsupported_operation",
                 f"op={op!r} not supported",
-                supported=["add", "update", "drop", "classify", "annotate"],
+                supported=["add", "update", "drop", "classify"],
             )
+        _attach_hint(out, sess, layer)
+        return out
+    except Exception as e:
+        return _error_response(e)
+
+
+@mcp.tool(annotations=_SAFE_MUTATION)
+@_audited("annotate")
+def annotate(
+    layer: str,
+    values: dict | None = None,
+    key_column: str = "rowid",
+    dry_run: bool = False,
+    model: str | None = None,
+    description: str = "",
+    ctx: Context | None = None,
+) -> dict:
+    """Attach LLM-classified per-feature attributes to a layer in bulk.
+
+    **Data-driven** bulk write — different shape from `edit_field`'s
+    single-expression ops. Use this when the LLM has specific
+    knowledge per row (e.g. after sampling features, classifying each
+    individually, and wanting to write the classifications back in
+    one call). Use `edit_field(op="classify", ...)` when one
+    CASE-WHEN expression covers every row uniformly.
+
+    Payload shape:
+        values = {
+            "<key>": {"era": "functionalist", "confidence": 0.9, "note": "..."},
+            "<key>": {"era": "art-nouveau",    "confidence": 0.7, ...},
+            ...
+        }
+
+    Columns are created on the fly if they don't exist (type inferred
+    from the values: all-int → BIGINT, int/float mix → DOUBLE, bool →
+    BOOLEAN, else VARCHAR). Up to 10,000 keys per call. Pair with
+    `inspect(op="batch", ...)` for layers larger than you can reason
+    about in one pass.
+
+    The response reports both key-level matching
+    (`keys_matched` / `keys_unmatched`) and row-level coverage
+    (`rows_total` / `rows_with_any_annotation` /
+    `rows_without_annotation`) — so you can distinguish "every key I
+    sent hit a row" from "every row in the layer received a value".
+    The two differ when your `values` dict covers only a subset.
+
+    Args:
+        layer: target layer.
+        values: `{key_value: {attr_name: val, ...}}` — many features per call.
+        key_column: column to match on. Default `"rowid"` (DuckDB
+            pseudo-column, stable within a session). Use a declared
+            key column when one exists (e.g. `NAMN`, `id`).
+        dry_run: if True, preview coverage without writing. Returns
+            `{dry_run: True, keys_matched, keys_unmatched,
+            new_columns_would_create, ...}`. Use before committing
+            large payloads to catch key_column mismatches.
+        model: optional author id (`"claude-opus-4-7"`, `"gpt-5"`,
+            etc.) stored in per-column provenance so exported columns
+            can be traced to their author.
+
+    Reversible inside a checkpoint (pre-image snapshotted once per
+    column, not once per row).
+    """
+    try:
+        sess = _session(ctx)
+        if values is None:
+            return _server_error("missing_arg", "annotate requires `values`.")
+        out = op_annotate(sess, layer, values, key_column=key_column,
+                          dry_run=dry_run, model=model)
         _attach_hint(out, sess, layer)
         return out
     except Exception as e:
@@ -952,9 +1011,9 @@ def inspect(
       offset?, where?): sample rows from `layer` as a markdown table
       (returned in `table_md`). Caps: 200 rows without geometry, 10
       with. Set `include_rowid=True` to prepend a `rowid` column —
-      useful when you plan to `edit_field(op="annotate",
-      key_column="rowid", values={…})` against the sampled rows
-      without switching to `op="batch"`.
+      useful when you plan to `annotate(layer, key_column="rowid",
+      values={…})` against the sampled rows without switching to
+      `op="batch"`.
     - `op="batch"` (layer or cursor, columns?, where?, batch_size?):
       cursor-paginated reader for large layers. First call: pass
       `layer`. Subsequent calls: pass `cursor` from the previous
@@ -1414,8 +1473,8 @@ def checkpoint(
     - `op="commit"` (name): make covered mutations permanent; discard
       snapshots, reclaim storage.
 
-    Covered mutations: `edit_field` (add/update/drop/classify/annotate)
-    and `layer` (rename/drop).
+    Covered mutations: `edit_field` (add/update/drop/classify),
+    `annotate`, and `layer` (rename/drop).
     """
     try:
         sess = _session(ctx)

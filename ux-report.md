@@ -102,17 +102,21 @@ part of the refactor, costs one slot; (b) add a PNG-only `style=`
 override on `export` so data flow is self-contained; (c) keep as-is
 and make the doc explicit. No auto-fix; decide deliberately.
 
-### B. `edit_field` may fold too many shapes
+### B. `edit_field` may fold too many shapes (resolved — annotate split out)
 
 Agent C: `add`/`update`/`drop`/`classify` all share `name` + `expr`
 (or similar single-expression) signatures. `annotate` has a
-bulk-dict payload with nothing in common. Natural split: keep
-`edit_field` for single-row column ops; put bulk annotation under
-its own tool (`annotate_features` or similar).
+bulk-dict payload with nothing in common.
 
-Agent C was positive about `op` multiplexing otherwise —
-`checkpoint(op=…)` and `edit_field(op="classify")` rule shape were
-first-try correct.
+**Resolved 2026-04-22**: `annotate` promoted to its own top-level
+tool. `edit_field` now carries only the four expression-driven
+sub-ops (`add`/`update`/`drop`/`classify`), so its parameter list
+is coherent (`name`/`expr`/`where`/`rules`/`default`). `annotate`'s
+data-driven shape (`values={key: {attr: val, ...}}`,
+`key_column`, `dry_run`, `model`) lives on its own tool where those
+params aren't diluted. Docs (`docs/tools.md`, README, design,
+provenance, viewer, roadmap) and the bulk-enrichment example in
+`SERVER_INSTRUCTIONS` updated accordingly. Tool count: 12 → 13.
 
 ### C. `derive(op="select_by_location")` requires a `by_layer` — no bare point+radius
 

@@ -270,5 +270,146 @@ difficulty.
   empirically and, interestingly, didn't bite for
   `scb_population_age_sex` (SCB zero-fills retired codes).
 
+---
+
+## Round 3 — third sub-agent swarm (2026-04-22)
+
+Four fresh agents on four new task shapes against the 13-tool
+surface after round-2 fixes landed. Tasks: mixed-provenance analysis
+(user-injected rows joined to catalog data), derive+write_attributes
+workflow on a district drill-down, deliberate error-path probing,
+and open-ended "what's different about outer vs inner Stockholm?"
+exploration.
+
+All four completed at 2-3/5 difficulty. No gave-ups. Consistent
+verdict across agents: the surface is production-ready; remaining
+findings are small polish.
+
+### Round-3 convergent findings
+
+1. **`execute_sql` in table mode returns `rows: <int>` instead of
+   the actual row data** (Agents Derive-Annotate + Explore,
+   independently). Same shape mismatch the round-2 fix applied to
+   `inspect(op="rows")`. Both agents fell back to parsing markdown
+   when they needed to stitch multi-layer query results into a
+   downstream call (most commonly `write_attributes`, which
+   single-layer `inspect(op="rows")` couldn't satisfy). Fix: add a
+   structured `rows: [{col: val, ...}]` list alongside `table_md`
+   in `execute_sql`'s table-mode response.
+
+2. **Silent "empty success" footguns** (Agents Errors + Explore).
+   - `layer(op="show")` with ALL requested layers unknown returns
+     `{unknown_layers: [...], visible_layers: []}` and **no
+     `error` field** — a caller dispatching on `.error` sees
+     success.
+   - `execute_sql(sql=..., result_name="X")` when no geometry is
+     detected silently drops `result_name` and returns table mode.
+     No warning; caller thinks a layer was materialised.
+
+   Fix: return `error: unknown_layer` (with `available`) when all
+   requested `layer(op="show")` names are unknown; emit a `warning`
+   on `execute_sql` when `result_name` was provided but the result
+   was demoted to table mode.
+
+### Round-3 individual findings
+
+3. **`unknown_dataset` error is terser than docs promise** (Agent
+   Errors). Missing `available` / fuzzy suggestions / `hint`. Docs
+   describe this behaviour; code doesn't deliver. Should match
+   `unknown_layer`'s pattern.
+
+4. **`load(op="inline")` without `source` returns `op_failed`
+   instead of `missing_arg`** (Agent Errors). Error-code
+   miscategorisation that breaks agent-side branching logic.
+
+5. **`semicolon` in `derive(op="filter", where=...)` produces an
+   opaque parser error** (Agent Errors). sqlglot complains
+   "Expecting )" because the server wraps the clause. Add an
+   explicit up-front rejection matching `execute_sql`'s
+   `_no_semicolon`.
+
+6. **WKT axis-order is a silent footgun on `load(op="inline")`**
+   (Agent Mixed). `POINT(x y)` with `EPSG:4326` means
+   `POINT(lng lat)`; users think lat-first. A one-line docstring
+   reminder would prevent silent axis-swap.
+
+7. **`select_by_location` lacks a "mostly inside" predicate**
+   (Agent Derive-Annotate). "Stadsdelar inside Södermalm district"
+   is underserved: `within` (edge-touching excluded → 1 match) and
+   `intersects` (shares-edge → 18 matches) both miss the intent.
+   Added predicate `centroid_within`, or a `min_overlap_fraction`
+   parameter, would cover the common case.
+
+8. **`llm_sourced=True` mislabels user-injected-via-LLM data**
+   (Agent Mixed). User brings field observations, LLM injects via
+   `load(op="inline")`; provenance says the LLM authored it.
+   Distinguish `"user"` vs `"llm"` as the author.
+
+9. **Bulk reverse geocode** (Agent Mixed). `geocode(op="reverse",
+   points=[...])` mirroring `inspect(op="at")` shape. Per-point is
+   fine for 4, annoying for 200.
+
+10. **`catalog(id=...)` attribute list isn't always exhaustive**
+    (Agent Derive-Annotate). `sbk_admin_polygons` describe missed
+    `GRUPP`, `KOMPONENT`, `RAMKLIPP`, `DNR`, `ADM_ID` — real
+    columns on the loaded layer. Either make describe authoritative
+    or flag "undocumented columns exist."
+
+11. **Catalog fuzzy search misses Swedish demographic synonyms**
+    (Agent Explore). English "immigration" doesn't surface
+    `scb_*` tables named in Swedish (`utländsk bakgrund`).
+    Indexing `invandring`, `utländsk` would close the gap.
+
+12. **`sources()` structured-content key is `result`, not
+    `markdown`** (Agent Explore). Minor naming mismatch with the
+    tool's self-description as "provenance markdown."
+
+13. **Checkpoint state is per-connection, not per-session-file**
+    (Agent Derive-Annotate). Doesn't bite real MCP use (long
+    connection); does bite scripted / split-process harnesses.
+    Document or fix.
+
+### Round-3 positive confirmations (prior interventions held)
+
+- **Session sync** (round-2 fix): no agent hit the ghost-table
+  pair. Fix stayed landed.
+- **`inspect(op="rows")` structured `rows` list**: Agent Mixed used
+  it naturally for the sample → write_attributes pipeline. "Joining
+  injected data to catalog data was smooth once I had the
+  geometry reprojected."
+- **`write_attributes` rename**: Agent Derive-Annotate — "the
+  session/checkpoint model + `write_attributes` coupling is
+  genuinely nice." Agent Mixed used it without friction.
+- **`geocode(op="forward")` stability**: Agent Errors probed
+  recovery paths and didn't flag ranking issues. Fix held.
+- **`render_map` split from `export`**: no rendering friction
+  this round.
+- **Canonical SCB join keys + aggregate-first note**: Agent Mixed —
+  *"that warning is the single most valuable piece of the
+  instructions."* Agent Explore followed the recipe cleanly and
+  city-total reconciled to the person.
+- **Rich-default layer summaries** (`quick_stats` + `sample` +
+  `provenance`): Agent Explore — "didn't need to follow up with a
+  separate `inspect`."
+
+### Status after round 3
+
+- **Fixed earlier this session**: round-1 bugs 1–4 (top_n,
+  sources-empty, markdown-key, basemap-docs); round-1 signals A
+  (render_map split) and B (write_attributes split, later renamed);
+  top-tier conveniences (point+radius, include_rowid, SCB split
+  example, legend ordering, session scripting caveat); round-2
+  fixes 1–6 (session sync, structured inspect rows, geocode
+  stability, kommunkod docs, legend width, write_attributes
+  rename).
+- **Round-3 findings**: not auto-fixed. The surface is production-
+  ready as-shipped; round-3 priorities are listed above for a
+  future pass if desired. Convergent findings (1) and (2) are the
+  strongest candidates for another batch.
+- **Long-tail deferred** from round 1: signal D (load point+radius
+  filter — largely redundant given `select_by_location` point+radius
+  mode), signal E (`catalog(id=…)` distinct_values enumeration —
+  higher-effort catalog-schema bump).
+
 Test harness: `scripts/stress_test_tools.py` (57 covering cases,
 all passing post-fix).

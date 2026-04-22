@@ -118,7 +118,7 @@ Roughly in priority order, by impact-per-day-of-work:
 3. **Routing + isochrones.** Biggest accessibility-analysis unlock.
    Heavy; requires a routing engine. ~4-5 days.
 4. **Audit log for execute_sql.** Plumbing task; straightforward. ~½ day.
-5. **SVG export from `export(format="png")`.** Small; adds a format. ~½ day.
+5. **SVG output from `render_map`.** Small; adds a format alongside PNG. ~½ day.
 6. **Viewer labelling.** Non-trivial; label placement is its own
    topic. Defer until the demo actually needs it.
 
@@ -137,7 +137,7 @@ demands:
 - **Paper-tone default map.** Some users will want standard OSM
   tiles for orientation. The viewer lets them override; the renderer
   doesn't. Could add a `style="positron"` option to
-  `export(format="png")` post-egress-relaxation.
+  `render_map` post-egress-relaxation.
 - **Single invite code.** Serviceable for small demos; breaks for 50+
   users. Per-user codes with expirations is the natural next step.
 - **No session ACL.** Anyone with a viewer URL sees its contents. This

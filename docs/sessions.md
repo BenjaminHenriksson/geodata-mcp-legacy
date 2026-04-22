@@ -218,6 +218,31 @@ need much RAM.
 
 ---
 
+## Scripting in-process: one process, one session
+
+When driving the server from a Python script (e.g. the stress-test
+harness at `scripts/stress_test_tools.py`), **keep every tool call
+inside a single `asyncio.run(main())`** — i.e. one Python process.
+Splitting a workflow across multiple `uv run python -c …`
+invocations doesn't behave the way you'd expect: each process starts
+with an empty in-memory REGISTRY and rehydrates from disk, but
+mid-workflow state that was only flushed during graceful shutdown
+can be missing from the sidecar if the previous process exited
+abruptly. In practice the symptom is "I just loaded `deso_2025` and
+the next call says `unknown layer deso_2025`."
+
+Real MCP clients (claude.ai, Claude Desktop, Claude Code) hold one
+long-running HTTP connection per session and don't hit this
+boundary. The caveat applies to out-of-process test harnesses and
+ad-hoc diagnostic scripts.
+
+If you genuinely need multiple processes to share state, let the
+server run normally and connect via `fastmcp.Client` over HTTP —
+that's the production path and sidesteps the in-memory-registry
+issue.
+
+---
+
 ## Ids are ephemeral but recoverable
 
 Session ids are 12-char hex. They're generated server-side unless the

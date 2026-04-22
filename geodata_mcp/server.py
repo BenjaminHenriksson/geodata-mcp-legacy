@@ -74,19 +74,20 @@ addresses) for LLM-driven analysis. Session-scoped DuckDB + Spatial,
 all layers in EPSG:3011 (SWEREF 99 18 00; Stockholm-local metres),
 filtered to Stockholm kommun (kommunkod `0180`). 65 datasets.
 
-## Tools (11)
+## Tools (12)
 
 1. `catalog(query?, id?, verbose?)` — fuzzy-search datasets; pass `id` for full attribute schema.
 2. `geocode(op, ...)` — `"forward"` (name→coords), `"reverse"` (coords→admin area), `"bbox"` (name→bbox).
 3. `load(op, ...)` — `"catalog"` pulls 1..N datasets by id; `"inline"` injects LLM-provided rows (`source` mandatory).
 4. `execute_sql(sql, ...)` — read-only DuckDB+Spatial. 30 s timeout. DDL/DML/file I/O rejected.
-5. `derive(op, ...)` — new layer from existing: `"filter"`, `"top_n"`, `"clip"`, `"intersect"`, `"select_by_location"`, `"buffer"`, `"centroid"`, `"dissolve"`, `"convex_hull"`.
+5. `derive(op, ...)` — new layer from existing: `"filter"`, `"top_n"`, `"clip"`, `"intersect"`, `"select_by_location"` (supports `center_3011`+`distance_m` for bare point+radius), `"buffer"`, `"centroid"`, `"dissolve"`, `"convex_hull"`.
 6. `edit_field(op, layer, ...)` — mutate columns in place: `"add"`, `"update"`, `"drop"`, `"classify"`, `"annotate"`. Reversible inside a checkpoint.
-7. `inspect(op, ...)` — `"layers"` (session inventory), `"rows"` (sample), `"batch"` (cursor pagination), `"at"` (spatial "what's here" for 1..500 points).
+7. `inspect(op, ...)` — `"layers"` (session inventory), `"rows"` (sample, with optional `include_rowid`), `"batch"` (cursor pagination), `"at"` (spatial "what's here" for 1..500 points).
 8. `layer(op, ...)` — visibility + lifecycle: `"show"`, `"hide"`, `"rename"`, `"drop"`, `"set_notes"`.
-9. `export(layers, format, cite?)` — gpkg/geojson/csv/parquet/png. `cite=True` bundles provenance markdown. PNG = server-rendered map artefact.
-10. `sources(layer?)` — provenance markdown for citations.
-11. `checkpoint(op, name, ...)` — `"create"` a savepoint, `"rollback"` to undo, `"commit"` to make permanent.
+9. `export(layers, format, cite?)` — data-only: gpkg/geojson/csv/parquet. `cite=True` bundles provenance markdown.
+10. `render_map(layers, ...)` — server-rendered styled PNG with Carto Positron basemap underlay. Honours the current `layer(op="show")` style.
+11. `sources(layer?)` — provenance markdown for citations.
+12. `checkpoint(op, name, ...)` — `"create"` a savepoint, `"rollback"` to undo, `"commit"` to make permanent.
 
 ## Core workflow
 
@@ -729,6 +730,7 @@ def derive(
     by_columns: list[str] | None = None,
     aggregate: bool = False,
     predicate: Literal["intersects", "within", "contains", "dwithin"] = "intersects",
+    center_3011: list[float] | None = None,
     by: str | None = None,
     n: int = 10,
     ascending: bool = False,
@@ -742,15 +744,20 @@ def derive(
     - `op="filter"` (layer, where): SQL WHERE → new layer. Supports
       spatial predicates on `geom` (e.g. `ST_DWithin(geom, ...)`).
     - `op="top_n"` (layer, by, n?, ascending?): filter + ORDER BY +
-      LIMIT in one call. `by` is an SQL ordering expression.
+      LIMIT in one call. `by` is an SQL ordering expression (bare or
+      with trailing `ASC`/`DESC`/`NULLS FIRST|LAST` — the trailing
+      direction wins over `ascending`).
     - `op="clip"` (layer, by_layer): trim `layer`'s geometries to the
       union of `by_layer`'s. Geometries MODIFIED.
     - `op="intersect"` (a_layer, b_layer): geometric overlay, one row
       per intersecting pair.
-    - `op="select_by_location"` (layer, by_layer, predicate): spatial
-      WHERE — keep features of `layer` relating to ANY feature of
-      `by_layer`. Predicates: intersects / within / contains / dwithin
-      (the latter needs `distance_m`).
+    - `op="select_by_location"` (layer, by_layer, predicate) OR
+      (layer, center_3011, distance_m): spatial WHERE — keep features
+      of `layer` relating to another layer OR to a literal EPSG:3011
+      point. Predicates: intersects / within / contains / dwithin
+      (the latter needs `distance_m`). Use `center_3011=[x, y]` +
+      `distance_m=N` to select within N metres of a coordinate
+      without loading a separate point layer first.
     - `op="buffer"` (layer, distance_m): ST_Buffer in EPSG:3011 metres.
     - `op="centroid"` (layer): per-feature ST_Centroid.
     - `op="dissolve"` (layer, by_columns?): union geometries, grouped.
@@ -785,14 +792,27 @@ def derive(
                                      "derive op='intersect' requires `a_layer` and `b_layer`.")
             meta = spatial_intersect(sess, a_layer, b_layer, result_name=result_name)
         elif op == "select_by_location":
-            if not layer or not by_layer:
+            if not layer:
                 return _server_error(
                     "missing_arg",
-                    "derive op='select_by_location' requires `layer` and `by_layer`.",
+                    "derive op='select_by_location' requires `layer`.",
+                )
+            if not by_layer and center_3011 is None:
+                return _server_error(
+                    "missing_arg",
+                    "derive op='select_by_location' requires either `by_layer` "
+                    "or `center_3011` + `distance_m`.",
+                )
+            if center_3011 is not None and distance_m is None:
+                return _server_error(
+                    "missing_arg",
+                    "derive op='select_by_location' with `center_3011` "
+                    "requires `distance_m`.",
                 )
             meta = spatial_select_by_location(
                 sess, layer, by_layer,
                 predicate=predicate, distance_m=distance_m,
+                center_3011=center_3011,
                 result_name=result_name,
             )
         elif op == "buffer":
@@ -912,6 +932,7 @@ def inspect(
     layer: str | None = None,
     n: int = 10,
     include_geometry: bool = False,
+    include_rowid: bool = False,
     offset: int = 0,
     where: str | None = None,
     columns: list[str] | None = None,
@@ -927,14 +948,17 @@ def inspect(
     reads, and spatial "what's here" lookups.
 
     - `op="layers"`: inventory of every session layer + checkpoint state.
-    - `op="rows"` (layer, n?, include_geometry?, offset?, where?):
-      sample rows from `layer` as a markdown table (returned in
-      `table_md`). Caps: 200 rows without geometry, 10 with.
+    - `op="rows"` (layer, n?, include_geometry?, include_rowid?,
+      offset?, where?): sample rows from `layer` as a markdown table
+      (returned in `table_md`). Caps: 200 rows without geometry, 10
+      with. Set `include_rowid=True` to prepend a `rowid` column —
+      useful when you plan to `edit_field(op="annotate",
+      key_column="rowid", values={…})` against the sampled rows
+      without switching to `op="batch"`.
     - `op="batch"` (layer or cursor, columns?, where?, batch_size?):
       cursor-paginated reader for large layers. First call: pass
       `layer`. Subsequent calls: pass `cursor` from the previous
-      response. Each row carries `rowid` (DuckDB pseudo-column,
-      suitable for `edit_field(op='annotate', key_column='rowid', ...)`).
+      response. Each row carries `rowid` automatically.
     - `op="at"` (points=[{id?, x_3011, y_3011}], radius_m?, layers?,
       columns?, per_layer_limit?): "what's near each of these
       points?" across session layers. Up to 500 points per call.
@@ -998,6 +1022,8 @@ def inspect(
         geom_col = meta.attributes.get("__geom_col__") or ""
         cols = [c for c in meta.attributes if not c.startswith("__")]
         select_cols = []
+        if include_rowid:
+            select_cols.append("rowid")
         for c in cols:
             if c == geom_col:
                 if include_geometry:
@@ -1233,18 +1259,15 @@ def _do_show(sess: Session, layers_in: list[str],
 @_audited("export")
 def export(
     layers: str | list[str],
-    format: Literal["gpkg", "geojson", "csv", "parquet", "png"] = "gpkg",
+    format: Literal["gpkg", "geojson", "csv", "parquet"] = "gpkg",
     cite: bool = False,
     merge_geojson: bool = False,
-    title: str | None = None,
-    legend: bool = True,
-    width_px: int = 1600,
-    height_px: int = 1000,
     description: str = "",
     ctx: Context | None = None,
 ) -> dict:
-    """Export one or many session layers to a downloadable artefact.
-    Returns URL(s) valid for 24 h.
+    """Export one or many session layers to a downloadable data artefact.
+    Returns URL(s) valid for 24 h. For PNG map images use `render_map`
+    — this tool is data-only.
 
     Formats:
       - **gpkg** (default): OGC GeoPackage in native EPSG:3011.
@@ -1255,9 +1278,6 @@ def export(
         a single FeatureCollection with a `_layer` property.
       - **csv**: attribute columns + geometry as WKT.
       - **parquet**: columnar, zstd-compressed, geometry as WKB.
-      - **png**: server-rendered styled map artefact (paper-toned
-        editorial backdrop). Honors the current `show(...)` style.
-        `title`/`legend`/`width_px`/`height_px` only apply here.
 
     Args:
         layers: Single layer name or list.
@@ -1271,37 +1291,6 @@ def export(
     except SessionExpired as e:
         return _error_response(e)
     layers_list = [layers] if isinstance(layers, str) else list(layers)
-
-    if format == "png":
-        if not layers_list:
-            return _server_error("missing_arg",
-                                 "export format='png' requires at least one layer.")
-        try:
-            from . import render as _render
-            import secrets
-            token = secrets.token_urlsafe(12)
-            out_dir = EXPORT_ROOT / token
-            info = _render.render_map_png(
-                sess, layers_list, out_dir,
-                title=title, legend=legend,
-                width_px=int(width_px), height_px=int(height_px),
-            )
-            size = (out_dir / info["filename"]).stat().st_size
-            url = _abs_url(f"/exports/{token}/{info['filename']}")
-            return {
-                "url": url, "format": "png",
-                "width": info["width"], "height": info["height"],
-                "bbox_3011": info["bbox_3011"],
-                "size_bytes": size,
-                "expires_in_s": EXPORT_TTL_S,
-                "hint": ("PNG artefact rendered server-side. Carto Positron "
-                         "tiled basemap underlay (from a pre-warmed local "
-                         "cache — no runtime egress) plus desaturated "
-                         "vector overlay. Embed directly in docs, slides, "
-                         "or messages."),
-            }
-        except Exception as e:
-            return _error_response(e)
 
     try:
         if len(layers_list) == 1:
@@ -1322,6 +1311,75 @@ def export(
             if "url" in f:
                 f["url"] = _abs_url(f["url"])
         return out
+    except Exception as e:
+        return _error_response(e)
+
+
+@mcp.tool(annotations=_SAFE_MUTATION)
+@_audited("render_map")
+def render_map(
+    layers: list[str],
+    title: str | None = None,
+    legend: bool = True,
+    width_px: int = 1600,
+    height_px: int = 1000,
+    description: str = "",
+    ctx: Context | None = None,
+) -> dict:
+    """Render the given layers to a styled PNG map and return a download URL.
+
+    Reads the per-layer style set by `layer(op="show", style=...)` —
+    call that first if you want themed colours, size / opacity / stroke
+    channels, or a categorical palette. Layers with no style fall back
+    to a default solid colour.
+
+    Underlay: Carto Positron tiled basemap read from a pre-warmed
+    local cache (no runtime network access; see `docs/rendering.md`).
+    If the cache is missing the renderer falls back to a paper-toned
+    backdrop with a faint cartographer's grid. Vector overlay always
+    renders regardless.
+
+    Args:
+        layers: names of session layers to render.
+        title: optional figure title; falls back to the session's
+               current `layer(op="show")` title if set.
+        legend: include a per-layer legend (default True).
+        width_px, height_px: output dimensions. Defaults 1600×1000.
+
+    Returns: `{url, format="png", width, height, bbox_3011,
+    size_bytes, expires_in_s, hint}`. URL is absolute when
+    `GEODATA_PUBLIC_URL` is set; relative otherwise. Expires after 24 h.
+    """
+    try:
+        sess = _session(ctx)
+    except SessionExpired as e:
+        return _error_response(e)
+    if not layers:
+        return _server_error("missing_arg",
+                             "render_map requires at least one layer.")
+    try:
+        from . import render as _render
+        import secrets
+        token = secrets.token_urlsafe(12)
+        out_dir = EXPORT_ROOT / token
+        info = _render.render_map_png(
+            sess, layers, out_dir,
+            title=title, legend=legend,
+            width_px=int(width_px), height_px=int(height_px),
+        )
+        size = (out_dir / info["filename"]).stat().st_size
+        url = _abs_url(f"/exports/{token}/{info['filename']}")
+        return {
+            "url": url, "format": "png",
+            "width": info["width"], "height": info["height"],
+            "bbox_3011": info["bbox_3011"],
+            "size_bytes": size,
+            "expires_in_s": EXPORT_TTL_S,
+            "hint": ("PNG artefact rendered server-side. Carto Positron "
+                     "tiled basemap underlay (pre-warmed local cache, "
+                     "no runtime egress) plus desaturated vector overlay. "
+                     "Embed directly in docs, slides, or messages."),
+        }
     except Exception as e:
         return _error_response(e)
 

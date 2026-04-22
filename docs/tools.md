@@ -1,6 +1,6 @@
 # MCP tool reference
 
-**11 tools.** Endpoint: `https://geo.benjaminhenriksson.com/mcp`
+**12 tools.** Endpoint: `https://geo.benjaminhenriksson.com/mcp`
 (OAuth 2.1 + PKCE via invite code for web custom-connector flows
 like claude.ai, ChatGPT, Gemini, and the rest; legacy shared bearer
 for CLI / desktop clients that haven't shipped OAuth yet). Every
@@ -27,11 +27,12 @@ instead of ploughing on.
 6. **`edit_field`** — add / update / drop / classify / annotate columns.
 7. **`inspect`** — session inventory, rows, cursor pagination, spatial "what's here" (`readOnlyHint`).
 8. **`layer`** — show / hide / rename / drop / set_notes.
-9. **`export`** — single or many layers, gpkg / geojson / csv / parquet / png; optional citation bundle.
-10. **`sources`** — provenance markdown (`readOnlyHint`).
-11. **`checkpoint`** — create / rollback / commit savepoints.
+9. **`export`** — data artefact: gpkg / geojson / csv / parquet; optional citation bundle.
+10. **`render_map`** — server-rendered styled PNG map with Carto Positron basemap underlay.
+11. **`sources`** — provenance markdown (`readOnlyHint`).
+12. **`checkpoint`** — create / rollback / commit savepoints.
 
-Tools 1, 2, 7, 10 are read-only. The rest mutate session state (load
+Tools 1, 2, 7, 11 are read-only. The rest mutate session state (load
 creates layers, edit_field mutates columns, etc.) but are non-destructive
 (reversible if wrapped in a checkpoint where applicable).
 
@@ -278,12 +279,18 @@ from the source(s).
   one row per intersecting pair, geometry = `ST_Intersection(a, b)`
   (often changes geometry kind). For a spatial join that keeps A's
   geometry unchanged, use `op="select_by_location"` instead.
-- **`op="select_by_location"`** (`layer`, `by_layer`,
-  `predicate="intersects" | "within" | "contains" | "dwithin"`,
-  `distance_m?`) — classic spatial WHERE: keep features of `layer`
-  (unchanged geometry + attributes) whose geom relates to ANY
-  feature in `by_layer` by `predicate`. `dwithin` requires
-  `distance_m`.
+- **`op="select_by_location"`** — spatial WHERE. Two modes:
+  - **by_layer mode** (`layer`, `by_layer`,
+    `predicate="intersects" | "within" | "contains" | "dwithin"`,
+    `distance_m?`): keep features of `layer` (unchanged geometry +
+    attributes) whose geom relates to ANY feature in `by_layer` by
+    `predicate`. `dwithin` requires `distance_m`.
+  - **point+radius mode** (`layer`, `center_3011=[x, y]`,
+    `distance_m`): keep features of `layer` within `distance_m`
+    metres of a literal EPSG:3011 point. Implies `predicate="dwithin"`;
+    no `by_layer` needed. Use after a `geocode(op="forward")` to
+    pull "everything within N m of X" in one call, without having
+    to inject a 1-row point layer first.
 - **`op="buffer"`** (`layer`, `distance_m`) — `ST_Buffer` in
   EPSG:3011 metres.
 - **`op="centroid"`** (`layer`) — per-feature `ST_Centroid`.
@@ -394,11 +401,14 @@ is_visible}, ...], active_checkpoint, open_checkpoints}`. Call this
 when the LLM needs to recall what it has, or when it looks
 overwhelmed by prior state.
 
-### `op="rows"` (`layer`, `n=10`, `include_geometry=False`, `offset=0`, `where?`)
+### `op="rows"` (`layer`, `n=10`, `include_geometry=False`, `include_rowid=False`, `offset=0`, `where?`)
 
 Sample rows from one layer as a markdown table. Hard caps: 200 rows
 without geometry, 10 rows with geometry (WKT; verbose — request
-only when needed).
+only when needed). Set `include_rowid=True` to prepend a `rowid`
+column — useful when you plan to `edit_field(op="annotate",
+key_column="rowid", values={…})` against the sampled rows without
+switching to `op="batch"`.
 
 Returns `{layer, rows_shown, rows_total, cap, table_md}` where
 `table_md` is the rendered markdown (header + rows + a "N more not
@@ -483,9 +493,10 @@ session state alone.
 
 ## 9. `export(layers, format="gpkg", cite=False, ...)`
 
-Export one or many session layers to a downloadable artefact.
-Returns URL(s) valid for 24 h. `layers` accepts a single string or a
-list.
+Export one or many session layers to a downloadable **data** artefact
+(gpkg / geojson / csv / parquet). Returns URL(s) valid for 24 h.
+`layers` accepts a single string or a list. For PNG map images use
+**`render_map`** (tool 10) — `export` is data-only.
 
 ### Formats
 
@@ -500,13 +511,6 @@ list.
   must tolerate it).
 - **csv**: attribute columns + geometry as WKT.
 - **parquet**: columnar, zstd-compressed, geometry as WKB.
-- **png**: server-rendered styled map artefact. Honors the current
-  `layer(op="show")` style. Carto Positron tiled basemap underlay
-  (read from a pre-warmed local cache — the runtime service has no
-  outbound egress, so tiles are fetched ahead of deploy via
-  `scripts/fetch_basemap.py`). If the cache is missing, the renderer
-  falls back to a paper-toned backdrop with a faint cartographer's
-  grid. Args: `title?`, `legend=True`, `width_px=1600`, `height_px=1000`.
 
 ### `cite=True`
 
@@ -517,12 +521,10 @@ the deduped union across all input layers. Folds the one-call
 
 ### Return shape
 
-- Single-layer non-png:
+- Single-layer:
   `{layer, format, url, file_name, size_bytes, expires_at, provenance, ...}`.
 - Multi-layer: `{files: [{url, size_bytes, layer?}, ...], format,
   expires_at, ...}` (plus `citations_markdown` when `cite=True`).
-- PNG: `{url, format: "png", width, height, bbox_3011, size_bytes,
-  expires_in_s, hint}`.
 
 URLs are absolute when `GEODATA_PUBLIC_URL` is configured on the
 server; otherwise relative (`/exports/<token>/<filename>`). Links
@@ -530,7 +532,49 @@ auto-expire after 24 h.
 
 ---
 
-## 10. `sources(layer=None)`
+## 10. `render_map(layers, title=None, legend=True, width_px=1600, height_px=1000)`
+
+Render session layers to a styled PNG map and return a download URL.
+Split from `export` because rendering has genuinely different
+semantics: it reads from the viewer's current style set by
+`layer(op="show", style=…)`, and its args (`title`, `legend`, canvas
+dimensions) are map-layout concerns that don't apply to data
+exports.
+
+### Style
+
+Reads the per-layer style set by `layer(op="show", style=...)` —
+**call that first** if you want themed colours, categorical palettes,
+or any of the size / opacity / stroke channels. Layers with no style
+entry fall back to a default solid colour.
+
+### Basemap
+
+Carto Positron tiled basemap underlay, read from a pre-warmed local
+cache at `data/basemap/positron/{z}/{x}/{y}.png`. The runtime
+service has no outbound network access — tiles are fetched ahead of
+deploy via `scripts/fetch_basemap.py` (see `docs/rendering.md`). If
+the cache is missing or empty, rendering falls back to a paper-toned
+backdrop with a faint cartographer's grid; the vector overlay still
+renders.
+
+### Args
+
+- `layers: list[str]` — session layer names to render.
+- `title: str | None` — figure title (falls back to the session's
+  current `layer(op="show")` title if set).
+- `legend: bool = True` — include a per-layer legend.
+- `width_px: int = 1600`, `height_px: int = 1000` — output canvas.
+
+### Return shape
+
+`{url, format: "png", width, height, bbox_3011, size_bytes,
+expires_in_s, hint}`. URL is absolute when `GEODATA_PUBLIC_URL` is
+set. Expires after 24 h.
+
+---
+
+## 11. `sources(layer=None)`
 
 Return a structured provenance report (publisher, licence, URL,
 retrieval date, operations applied) for a layer or all session
@@ -549,7 +593,7 @@ Output sections per layer:
 
 ---
 
-## 11. `checkpoint(op, name, ...)` — savepoints
+## 12. `checkpoint(op, name, ...)` — savepoints
 
 Named savepoints that make in-place mutations reversible. A session
 isn't a linear log of edits; it's a set of named savepoints that can
@@ -609,6 +653,32 @@ All six are NULL for non-DeSO rows (RegSO / kommun / country).
 Prefer them over the raw `region` column for joins; they're uniform
 across the 31 SCB tables.
 
+### 2018 → 2025 grid splits: aggregate before joining
+
+`desokod_2025` handles renames and splits from the 2018 grid, but
+SCB tables can still contain **multiple 2018-grid rows that collapse
+onto one 2025 code** when a DeSO was split. A naive
+`JOIN scb_foo ON desokod_2025 = deso_2025.desokod` then silently
+double-counts in the same year.
+
+Always aggregate first:
+
+```sql
+WITH scb AS (
+  SELECT desokod_2025, år, SUM(value) AS value
+  FROM scb_population_age_sex
+  WHERE ålder='totalt' AND kön='totalt' AND value IS NOT NULL
+  GROUP BY desokod_2025, år
+)
+SELECT p.desokod, s.år, s.value
+FROM deso_2025 p JOIN scb s ON p.desokod = s.desokod_2025
+```
+
+Symptom when you forget: per-DeSO totals look ~2× too high in a
+subset of rows; aggregates across the city look larger than SCB's
+published city total. Always spot-check by summing to kommun-level
+and comparing.
+
 ---
 
 ## Richer default responses
@@ -644,6 +714,11 @@ layer(op="show", layers=["buildings"], style={
 
 Linear palettes: `"scale": "linear"` + `"palette": ["#lo", "#hi"]`.
 Categorical with no palette auto-assigns from a default set.
+
+**Legend ordering (categorical):** the legend entries appear in the
+order the keys were inserted into your `palette` dict. Order matters
+— put `{"low": ..., "mid": ..., "high": ...}` if you want that
+reading order, not alphabetical.
 
 Four optional channels per layer:
 

@@ -222,28 +222,78 @@ def spatial_intersect(
 
 
 def spatial_select_by_location(
-    session: Session, source_layer: str, by_layer: str,
+    session: Session, source_layer: str,
+    by_layer: str | None = None,
     *, predicate: str = "intersects", distance_m: float | None = None,
+    center_3011: tuple[float, float] | list[float] | None = None,
     result_name: str | None = None,
 ) -> LayerMeta:
     """Select features of `source_layer` whose geometry relates to ANY feature
     in `by_layer` by the given predicate. Source geometry and attributes are
     preserved unchanged — this is the spatial equivalent of a `WHERE` clause.
 
-    Predicates:
-      - intersects: ST_Intersects (default)  — touch, overlap, contain, equal
-      - within:     ST_Within                 — source fully inside something in by_layer
-      - contains:   ST_Contains               — source fully contains something in by_layer
+    Two modes:
+      - **by_layer** (default): relate to any feature in another session layer.
+      - **center_3011 + distance_m** (point+radius): relate to a literal
+        EPSG:3011 point. Implies `predicate='dwithin'`. Saves the
+        "inject a 1-row point layer first" dance.
+
+    Predicates (by_layer mode):
+      - intersects: ST_Intersects (default) — touch, overlap, contain, equal
+      - within:     ST_Within                — source fully inside something in by_layer
+      - contains:   ST_Contains              — source fully contains something in by_layer
       - dwithin:    ST_DWithin with `distance_m` metres (EPSG:3011)
 
-    This is what you usually want for "give me buildings in this district"
-    or "give me the DeSO containing this point". Distinct from
-    `spatial(operation='intersect')`, which returns the **geometric**
+    Distinct from `spatial_intersect`, which returns the **geometric**
     intersection (A ∩ B) and typically changes geometry kind.
     """
     src = _require_layer(session, source_layer)
-    by = _require_layer(session, by_layer)
     src_g = _geom_col(src)
+
+    # Point+radius mode — no by_layer, literal geometry in the predicate.
+    if center_3011 is not None:
+        if by_layer is not None:
+            raise OpError(
+                "pass either by_layer or center_3011, not both"
+            )
+        if distance_m is None:
+            raise OpError("center_3011 requires distance_m")
+        try:
+            cx, cy = float(center_3011[0]), float(center_3011[1])
+        except (TypeError, IndexError, ValueError) as e:
+            raise OpError(f"center_3011 must be [x, y] floats: {e}")
+        cond = (f"ST_DWithin(s.{_quote_ident(src_g)}, "
+                f"ST_Point({cx}, {cy}), {float(distance_m)})")
+        new_name = session.unique_layer_name(
+            result_name or f"{source_layer}_within_{int(distance_m)}m"
+        )
+        qnew = _quote_ident(new_name)
+        qsrc = _quote_ident(source_layer)
+        sql = (
+            f"CREATE TABLE {qnew} AS "
+            f"SELECT s.* FROM {qsrc} s WHERE {cond}"
+        )
+        session.conn.execute(sql)
+        meta = _register_result(
+            session, new_name, [source_layer],
+            created_by="spatial.select_by_location(point+radius)",
+        )
+        session.log(Operation(
+            tool="spatial.select_by_location",
+            args={"layer": source_layer, "center_3011": [cx, cy],
+                  "distance_m": distance_m},
+            result_layer=new_name, summary=f"{meta.feature_count} features",
+            at=datetime.utcnow(),
+        ))
+        return meta
+
+    # by_layer mode — existing path.
+    if by_layer is None:
+        raise OpError(
+            "select_by_location requires either `by_layer` or "
+            "`center_3011`+`distance_m`"
+        )
+    by = _require_layer(session, by_layer)
     by_g = _geom_col(by)
 
     pred = predicate.lower()

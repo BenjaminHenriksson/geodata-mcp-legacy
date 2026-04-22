@@ -235,7 +235,7 @@ panel rehydrates correctly after a server restart.
 
 There's no "hide panel" toggle for the layers and basemap. The map
 always has panel overlay. If someone wants a clean map for a
-screenshot, `export(format="png")` is the answer.
+screenshot, `render_map` is the answer.
 
 ---
 

@@ -229,6 +229,19 @@ async def run_coverage(mcp) -> None:
     except Exception as e:
         _record("derive.top_n(embedded DESC NULLS LAST)", False, repr(e))
 
+    # Feature: select_by_location with bare point+radius (no by_layer).
+    try:
+        d = await _call(mcp, "derive", {
+            "op": "select_by_location", "layer": "deso_2025",
+            "center_3011": [153844.0, 6578679.0], "distance_m": 500.0,
+            "result_name": "d_near_point",
+        })
+        _record("derive.select_by_location(point+radius)",
+                isinstance(d, dict) and "feature_count" in d,
+                d.get("error") or f"feat={d.get('feature_count')}")
+    except Exception as e:
+        _record("derive.select_by_location(point+radius)", False, repr(e))
+
     # ---- checkpoint / edit_field (wrap under a checkpoint) ----
     try:
         d = await _call(mcp, "checkpoint", {"op": "create", "name": "t1"})
@@ -320,6 +333,16 @@ async def run_coverage(mcp) -> None:
                 f"shown={d.get('rows_shown')}/{d.get('rows_total')}")
     except Exception as e:
         _record("inspect.rows", False, repr(e))
+
+    # Feature: inspect(op="rows", include_rowid=True)
+    try:
+        d = await _call(mcp, "inspect", {"op": "rows", "layer": "d_top",
+                                          "n": 3, "include_rowid": True})
+        has_rowid = "rowid" in (d.get("table_md") or "")
+        _record("inspect.rows(include_rowid)", has_rowid,
+                "rowid column present" if has_rowid else "rowid missing")
+    except Exception as e:
+        _record("inspect.rows(include_rowid)", False, repr(e))
 
     try:
         d = await _call(mcp, "inspect", {
@@ -427,13 +450,19 @@ async def run_coverage(mcp) -> None:
         _record("export.parquet", False, repr(e))
 
     try:
-        d = await _call(mcp, "export", {
-            "layers": ["deso_top5"], "format": "png", "width_px": 800, "height_px": 600,
+        d = await _call(mcp, "render_map", {
+            "layers": ["deso_top5"], "width_px": 800, "height_px": 600,
         })
-        _record("export.png", d.get("format") == "png" and bool(d.get("url")),
+        _record("render_map", d.get("format") == "png" and bool(d.get("url")),
                 f"size={d.get('size_bytes')}")
     except Exception as e:
-        _record("export.png", False, repr(e))
+        _record("render_map", False, repr(e))
+
+    try:
+        d = await _call(mcp, "render_map", {"layers": []})
+        _record("render_map(missing_arg)", _is_error(d), d.get("error"))
+    except Exception as e:
+        _record("render_map(missing_arg)", False, repr(e))
 
     # ---- sources ----
     try:

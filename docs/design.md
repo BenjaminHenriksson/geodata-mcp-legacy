@@ -30,12 +30,13 @@ What the model *cannot* do, by itself:
 The MCP's surface is shaped by that second list. We don't provide a
 "render a PDF report" tool because the LLM writes better reports than a
 fixed template. We don't provide a "summarize this layer in prose" tool
-because the LLM already has prose. We do provide `export(format='png')`,
-because reprojecting to EPSG:3011 and compositing a styled vector overlay
-on a paper-toned backdrop is a task the LLM can't do without us.
+because the LLM already has prose. We do provide `render_map`,
+because reprojecting to EPSG:3011, reading the viewer's current
+style, and compositing a styled vector overlay onto a cached Carto
+Positron basemap is a task the LLM can't do without us.
 
 This principle rules out about half the tools one would naïvely implement
-on a GIS backend, and it's why the tool surface is compact (11 tools)
+on a GIS backend, and it's why the tool surface is compact (12 tools)
 despite covering a wide workflow. Sub-operations are multiplexed via
 `op: Literal[...]` enums on tools like `derive`, `edit_field`, and
 `layer` — the LLM's mental model is coarser than the underlying ops
@@ -156,13 +157,13 @@ The layer colour palette is deliberately desaturated: cartographer's inks
 (burnt umber, raw sienna, verdigris, antique brass) rather than the
 neon-on-dark of dashboards. No colour is meant to "pop"; they coexist.
 
-Rendered PNG exports (via `export(format='png')`) follow the same
-palette rules: desaturated vector overlay, eyebrow + title + scale
-bar + legend. The underlay is a Carto Positron tiled basemap read
-from a pre-warmed local cache (`data/basemap/positron/`); the
-runtime service has no outbound egress, so tiles are fetched ahead
-of deploy via `scripts/fetch_basemap.py`. If the cache is absent
-the renderer falls back to a paper-only backdrop with a faint
+Rendered PNG maps (via `render_map`) follow the same palette rules:
+desaturated vector overlay, eyebrow + title + scale bar + legend.
+The underlay is a Carto Positron tiled basemap read from a
+pre-warmed local cache (`data/basemap/positron/`); the runtime
+service has no outbound egress, so tiles are fetched ahead of
+deploy via `scripts/fetch_basemap.py`. If the cache is absent the
+renderer falls back to a paper-only backdrop with a faint
 cartographer's grid. See `rendering.md` for details.
 
 ---
@@ -205,8 +206,8 @@ And these are the capabilities the principle specifically motivates:
   can update by calling `layer(op="show")` again without the user
   touching anything.
 - **Checkpoints.** A transactional workspace the LLM can experiment in.
-- **PNG rendering** (`export(format='png')`): editorial map artefacts
-  the LLM can embed.
+- **PNG rendering** (`render_map`): editorial map artefacts the LLM
+  can embed.
 - **Persistence.** Survives restart so paused analyses resume.
 - **Canonical join keys** (added to every SCB table in the normalization
   pipeline): removes a class of join-column-name-guessing the LLM

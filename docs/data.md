@@ -226,7 +226,7 @@ Every `SourceRef` carries a licence string. Major sources:
 
 Mixing these is usually fine for non-commercial and public-sector use,
 but OSM's ODbL share-alike means anything derived from OSM has to be
-published under ODbL too. The `export(format="png")` artefact doesn't
+published under ODbL too. The `render_map` PNG artefact doesn't
 technically trigger ODbL (it's not a "substantial extract of the
 database"), but a derived parquet absolutely does. Always check
 `sources(layer)` before publishing.
